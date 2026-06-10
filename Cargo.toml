@@ -1,0 +1,14 @@
+[package]
+name = "crawfish"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+ariadne = "0.4"
+ena = "0.14.4"
+inkwell = { version = "0.8.0", features = ["llvm20-1"] }
+soup = { git = "https://github.com/simontran7/soup" }
+
+[dev-dependencies]
+insta = { version = "1", features = ["glob"] }
+criterion = "0.8.2"

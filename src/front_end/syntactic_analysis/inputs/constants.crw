@@ -1,0 +1,3 @@
+const MAX: i32 = 100;
+const MIN: i32 = 0;
+const FLAG: bool = true;

@@ -1,0 +1,63 @@
+---
+source: src/front_end/syntactic_analysis/parser.rs
+expression: output
+input_file: src/front_end/syntactic_analysis/inputs/constants.crw
+---
+SourceFileNode(
+    body=[
+        ConstantDefinitionNode(
+            name=ValidIdentifierNode(
+                symbol="MAX",
+                span=[6, 9)
+            ),
+            annotation=NamedTypeAnnotationNode(
+                name=ValidIdentifierNode(
+                    symbol="i32",
+                    span=[11, 14)
+                ),
+                span=[11, 14)
+            ),
+            value=IntegerLiteralNode(
+                value=100,
+                span=[17, 20)
+            ),
+            span=[0, 21)
+        ),
+        ConstantDefinitionNode(
+            name=ValidIdentifierNode(
+                symbol="MIN",
+                span=[28, 31)
+            ),
+            annotation=NamedTypeAnnotationNode(
+                name=ValidIdentifierNode(
+                    symbol="i32",
+                    span=[33, 36)
+                ),
+                span=[33, 36)
+            ),
+            value=IntegerLiteralNode(
+                value=0,
+                span=[39, 40)
+            ),
+            span=[22, 41)
+        ),
+        ConstantDefinitionNode(
+            name=ValidIdentifierNode(
+                symbol="FLAG",
+                span=[48, 52)
+            ),
+            annotation=NamedTypeAnnotationNode(
+                name=ValidIdentifierNode(
+                    symbol="bool",
+                    span=[54, 58)
+                ),
+                span=[54, 58)
+            ),
+            value=BooleanLiteralNode(
+                value=true,
+                span=[61, 65)
+            ),
+            span=[42, 66)
+        )
+    ],
+)

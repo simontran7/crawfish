@@ -1,0 +1,265 @@
+---
+source: src/front_end/lexical_analysis/token_tree_parser.rs
+expression: "format!(\"{:#?}\", trees)"
+input_file: src/front_end/lexical_analysis/inputs/basic.crw
+---
+[
+    Token(
+        Token {
+            kind: Identifier,
+            symbol: Some(
+                Symbol(
+                    7,
+                ),
+            ),
+            span: Span {
+                start: 0,
+                end: 2,
+            },
+        },
+    ),
+    Token(
+        Token {
+            kind: Identifier,
+            symbol: Some(
+                Symbol(
+                    8,
+                ),
+            ),
+            span: Span {
+                start: 3,
+                end: 6,
+            },
+        },
+    ),
+    Delimited {
+        open: Token {
+            kind: OpenParen,
+            symbol: None,
+            span: Span {
+                start: 6,
+                end: 7,
+            },
+        },
+        close: Some(
+            Token {
+                kind: CloseParen,
+                symbol: None,
+                span: Span {
+                    start: 21,
+                    end: 22,
+                },
+            },
+        ),
+        span: Span {
+            start: 6,
+            end: 22,
+        },
+        inner: [
+            Token(
+                Token {
+                    kind: Identifier,
+                    symbol: Some(
+                        Symbol(
+                            9,
+                        ),
+                    ),
+                    span: Span {
+                        start: 7,
+                        end: 8,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Colon,
+                    symbol: None,
+                    span: Span {
+                        start: 8,
+                        end: 9,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Identifier,
+                    symbol: Some(
+                        Symbol(
+                            10,
+                        ),
+                    ),
+                    span: Span {
+                        start: 10,
+                        end: 13,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Comma,
+                    symbol: None,
+                    span: Span {
+                        start: 13,
+                        end: 14,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Identifier,
+                    symbol: Some(
+                        Symbol(
+                            11,
+                        ),
+                    ),
+                    span: Span {
+                        start: 15,
+                        end: 16,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Colon,
+                    symbol: None,
+                    span: Span {
+                        start: 16,
+                        end: 17,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Identifier,
+                    symbol: Some(
+                        Symbol(
+                            10,
+                        ),
+                    ),
+                    span: Span {
+                        start: 18,
+                        end: 21,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Eod,
+                    symbol: None,
+                    span: Span {
+                        start: 21,
+                        end: 22,
+                    },
+                },
+            ),
+        ],
+    },
+    Token(
+        Token {
+            kind: ThinArrow,
+            symbol: None,
+            span: Span {
+                start: 23,
+                end: 25,
+            },
+        },
+    ),
+    Token(
+        Token {
+            kind: Identifier,
+            symbol: Some(
+                Symbol(
+                    10,
+                ),
+            ),
+            span: Span {
+                start: 26,
+                end: 29,
+            },
+        },
+    ),
+    Delimited {
+        open: Token {
+            kind: OpenBrace,
+            symbol: None,
+            span: Span {
+                start: 30,
+                end: 31,
+            },
+        },
+        close: Some(
+            Token {
+                kind: CloseBrace,
+                symbol: None,
+                span: Span {
+                    start: 42,
+                    end: 43,
+                },
+            },
+        ),
+        span: Span {
+            start: 30,
+            end: 43,
+        },
+        inner: [
+            Token(
+                Token {
+                    kind: Identifier,
+                    symbol: Some(
+                        Symbol(
+                            9,
+                        ),
+                    ),
+                    span: Span {
+                        start: 36,
+                        end: 37,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Plus,
+                    symbol: None,
+                    span: Span {
+                        start: 38,
+                        end: 39,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Identifier,
+                    symbol: Some(
+                        Symbol(
+                            11,
+                        ),
+                    ),
+                    span: Span {
+                        start: 40,
+                        end: 41,
+                    },
+                },
+            ),
+            Token(
+                Token {
+                    kind: Eod,
+                    symbol: None,
+                    span: Span {
+                        start: 42,
+                        end: 43,
+                    },
+                },
+            ),
+        ],
+    },
+    Token(
+        Token {
+            kind: Eof,
+            symbol: None,
+            span: Span {
+                start: 44,
+                end: 44,
+            },
+        },
+    ),
+]

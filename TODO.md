@@ -1,0 +1,198 @@
+# TODO
+
+## Now
+
+- Step 1: Emit API (builder methods on `Function`/`DataFlowGraph`)
+
+Add mutation methods so `Lowerer` can construct MIR:
+
+```rust
+// on Function / DataFlowGraph
+fn create_block(&mut self) -> BlockId
+fn append_block_param(&mut self, block: BlockId, ty: TypeId) -> ValueId
+fn append_instruction(&mut self, block: BlockId, inst: Instruction, result_tys: &[TypeId]) -> InstructionId
+fn set_terminator(&mut self, block: BlockId, terminator: Instruction)
+```
+
+References:
+- [InstBuilder](https://docs.rs/cranelift-codegen/latest/cranelift_codegen/ir/trait.InstBuilder.html)
+- [FuncInstBuilder](https://docs.rs/cranelift-frontend/latest/cranelift_frontend/struct.FuncInstBuilder.html)
+
+- Step 2: Braun/variable layer (implement `def_var` / `use_var` in `Lowerer`)
+
+`Lowerer` already has `current_defs: HashMap<(BlockId, LocalBindingId), ValueId>` — that's the Braun state.
+
+Wire up:
+- `def_var(block, binding, value)` → insert into `current_defs`
+- `use_var(block, binding)` → look up; if missing, chase predecessors and insert a block parameter (phi)
+
+References:
+- [Braun et al. paper](https://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf)
+- [FunctionBuilder](https://docs.rs/cranelift-frontend/latest/cranelift_frontend/struct.FunctionBuilder.html)
+- [ssa.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/ssa.rs)
+- [frontend.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs)
+
+- Step 3: Verifier
+
+A sanity-check pass over the finished `Function`. Implement after the lowerer works end-to-end.
+
+- [verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs)
+
+- Step 4: Block sealed/filled state
+
+Add `sealed: HashSet<BlockId>` to `Lowerer`. Not needed until back-edges exist (loops).
+
+- Step 5: Value aliasing
+
+Add `ValueDefinition::Alias(ValueId)` to avoid redundant block parameters (trivial phis) from Braun.
+Needs a `resolve(id) -> ValueId` helper that follows alias chains.
+
+
+- Stage 5: MIR → LLVM IR Codegen
+
+Two-pass strategy (block parameters → LLVM phi nodes):
+
+**Pass 1:** Create all LLVM basic blocks and allocate phi nodes for block parameters.
+
+```rust
+for block in func.layout.blocks() {
+    let llvm_bb = llvm_func.append_basic_block(&ctx, "");
+    bb_map[block] = llvm_bb;
+
+    for (i, &param) in func.dfg.block_params(block).iter().enumerate() {
+        let ty = func.dfg.value_type(param);
+        let phi = builder.build_phi(llvm_ty(ty), "");
+        value_map[param] = phi.as_basic_value();
+        phi_map[block].push(phi);
+    }
+}
+```
+
+**Pass 2:** Emit instructions; on every branch, patch the phi nodes.
+
+```rust
+for block in func.layout.blocks() {
+    builder.position_at_end(bb_map[block]);
+
+    for inst in func.layout.block_insts(block) {
+        match &func.dfg[inst] {
+            InstData::Jump { dest, args } => {
+                for (phi, &arg) in phi_map[*dest].iter().zip(args) {
+                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
+                }
+                builder.build_unconditional_branch(bb_map[*dest]);
+            }
+            InstData::Brif { cond, then_dest, then_args, else_dest, else_args } => {
+                for (phi, &arg) in phi_map[*then_dest].iter().zip(then_args) {
+                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
+                }
+                for (phi, &arg) in phi_map[*else_dest].iter().zip(else_args) {
+                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
+                }
+                let cond_val = value_map[*cond].into_int_value();
+                builder.build_conditional_branch(cond_val, bb_map[*then_dest], bb_map[*else_dest]);
+            }
+            // ... other instructions map straightforwardly
+        }
+    }
+}
+```
+
+
+## Later
+
+- language: array literals (https://www.reddit.com/r/ProgrammingLanguages/comments/1dy9anu/comment/lcdf25s/)
+- language: module system  (https://www.reddit.com/r/ProgrammingLanguages/comments/1k4261j/comment/mo8rfxg/, https://www.reddit.com/r/ProgrammingLanguages/comments/1r6fhq8/comment/o5q5xk2/?context=3)
+- syntactic analysis: benchmark the AST (https://jhwlr.io/super-flat-ast/)
+- lexical analysis: speed up with SIMD (https://bluuewhale.github.io/posts/simd-json/, https://validark.dev/posts/deus-lex-machina/)
+- lexical analysis: add error recovery for unbalanced delimiters
+- syntactic analysis: switch away from explicit binding powers (https://www.scattered-thoughts.net/writing/better-operator-precedence/)
+- syntactic analysis: switch lossless syntax trees (https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html)
+- semantic analysis: introduce fixed-point type inference and `pending_id`
+```
+## Background
+
+The current sema pass is single-pass bidirectional type checking. It works correctly for today's language (direct function calls, no overloading, no generics, no method calls). `error_id` is used as a poison marker: when name resolution fails or a type mismatch is detected, the expression gets `error_id` as its type, and downstream checks that see `error_id` on either side skip emitting further diagnostics.
+
+## The problem this doesn't handle
+
+Type inference and name resolution become interleaved as soon as any of these land:
+
+- method calls (receiver.method(args)): you can't resolve method until you know the type of receiver
+- operator overloading: you can't pick the `impl` until you know operand types
+- generics / type parameters: instantiation may need inference variables to settle first
+
+In those cases, a single left-to-right pass is not enough. The algorithm needs to iterate until it reaches a fixed point (no new information learned in a full pass), then report errors on anything still unresolved.
+
+## What error_id can't express today
+
+Right now `error_id` means two different things:
+- Permanent failure: name resolution failed, a type mismatch was confirmed, etc. There is an error; don't emit cascading diagnostics downstream.
+- Not yet resolved: we haven't seen enough information yet to settle this type. This is not an error; we should retry on the next iteration.
+- A single `error_id` can't distinguish these two cases. Treating "not yet resolved" as a permanent error causes the fixed-point loop to stop making progress when it should keep iterating.
+
+## What needs to change
+
+When fixed-point iteration is introduced, error_id must be split into two distinct type IDs:
+- `error_id`: permanent failure. Poisons downstream expressions. Never retried.
+- `pending_id` (also called `UnresolvedType` in some designs): work in progress. Signals "I don't know yet; come back after more constraints settle." Cleared on each successful iteration; becomes `error_id` only if the fixed point is reached and the type is still `pending_id`.
+
+This is also the moment when an explicit `UnresolvedType` node in the HIR earns its place: it lets the HIR represent a method call or overloaded operation whose resolution is genuinely in-flight, not failed.
+
+## When to do this
+
+Add fixed-point iteration and `pending_id` only when the first feature that requires interleaved inference is implemented (most likely method calls or operator overloading).
+
+## Reference
+
+- https://www.reddit.com/r/Compilers/comments/1i1walt/comment/m7b5m2r/
+- https://www.reddit.com/r/Compilers/comments/9g2d4f/any_resources_or_best_practices_for_error/
+```
+- semantic analysis: Add structural unification and occurs check when Ty variants carry inference variables
+```
+## Background
+
+The current `unify` function handles only flat cases: two unknown variables
+(merge), one unknown variable (pin to concrete), or two concrete scalars
+(fail/succeed). This is correct today because `Ty::Func` is never constructed
+with inference variables inside it — function types are always fully concrete
+by the time `unify` sees them.
+
+## What needs to change
+
+### 1. Structural recursion
+
+When a `Ty` variant carries `TypeId` fields (e.g. `Ty::Func(arg: TypeId,
+ret: TypeId)` with generic parameters), `unify` must recurse into the
+subterms:
+
+unify(Func(a_arg, a_ret), Func(b_arg, b_ret))
+→ unify(a_arg, b_arg)
+→ unify(a_ret, b_ret)
+
+
+
+Without this, two function types that differ only in their type parameters
+would always fail unification even when the parameters could be made equal.
+
+### 2. Occurs check
+
+Before pinning an inference variable `?v` to a concrete type `T`, check that
+`?v` does not appear free inside `T`. If it does, the type is infinite
+(e.g. `?v = List<?v>`) and must be rejected:
+
+occurs_check(?v, T) → error if ?v ∈ free_vars(T)
+union_find.set(?v, T)  // only if check passes
+
+
+
+Without the occurs check, infinite types would cause infinite loops during
+`substitute` / normalization.
+
+## When to do this
+
+When the first `Ty` variant is defined with a `TypeId` field — most likely when generic functions or closures land. The occurs check and structural recursion arms in `unify` should land in the same commit.
+```
+- MIR construction: (https://nonstrict.eu/wwdcindex/wwdc2011/323/?t=397, https://github.com/swiftlang/swift/blob/main/docs/SIL/SIL.md, https://github.com/swiftlang/swift/blob/main/docs/SIL/Instructions.md)
+- MIR construction: switch to `SideHandleMap` from soup
+- syntactic analysis: improve dumper (https://blog.wybxc.cc/blog/pretty-printer-rustc/)
