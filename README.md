@@ -69,4 +69,4 @@ See `docs/tour-of-crawfish.md` for a tour of the language.
 
 ## Documentation
 
-See `docs/ARCHITECTURE.md` for the compiler internals, `docs/testing.md` to learn the testing workflow, and `docs/style-guide.md` for code conventions.
+See [simontran7.github.io/crawfish/](simontran7.github.io/crawfish/) for compiler internals and code documentation, `docs/testing.md` to learn the testing workflow, and `docs/style-guide.md` for code conventions.
