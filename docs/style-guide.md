@@ -11,3 +11,7 @@ More importantly, failing loudly in release builds is better than failing silent
 ## Code Layout
 
 https://www.reddit.com/r/rust/comments/wwbxhw/comment/ilkid50/?screen_view_count=4
+
+## Commit Messages
+
+https://scopedcommits.com/
