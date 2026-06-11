@@ -1,6 +1,6 @@
-use soup::handle_maps::Handle;
-use soup::handle_maps::HandleMap;
-use soup::handle_maps::ReservedValue;
+use soup::handle_map::Handle;
+use soup::handle_map::HandleMap;
+use soup::handle_map::ReservedValue;
 
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;

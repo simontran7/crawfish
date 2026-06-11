@@ -1,7 +1,7 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-use soup::handle_maps::HandleMap;
+use soup::handle_map::HandleMap;
 
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
@@ -398,7 +398,7 @@ impl<T, const KIND: u8> TypedBindingId<T, KIND> {
     }
 }
 
-impl<T, const KIND: u8> soup::handle_maps::Handle for TypedBindingId<T, KIND> {
+impl<T, const KIND: u8> soup::handle_map::Handle for TypedBindingId<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }

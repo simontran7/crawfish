@@ -1,4 +1,4 @@
-use soup::handle_maps::{Handle, HandleMap};
+use soup::handle_map::{Handle, HandleMap};
 
 use crate::front_end::semantic_analysis::types::TypeId;
 

@@ -4,7 +4,7 @@ mod nodes;
 pub use handles::*;
 pub use nodes::*;
 
-use soup::handle_maps::HandleMap;
+use soup::handle_map::HandleMap;
 
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;

@@ -1,4 +1,4 @@
-use soup::handle_maps::Handle;
+use soup::handle_map::Handle;
 use std::marker::PhantomData;
 
 // NOTE:

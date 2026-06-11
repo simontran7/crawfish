@@ -11,8 +11,8 @@
 
 ### Dependencies
 
-- Rust Compiler
-- LLVM
+- [Rust Compiler](https://rust-lang.org/tools/install/)
+- [LLVM](https://releases.llvm.org/)
 
 ### Steps
 
