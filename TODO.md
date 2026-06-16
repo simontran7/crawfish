@@ -47,8 +47,9 @@ Add `sealed: HashSet<BlockId>` to `Lowerer`. Not needed until back-edges exist (
 Add `ValueDefinition::Alias(ValueId)` to avoid redundant block parameters (trivial phis) from Braun.
 Needs a `resolve(id) -> ValueId` helper that follows alias chains.
 
-
 - Stage 5: MIR → LLVM IR Codegen
+
+https://createlang.rs/03_secondlang/ir.html
 
 Two-pass strategy (block parameters → LLVM phi nodes):
 
@@ -97,7 +98,6 @@ for block in func.layout.blocks() {
     }
 }
 ```
-
 
 ## Later
 
