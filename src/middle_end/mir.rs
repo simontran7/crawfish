@@ -119,9 +119,19 @@ pub enum Instruction {
     Unreachable,
 }
 
-/// Two things can define a value:
-/// - An instruction result (e.g., `x` in `let x = a + b`)
-/// - A block parameter (e.g., `x2` in `block_D(x2)`)
+/// The unique definition site of an SSA value.
+///
+/// In SSA form, every value is defined exactly once, at one of two sites:
+///
+/// - [`Result`]: an output of an instruction. The `u8` is the result index,
+///   since one instruction can produce multiple values (e.g. `divmod → (quot, rem)`).
+///
+/// - [`Parameter`]: an incoming parameter of a block. The `u8` is the
+///   parameter index. Block parameters are the SSA equivalent of φ-nodes:
+///   they unify values from different predecessor edges at a control-flow join.
+///
+/// Given a [`ValueDefinition`], you can find the defining instruction or block
+/// and trace the value back to its origin.
 pub enum ValueDefinition {
     Result(InstructionId, u8),
     Parameter(BlockId, u8),
@@ -154,14 +164,10 @@ soup::handle_impl!(pub(crate) SignatureId);
 /// instruction results).
 ///
 /// `start` is the index in the pool's backing storage `ValueListAllocator::data` where this list's
-/// elements begin. The header lives at `start - 1` in the pool, so the
-/// handle stays 4 bytes and remains `Copy` — unlike a `Vec`, which would
-/// be 24 bytes and owned.
-///
-/// `start == 0` signals an empty list. This is safe because valid lists
-/// always have `start >= 1` (`start` is defined as `block + 1` for a
-/// real allocation), leaving `0` permanently available as a sentinel.
-///
+/// elements begin. The live element count lives in the header, at index `start - 1`. This common trick keeps the
+/// handle 4 bytes large and `Copy` (unlike a `Vec`, which would
+/// be 24 bytes and owned).
+/// 
 /// # Safety
 ///
 /// [`ValueList`] is `Copy`, but must be treated as a unique logical owner of its
@@ -183,7 +189,7 @@ pub struct ValueList {
 /// # Layout
 ///
 /// `data` holds every value list contiguously. A value list "points" to a contiguous chunk
-/// of slots called a **block** which splits into:
+/// of slots called a **memory block**. This memory block has three components:
 ///
 /// ```text
 /// [header][elements][spare]
@@ -193,13 +199,25 @@ pub struct ValueList {
 /// 2. **Elements**: the list's actual contents.
 /// 3. **Spare**: reserved slots left over from rounding up to a size class.
 ///
-/// The block's total size (header + elements + spare) is always a power of two,
-/// chosen by [`SizeClass`] to be as small as possible.
+/// Every memory block is sized according to [`SizeClass`].
 ///
-/// A **free list** is an *intrusive* linked list where each node is a free block. Concretely, the `free` field
-/// is a `Vec` that holds all the free lists heads (of type `usize`), which are indexed by [`SizeClass`].
-/// A segregated free list allocator may have at most one free list per size class. A missing free list
-/// is marked by storing at `free[SizeClass]` the value `0` (see [`ValueList`]'s documentation).
+/// A **free list** is an *intrusive* linked list where each node is a *free* block. 
+/// This allocator creates at most one free list per size class. Concretely, `free`
+/// is an array list that maps a [`SizeClass`] as an index, to its free list's head node as element.
+/// As such, for some size class `sz` without a free list, its element at `free[sz]` is the Value`0` (see [`ValueList`]'s documentation).
+/// Every free block's header is `ValueId(0)`, and the free list's node's next pointer is also embedded in `data` as a `ValueId`.
+/// The tail node of a free list's next pointer is `0`.
+///
+/// A free block may be visualized as follows:
+/// ```text
+///               free[<size class>] = <head>
+///                                      │
+///                                      ▼
+///      data: [ ... | ValueId(0) | ValueId(<next pointer>) | ... | ... | ... | ... | ... | ... | ... ]           
+///                        ^            ^                                   ^    ^           ^
+///                        |            └───────────────────────────────────┘    └───────-───┘
+///                    header slot              element slots                    spare slot
+/// ```
 ///
 /// NOTE: No coalescing is needed because freed blocks are reused within their size
 /// class as-is. Additionally, no pointer patching is needed on realloc because [`ValueList`]
@@ -212,7 +230,7 @@ pub struct ValueListAllocator {
 }
 
 /// Size class for the pool's segregated free lists.
-/// A size class of size `n` spans `4 << n` slots (4, 8, 16, 32, ...).
+/// A size class `n` (0, 1, 2, ...) spans `4 << n` slots (4, 8, 16, 32, ...).
 #[derive(Clone, Copy)]
 struct SizeClass(u8);
 
@@ -233,6 +251,13 @@ struct InstructionNode {
 }
 
 impl ValueList {
+    /// Marks an empty list.
+    /// 
+    /// 0 may be used as the empty sentinel value because non-empty lists
+    /// *always* have a `start` >= 1 (give that 1 is lowest possible `start` 
+    /// that would be able to accomodate a header `start - 1` within [0, ...]).
+    const EMPTY: u32 = 0;
+
     /// Creates and returns a new, empty list.
     pub(crate) fn new() -> Self {
         Self::default()
@@ -266,7 +291,7 @@ impl ValueList {
 
     /// Returns whether the list has no elements.
     pub(crate) const fn is_empty(&self) -> bool {
-        self.start == 0
+        self.start == ValueList::EMPTY
     }
 
     /// Returns the list's elements as a slice, or an empty slice if the list
@@ -331,7 +356,7 @@ impl ValueList {
         if let Some(count) = self.count(allocator) {
             allocator.free(self.start as usize - 1, count);
         }
-        self.start = 0;
+        self.start = ValueList::EMPTY;
     }
 }
 
@@ -361,7 +386,7 @@ impl ValueListAllocator {
         // If the size class's free list is not empty (i.e., it has a recycled free block),
         // pop the head and return it.
         if let Some(&head) = self.free.get(size_class.0 as usize)
-            && head > 0
+            && head > 0 // checks that the next pointer is *not* 0, which indicates it is at tail node of the free list
         {
             let next = self.data[head];
             self.free[size_class.0 as usize] = next.index();
@@ -370,7 +395,7 @@ impl ValueListAllocator {
             // Otherwise, allocate at the end of `data` a chunk of slots based on the smallest size class for `count`
             let header_idx = self.data.len();
             self.data
-                .resize(header_idx + size_class.count(), ValueId::reserved());
+                .resize(header_idx + size_class.capacity(), ValueId::reserved());
             header_idx
         }
     }
@@ -446,7 +471,7 @@ impl SizeClass {
     }
 
     /// Returns the number of slots that a size class may accomodate.
-    const fn count(&self) -> usize {
+    const fn capacity(&self) -> usize {
         4 << self.0
     }
 
