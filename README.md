@@ -11,8 +11,8 @@
 
 ### Dependencies
 
-- [Rust Compiler](https://rust-lang.org/tools/install/)
-- [LLVM](https://releases.llvm.org/)
+- Rust Compiler
+- LLVM
 
 ### Steps
 
@@ -21,12 +21,12 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-2. Install `llvm-config-20` and `libpolly-20-dev`
+2. Install `llvm-config-22` and `libpolly-22-dev`
 ```sh
 wget https://apt.llvm.org/llvm.sh
 chmod +x llvm.sh
-sudo ./llvm.sh 20
-sudo apt install libpolly-20-dev
+sudo ./llvm.sh 22
+sudo apt install libpolly-22-dev
 ```
 
 3. Git clone the repository
