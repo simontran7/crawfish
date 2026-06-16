@@ -291,7 +291,7 @@ impl ValueList {
 
     /// Returns whether the list has no elements.
     pub(crate) const fn is_empty(&self) -> bool {
-        self.start == ValueList::EMPTY
+        self.start == Self::EMPTY
     }
 
     /// Returns the list's elements as a slice, or an empty slice if the list
@@ -356,7 +356,7 @@ impl ValueList {
         if let Some(count) = self.count(allocator) {
             allocator.free(self.start as usize - 1, count);
         }
-        self.start = ValueList::EMPTY;
+        self.start = Self::EMPTY;
     }
 }
 
