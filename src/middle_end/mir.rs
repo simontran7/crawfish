@@ -167,7 +167,7 @@ soup::handle_impl!(pub(crate) SignatureId);
 /// elements begin. The live element count lives in the header, at index `start - 1`. This common trick keeps the
 /// handle 4 bytes large and `Copy` (unlike a `Vec`, which would
 /// be 24 bytes and owned).
-/// 
+///
 /// # Safety
 ///
 /// [`ValueList`] is `Copy`, but must be treated as a unique logical owner of its
@@ -201,7 +201,7 @@ pub struct ValueList {
 ///
 /// Every memory block is sized according to [`SizeClass`].
 ///
-/// A **free list** is an *intrusive* linked list where each node is a *free* block. 
+/// A **free list** is an *intrusive* linked list where each node is a *free* block.
 /// This allocator creates at most one free list per size class. Concretely, `free`
 /// is an array list that maps a [`SizeClass`] as an index, to its free list's head node as element.
 /// As such, for some size class `sz` without a free list, its element at `free[sz]` is the Value`0` (see [`ValueList`]'s documentation).
@@ -252,9 +252,9 @@ struct InstructionNode {
 
 impl ValueList {
     /// Marks an empty list.
-    /// 
+    ///
     /// 0 may be used as the empty sentinel value because non-empty lists
-    /// *always* have a `start` >= 1 (give that 1 is lowest possible `start` 
+    /// *always* have a `start` >= 1 (give that 1 is lowest possible `start`
     /// that would be able to accomodate a header `start - 1` within [0, ...]).
     const EMPTY: u32 = 0;
 
@@ -386,7 +386,8 @@ impl ValueListAllocator {
         // If the size class's free list is not empty (i.e., it has a recycled free block),
         // pop the head and return it.
         if let Some(&head) = self.free.get(size_class.0 as usize)
-            && head > 0 // checks that the next pointer is *not* 0, which indicates it is at tail node of the free list
+            && head > 0
+        // checks that the next pointer is *not* 0, which indicates it is at tail node of the free list
         {
             let next = self.data[head];
             self.free[size_class.0 as usize] = next.index();
