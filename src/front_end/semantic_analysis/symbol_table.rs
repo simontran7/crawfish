@@ -56,7 +56,7 @@ impl SymbolTable {
 
     /// Pops the innermost scope, discarding its bindings.
     pub(crate) fn exit_scope(&mut self) {
-        self.scopes.pop().expect("pop on empty scope stack");
+        self.scopes.pop().unwrap();
     }
 
     /// Binds `name` to `binding_id` in the innermost scope. Fails with
@@ -70,7 +70,7 @@ impl SymbolTable {
         let scope = self
             .scopes
             .last_mut()
-            .expect("tried adding a binding with no active scope");
+            .unwrap();
         if let Some(&prev_binding_id) = scope.bindings.get(&name) {
             return Err(DefineError::AlreadyDefined { prev_binding_id });
         }

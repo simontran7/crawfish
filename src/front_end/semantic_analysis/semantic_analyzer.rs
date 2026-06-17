@@ -374,7 +374,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
             .type_interner
             .as_func(func_ty)
             .map(|(params, ret)| (params.to_vec(), ret))
-            .expect("hoisted function must have Func type");
+            .unwrap();
 
         self.symbol_table.enter_scope(ScopeKind::ItemBoundary);
 
