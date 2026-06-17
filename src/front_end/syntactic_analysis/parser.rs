@@ -3,13 +3,15 @@ use crate::common::string_interner::StringInterner;
 use crate::diagnostics::syntactic_diagnostics::SyntacticDiagnostic;
 use crate::front_end::lexical_analysis::token::{LitKind, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
-use crate::front_end::syntactic_analysis::ast::{
-    Ast, BinOp, BlockExpressionId, BooleanLiteralId, ConstantDefinitionId, ErrorExpressionId,
-    ErrorItemId, ErrorParameterId, ErrorStatementId, ExpressionId, ExpressionStatementId,
-    FunctionCallId, FunctionDefinitionId, IfExpressionId, IntegerLiteralId, ItemId,
-    ItemStatementId, LetStatementId, ParameterId, PatternId, ReturnId, StatementId, StatementKind,
-    TypeAnnotationId, UnOp, UnaryOperationId, ValidParameterId, VariableId,
+use crate::front_end::syntactic_analysis::ast::Ast;
+use crate::front_end::syntactic_analysis::ast::handles::{
+    BlockExpressionId, BooleanLiteralId, ConstantDefinitionId, ErrorExpressionId, ErrorItemId,
+    ErrorParameterId, ErrorStatementId, ExpressionId, ExpressionStatementId, FunctionCallId,
+    FunctionDefinitionId, IfExpressionId, IntegerLiteralId, ItemId, ItemStatementId,
+    LetStatementId, ParameterId, PatternId, ReturnId, StatementId, StatementKind, TypeAnnotationId,
+    UnaryOperationId, ValidParameterId, VariableId,
 };
+use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 
 /// A recursive-descent and Pratt parser that turns a [`TokenTree`] stream
 /// into an [`Ast`].
@@ -77,7 +79,7 @@ impl<'a> Parser<'a> {
 
     /// Parses one top-level item (a [`TokenKind::Func`] or
     /// [`TokenKind::Const`] item) and appends it to
-    /// [`crate::front_end::syntactic_analysis::ast::SourceFileNode::items`].
+    /// [`crate::front_end::syntactic_analysis::ast::nodes::SourceFileNode::items`].
     ///
     /// If the next token starts neither, it is consumed as an
     /// [`SyntacticDiagnostic::InvalidTopLevelItem`], the cursor is
@@ -345,7 +347,7 @@ impl<'a> Parser<'a> {
     /// Parses an expression, optionally followed by a `;`.
     ///
     /// Whether the `;` was present is recorded on the
-    /// [`crate::front_end::syntactic_analysis::ast::ExpressionStatementNode`]
+    /// [`crate::front_end::syntactic_analysis::ast::nodes::ExpressionStatementNode`]
     /// itself: [`Parser::parse_block_expression`] uses this to decide
     /// whether the last statement in a block is a tail expression (no `;`)
     /// or a true statement (`;` present).

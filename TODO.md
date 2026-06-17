@@ -2,23 +2,7 @@
 
 ## Now
 
-- Step 1: Emit API (builder methods on `Function`/`DataFlowGraph`)
-
-Add mutation methods so `Lowerer` can construct MIR:
-
-```rust
-// on Function / DataFlowGraph
-fn create_block(&mut self) -> BlockId
-fn append_block_param(&mut self, block: BlockId, ty: TypeId) -> ValueId
-fn append_instruction(&mut self, block: BlockId, inst: Instruction, result_tys: &[TypeId]) -> InstructionId
-fn set_terminator(&mut self, block: BlockId, terminator: Instruction)
-```
-
-References:
-- [InstBuilder](https://docs.rs/cranelift-codegen/latest/cranelift_codegen/ir/trait.InstBuilder.html)
-- [FuncInstBuilder](https://docs.rs/cranelift-frontend/latest/cranelift_frontend/struct.FuncInstBuilder.html)
-
-- Step 2: Braun/variable layer (implement `def_var` / `use_var` in `Lowerer`)
+- Braun/variable layer (implement `def_var` / `use_var` in `Lowerer`)
 
 `Lowerer` already has `current_defs: HashMap<(BlockId, LocalBindingId), ValueId>` — that's the Braun state.
 
@@ -32,22 +16,22 @@ References:
 - [ssa.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/ssa.rs)
 - [frontend.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs)
 
-- Step 3: Verifier
+- Verifier
 
 A sanity-check pass over the finished `Function`. Implement after the lowerer works end-to-end.
 
 - [verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs)
 
-- Step 4: Block sealed/filled state
+- Block sealed/filled state
 
 Add `sealed: HashSet<BlockId>` to `Lowerer`. Not needed until back-edges exist (loops).
 
-- Step 5: Value aliasing
+- Value aliasing
 
 Add `ValueDefinition::Alias(ValueId)` to avoid redundant block parameters (trivial phis) from Braun.
 Needs a `resolve(id) -> ValueId` helper that follows alias chains.
 
-- Stage 5: MIR → LLVM IR Codegen
+- MIR → LLVM IR Codegen
 
 https://createlang.rs/03_secondlang/ir.html
 

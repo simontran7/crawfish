@@ -9,6 +9,7 @@ use crate::front_end::semantic_analysis::symbol_table::{DefineError, ScopeKind, 
 use crate::front_end::semantic_analysis::types::{InferTy, Ty, TypeId, TypeInterner};
 use crate::front_end::semantic_analysis::unification_table::UnificationTable;
 use crate::front_end::syntactic_analysis::ast::{self, Ast};
+use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 
 /// Lowers an [`Ast`] to [`Hir`] while performing name resolution and type
 /// inference.
@@ -115,13 +116,15 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         for &ast_item_id in &self.ast.source_file_items[start..start + len] {
             let item_id = match ast_item_id.kind() {
-                ast::ItemKind::FunctionDefinition => {
+                ast::handles::ItemKind::FunctionDefinition => {
                     self.typecheck_function_definition(ast_item_id.index().into())
                 }
-                ast::ItemKind::ConstantDefinition => {
+                ast::handles::ItemKind::ConstantDefinition => {
                     self.typecheck_constant_definition(ast_item_id.index().into())
                 }
-                ast::ItemKind::Error => unreachable!("error items cannot reach semantic analysis"),
+                ast::handles::ItemKind::Error => {
+                    unreachable!("error items cannot reach semantic analysis")
+                }
             };
             root_item_ids.push(item_id);
         }
@@ -259,18 +262,18 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// adds an item binding for it via [`Hir::add_item_binding`], without
     /// type-checking its body or value.
     ///
-    /// A [`crate::front_end::syntactic_analysis::ast::FunctionDefinitionNode`]
+    /// A [`ast::nodes::FunctionDefinitionNode`]
     /// gets a [`Ty::Func`] built from its parameter and return type
     /// annotations (resolved via
     /// [`SemanticAnalyzer::resolve_type_annotation`]); a
-    /// [`crate::front_end::syntactic_analysis::ast::ConstantDefinitionNode`]
+    /// [`ast::nodes::ConstantDefinitionNode`]
     /// gets the [`TypeId`] of its annotation directly. Either way, a
     /// duplicate name in the current scope is reported as
     /// [`SemanticDiagnostic::DuplicateDefinition`] but doesn't prevent the
     /// new binding from being added (shadowing the old one).
-    fn collect_item_definition(&mut self, id: ast::ItemId) {
+    fn collect_item_definition(&mut self, id: ast::handles::ItemId) {
         match id.kind() {
-            ast::ItemKind::FunctionDefinition => {
+            ast::handles::ItemKind::FunctionDefinition => {
                 let node = &self.ast.function_definitions[id.index().into()];
 
                 // resolve each parameter's type annotation to a TypeId
@@ -321,7 +324,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     });
                 }
             }
-            ast::ItemKind::ConstantDefinition => {
+            ast::handles::ItemKind::ConstantDefinition => {
                 let node = &self.ast.constant_definitions[id.index().into()];
 
                 // resolve the type annotation to a TypeId
@@ -343,7 +346,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     });
                 }
             }
-            ast::ItemKind::Error => unreachable!("error statements cannot reach semantic analysis"),
+            ast::handles::ItemKind::Error => {
+                unreachable!("error statements cannot reach semantic analysis")
+            }
         }
     }
 
@@ -358,7 +363,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// expressions against it, and type-checks the body via
     /// [`SemanticAnalyzer::analyze_block`] with the return type as the
     /// expected type.
-    fn typecheck_function_definition(&mut self, id: ast::FunctionDefinitionId) -> ItemId {
+    fn typecheck_function_definition(&mut self, id: ast::handles::FunctionDefinitionId) -> ItemId {
         let node = &self.ast.function_definitions[id];
 
         // grab parameter type handle and return type handle
@@ -432,7 +437,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// Type-checks and lowers a constant definition's value expression
     /// against the [`TypeId`] already recorded for it by
     /// [`SemanticAnalyzer::collect_item_definition`].
-    fn typecheck_constant_definition(&mut self, id: ast::ConstantDefinitionId) -> ItemId {
+    fn typecheck_constant_definition(&mut self, id: ast::handles::ConstantDefinitionId) -> ItemId {
         let node = &self.ast.constant_definitions[id];
 
         // get the binding id
@@ -464,7 +469,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// `else` branch).
     fn analyze_block(
         &mut self,
-        id: ast::BlockExpressionId,
+        id: ast::handles::BlockExpressionId,
         expected: Option<TypeId>,
     ) -> ExpressionId {
         self.symbol_table.enter_scope(ScopeKind::Normal);
@@ -480,12 +485,12 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// reference each other) are already bound by the time
     /// [`SemanticAnalyzer::typecheck_block`] processes the block's
     /// statements in order.
-    fn collect_block_statements(&mut self, id: ast::BlockExpressionId) {
+    fn collect_block_statements(&mut self, id: ast::handles::BlockExpressionId) {
         let node = &self.ast.block_expressions[id];
         let start = node.statements.start as usize;
         let len = node.statements.len as usize;
         for &ast_statement_id in &self.ast.block_statements[start..start + len] {
-            if ast_statement_id.kind() == ast::StatementKind::ItemStatement {
+            if ast_statement_id.kind() == ast::handles::StatementKind::ItemStatement {
                 self.collect_item_definition(
                     self.ast.item_statements[ast_statement_id.index().into()].item,
                 );
@@ -505,7 +510,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// a missing tail makes the block unit with no constraint needed.
     fn typecheck_block(
         &mut self,
-        id: ast::BlockExpressionId,
+        id: ast::handles::BlockExpressionId,
         expected: Option<TypeId>,
     ) -> ExpressionId {
         let node = &self.ast.block_expressions[id];
@@ -559,19 +564,19 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
     /// Type-checks and lowers one statement.
     ///
-    /// An [`ast::StatementKind::ExpressionStatement`] is inferred via
+    /// An [`ast::handles::StatementKind::ExpressionStatement`] is inferred via
     /// [`SemanticAnalyzer::infer`] (its type is discarded; only side effects
-    /// matter for a statement). An [`ast::StatementKind::ItemStatement`]
+    /// matter for a statement). An [`ast::handles::StatementKind::ItemStatement`]
     /// dispatches to [`SemanticAnalyzer::typecheck_function_definition`] or
     /// [`SemanticAnalyzer::typecheck_constant_definition`] (the binding
     /// itself was already added by
     /// [`SemanticAnalyzer::collect_block_statements`]). An
-    /// [`ast::StatementKind::LetStatement`] resolves its optional type
+    /// [`ast::handles::StatementKind::LetStatement`] resolves its optional type
     /// annotation, type-checks `value` against it (or infers if absent),
     /// and adds a new local binding for the pattern.
-    fn typecheck_statement(&mut self, id: ast::StatementId) -> StatementId {
+    fn typecheck_statement(&mut self, id: ast::handles::StatementId) -> StatementId {
         match id.kind() {
-            ast::StatementKind::ExpressionStatement => {
+            ast::handles::StatementKind::ExpressionStatement => {
                 let node = &self.ast.expression_statements[id.index().into()];
 
                 // type-check and lower the expression in the statement
@@ -586,17 +591,17 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     node.span,
                 )
             }
-            ast::StatementKind::ItemStatement => {
+            ast::handles::StatementKind::ItemStatement => {
                 let node = &self.ast.item_statements[id.index().into()];
 
                 let item_id = match node.item.kind() {
-                    ast::ItemKind::FunctionDefinition => {
+                    ast::handles::ItemKind::FunctionDefinition => {
                         self.typecheck_function_definition(node.item.index().into())
                     }
-                    ast::ItemKind::ConstantDefinition => {
+                    ast::handles::ItemKind::ConstantDefinition => {
                         self.typecheck_constant_definition(node.item.index().into())
                     }
-                    ast::ItemKind::Error => {
+                    ast::handles::ItemKind::Error => {
                         unreachable!("error statements cannot reach semantic analysis")
                     }
                 };
@@ -604,7 +609,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 self.hir
                     .add_statement(StatementKind::Item { item: item_id }, node.span)
             }
-            ast::StatementKind::LetStatement => {
+            ast::handles::StatementKind::LetStatement => {
                 let node = &self.ast.let_statements[id.index().into()];
 
                 // resolve the type annotation (if present) to a TypeId
@@ -647,7 +652,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     node.span,
                 )
             }
-            ast::StatementKind::Error => {
+            ast::handles::StatementKind::Error => {
                 unreachable!("error statements cannot reach semantic analysis")
             }
         }
@@ -661,29 +666,29 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// equal `ty` via [`Constraint::Equality`] with
     /// [`Provenance::TypeMismatch`]. Two cases are handled directly instead,
     /// because checking against `ty` gives more information than inferring
-    /// would: an [`ast::ExpressionKind::IntegerLiteral`] checked against a
+    /// would: an [`ast::handles::ExpressionKind::IntegerLiteral`] checked against a
     /// concrete integer type is lowered with that exact type rather than a
     /// fresh [`InferTy::IntVar`], and an
-    /// [`ast::ExpressionKind::BinaryOperation`] with an arithmetic operator
+    /// [`ast::handles::ExpressionKind::BinaryOperation`] with an arithmetic operator
     /// checks both operands against `ty` directly so e.g. `1 + 2` checked
     /// against `u8` lowers both literals as `u8` rather than unifying two
     /// separate [`InferTy::IntVar`]s.
-    fn check(&mut self, id: ast::ExpressionId, ty: TypeId) -> ExpressionId {
+    fn check(&mut self, id: ast::handles::ExpressionId, ty: TypeId) -> ExpressionId {
         match (id.kind(), self.type_interner.resolve(ty).unwrap()) {
-            (ast::ExpressionKind::IntegerLiteral, Ty::Signed(_) | Ty::Unsigned(_)) => {
+            (ast::handles::ExpressionKind::IntegerLiteral, Ty::Signed(_) | Ty::Unsigned(_)) => {
                 let node = &self.ast.integer_literals[id.index().into()];
                 self.hir
                     .add_expression(ExpressionKind::Integer(node.value), ty, node.span)
             }
-            (ast::ExpressionKind::UnitLiteral, Ty::Unit) => {
+            (ast::handles::ExpressionKind::UnitLiteral, Ty::Unit) => {
                 let node = &self.ast.unit_literals[id.index().into()];
                 self.hir.add_expression(ExpressionKind::Unit, ty, node.span)
             }
-            (ast::ExpressionKind::BinaryOperation, _) => {
+            (ast::handles::ExpressionKind::BinaryOperation, _) => {
                 let node = &self.ast.binary_operations[id.index().into()];
 
                 match node.operator {
-                    ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                         // type-check and lower lhs
                         let lhs_id = self.check(node.lhs, ty);
 
@@ -740,22 +745,22 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
     /// Type-checks and lowers an expression without an expected type
     /// (bidirectional type checking's "inference" mode), dispatching on the
-    /// [`ast::ExpressionKind`].
+    /// [`ast::handles::ExpressionKind`].
     ///
     /// A literal is lowered with its natural type: unit, [`Ty::Bool`], or
-    /// (for [`ast::ExpressionKind::IntegerLiteral`]) a fresh
+    /// (for [`ast::handles::ExpressionKind::IntegerLiteral`]) a fresh
     /// [`InferTy::IntVar`] via [`SemanticAnalyzer::fresh_int_var`], since the
     /// literal's concrete integer type isn't known until it's used (e.g.
     /// assigned to a typed binding or compared against a typed value).
     /// Compound expressions dispatch to their own `typecheck_*` method.
-    fn infer(&mut self, id: ast::ExpressionId) -> ExpressionId {
+    fn infer(&mut self, id: ast::handles::ExpressionId) -> ExpressionId {
         match id.kind() {
-            ast::ExpressionKind::UnitLiteral => {
+            ast::handles::ExpressionKind::UnitLiteral => {
                 let node = &self.ast.unit_literals[id.index().into()];
                 self.hir
                     .add_expression(ExpressionKind::Unit, self.type_interner.unit_id, node.span)
             }
-            ast::ExpressionKind::BooleanLiteral => {
+            ast::handles::ExpressionKind::BooleanLiteral => {
                 let node = &self.ast.boolean_literals[id.index().into()];
                 self.hir.add_expression(
                     ExpressionKind::Boolean(node.value),
@@ -763,25 +768,31 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     node.span,
                 )
             }
-            ast::ExpressionKind::IntegerLiteral => {
+            ast::handles::ExpressionKind::IntegerLiteral => {
                 let node = &self.ast.integer_literals[id.index().into()];
                 let ty = self.fresh_int_var();
                 self.hir
                     .add_expression(ExpressionKind::Integer(node.value), ty, node.span)
             }
-            ast::ExpressionKind::Variable => self.typecheck_variable(id.index().into()),
-            ast::ExpressionKind::UnaryOperation => {
+            ast::handles::ExpressionKind::Variable => self.typecheck_variable(id.index().into()),
+            ast::handles::ExpressionKind::UnaryOperation => {
                 self.typecheck_unary_operation(id.index().into())
             }
-            ast::ExpressionKind::BinaryOperation => {
+            ast::handles::ExpressionKind::BinaryOperation => {
                 self.typecheck_binary_operation(id.index().into())
             }
-            ast::ExpressionKind::IfExpression => self.typecheck_if_expression(id.index().into()),
-            ast::ExpressionKind::Return => self.typecheck_return(id.index().into()),
-            ast::ExpressionKind::Assign => self.typecheck_assign(id.index().into()),
-            ast::ExpressionKind::FunctionCall => self.typecheck_function_call(id.index().into()),
-            ast::ExpressionKind::BlockExpression => self.analyze_block(id.index().into(), None),
-            ast::ExpressionKind::Error => {
+            ast::handles::ExpressionKind::IfExpression => {
+                self.typecheck_if_expression(id.index().into())
+            }
+            ast::handles::ExpressionKind::Return => self.typecheck_return(id.index().into()),
+            ast::handles::ExpressionKind::Assign => self.typecheck_assign(id.index().into()),
+            ast::handles::ExpressionKind::FunctionCall => {
+                self.typecheck_function_call(id.index().into())
+            }
+            ast::handles::ExpressionKind::BlockExpression => {
+                self.analyze_block(id.index().into(), None)
+            }
+            ast::handles::ExpressionKind::Error => {
                 unreachable!("error expressions cannot reach semantic analysis")
             }
         }
@@ -795,7 +806,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`BindingId::ERROR`] with [`TypeInterner::error_id`], so that uses of
     /// the bad variable don't cascade into further diagnostics (see
     /// [`SemanticAnalyzer::constrain`]'s error-type poisoning).
-    fn typecheck_variable(&mut self, id: ast::VariableId) -> ExpressionId {
+    fn typecheck_variable(&mut self, id: ast::handles::VariableId) -> ExpressionId {
         let node = &self.ast.variables[id];
         let binding_id = self.symbol_table.find_binding(node.symbol);
 
@@ -827,11 +838,11 @@ impl<'ast> SemanticAnalyzer<'ast> {
             .add_expression(ExpressionKind::Variable(binding_id), ty, node.span)
     }
 
-    /// Type-checks a prefix unary operation: [`ast::UnOp::Not`] constrains
+    /// Type-checks a prefix unary operation: [`UnOp::Not`] constrains
     /// its operand to [`Ty::Bool`] and produces [`Ty::Bool`];
-    /// [`ast::UnOp::Neg`] constrains its operand to a fresh
+    /// [`UnOp::Neg`] constrains its operand to a fresh
     /// [`InferTy::IntVar`] and produces the operand's own type.
-    fn typecheck_unary_operation(&mut self, id: ast::UnaryOperationId) -> ExpressionId {
+    fn typecheck_unary_operation(&mut self, id: ast::handles::UnaryOperationId) -> ExpressionId {
         let node = &self.ast.unary_operations[id];
 
         // type-check and lower the rhs
@@ -839,7 +850,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // determine result type and constrain operand type
         let ty = match node.operator {
-            ast::UnOp::Not => {
+            UnOp::Not => {
                 // constraint for the operand to be a boolean
                 self.constrain(Constraint::Equality {
                     expected: self.type_interner.bool_id,
@@ -850,7 +861,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 });
                 self.type_interner.bool_id
             }
-            ast::UnOp::Neg => {
+            UnOp::Neg => {
                 // constraint for the operand to be numeric
                 let int_ty = self.fresh_int_var();
                 self.constrain(Constraint::Equality {
@@ -875,8 +886,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         )
     }
 
-    /// Type-checks an infix binary operation, with rules depending on
-    /// [`ast::BinOp`]:
+    /// Type-checks an infix binary operation:
     /// - Arithmetic (`+`, `-`, `*`, `/`): operands must match each other and
     ///   be numeric (constrained against a fresh [`InferTy::IntVar`]);
     ///   result type is the operands' shared type.
@@ -886,7 +896,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     ///   result type is [`Ty::Bool`].
     /// - Equality (`==`, `!=`): operands must match each other (any type);
     ///   result type is [`Ty::Bool`].
-    fn typecheck_binary_operation(&mut self, id: ast::BinaryOperationId) -> ExpressionId {
+    fn typecheck_binary_operation(&mut self, id: ast::handles::BinaryOperationId) -> ExpressionId {
         let node = &self.ast.binary_operations[id];
 
         // type-check and lower lhs
@@ -898,7 +908,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         // determine result type and constrain operand type
         let ty = match node.operator {
             // arithmetic: both sides must be the same integer type; result type is `lhs`'s type
-            ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div => {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                 // constraint so that lhs and rhs have the same type
                 self.constrain(Constraint::Equality {
                     expected: self.hir.expressions[lhs_id].ty,
@@ -920,7 +930,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 self.hir.expressions[lhs_id].ty // arbitrary since by the time constraint solving happens, lhs and rhs will be the same type
             }
             // comparison: both sides must be the same integer type, result type is `Bool`
-            ast::BinOp::Lt | ast::BinOp::Gt => {
+            BinOp::Lt | BinOp::Gt => {
                 // constraint for the lhs and the rhs to be the same type
                 self.constrain(Constraint::Equality {
                     expected: self.hir.expressions[lhs_id].ty,
@@ -942,7 +952,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 self.type_interner.bool_id
             }
             // logical: both sides must be `Bool`, result type is `Bool`
-            ast::BinOp::And | ast::BinOp::Or => {
+            BinOp::And | BinOp::Or => {
                 self.constrain(Constraint::Equality {
                     expected: self.type_interner.bool_id,
                     actual: self.hir.expressions[lhs_id].ty,
@@ -960,7 +970,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 self.type_interner.bool_id
             }
             // equality: both sides must be the same type, result type is `Bool`
-            ast::BinOp::Eq | ast::BinOp::Ne => {
+            BinOp::Eq | BinOp::Ne => {
                 self.constrain(Constraint::Equality {
                     // constraint for the lhs and the rhs to be the same type
                     expected: self.hir.expressions[lhs_id].ty,
@@ -996,7 +1006,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// (whether it was declared `let mut`) is checked later, during MIR
     /// lowering, not here. An assignment expression always has type
     /// [`Ty::Unit`].
-    fn typecheck_assign(&mut self, id: ast::AssignId) -> ExpressionId {
+    fn typecheck_assign(&mut self, id: ast::handles::AssignId) -> ExpressionId {
         let node = &self.ast.assigns[id];
 
         // type-check and lower target
@@ -1058,7 +1068,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// (or inferred, for surplus arguments); the call's type is the
     /// function's return type, or [`TypeInterner::error_id`] if the arity
     /// didn't match.
-    fn typecheck_function_call(&mut self, id: ast::FunctionCallId) -> ExpressionId {
+    fn typecheck_function_call(&mut self, id: ast::handles::FunctionCallId) -> ExpressionId {
         let node = &self.ast.function_calls[id];
         let ast_arg_start = node.arguments.start as usize;
         let ast_arg_len = node.arguments.len as usize;
@@ -1167,7 +1177,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`Provenance::ReturnMissingValue`], since `return;` only type-checks
     /// in a function returning `()`. A `return` expression itself has type
     /// [`TypeInterner::never_id`], since control never proceeds past it.
-    fn typecheck_return(&mut self, id: ast::ReturnId) -> ExpressionId {
+    fn typecheck_return(&mut self, id: ast::handles::ReturnId) -> ExpressionId {
         let node = &self.ast.returns[id];
 
         // type-check and lower return
@@ -1207,7 +1217,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// constrained to [`Ty::Unit`] via [`Provenance::IfWithoutElse`] (an
     /// `if` without `else` can't produce a value), and the expression's type
     /// is [`Ty::Unit`].
-    fn typecheck_if_expression(&mut self, id: ast::IfExpressionId) -> ExpressionId {
+    fn typecheck_if_expression(&mut self, id: ast::handles::IfExpressionId) -> ExpressionId {
         let node = &self.ast.if_expressions[id];
 
         // type-check and lower condition
@@ -1264,7 +1274,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// An unrecognized name is reported as
     /// [`SemanticDiagnostic::UnknownType`] and resolved to
     /// [`TypeInterner::error_id`].
-    fn resolve_type_annotation(&mut self, node: &ast::ValidIdentifierNode) -> TypeId {
+    fn resolve_type_annotation(&mut self, node: &ast::nodes::ValidIdentifierNode) -> TypeId {
         if let Some(ty) = self.type_interner.builtin_type_id(node.symbol) {
             return ty;
         }

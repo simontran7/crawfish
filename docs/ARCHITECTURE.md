@@ -56,27 +56,27 @@ Entry point: `src/main.rs` -> `src/driver.rs::compile()` orchestrates the full p
 | What | Where |
 |---|---|
 | Parser | `parser.rs` -> `Parser::parse()` |
-| AST store + builder methods | `ast.rs` -> `Ast` |
-| Handle/ID types (typed + untyped) | `ast/handles.rs` |
-| Node structs + operator types + typed ID aliases | `ast/nodes.rs` |
+| AST  | `ast.rs` -> `Ast` |
+| Handle (typed and untyped) | `ast/handles.rs` |
+| AST Nodes + operator types + typed ID aliases | `ast/nodes.rs` |
 
 ### Stage 3: Semantic Analysis (`src/front_end/semantic_analysis/`)
 
 | What | Where |
 |---|---|
-| Heart of the analyzer (3-phase: collect -> typecheck -> solve -> substitute) | `semantic_analyzer.rs` -> `SemanticAnalyzer::analyze()` |
-| HIR store + builder methods | `hir.rs` -> `Hir` |
+| Semantic Analyzer | `semantic_analyzer.rs` -> `SemanticAnalyzer::analyze()` |
+| HIR | `hir.rs` -> `Hir` |
 | Type system (`Ty` enum, `TypeInterner`) | `types.rs` |
 | Unification table (union-find for type inference) | `unification_table.rs` |
 | Symbol table (scoped name -> binding map) | `symbol_table.rs` |
 | Constraint types and provenances | `constraints.rs` |
 
-### Stage 4: HIR Lowering (`src/middle_end/`)
+### Stage 4: MIR Lowering (`src/middle_end/`)
 
 | What | Where |
 |---|---|
 | MIR types (SSA CFG with block parameters) | `mir.rs` |
-| Lowerer (stub) | `lowerer.rs` |
+| Lowerer | `lowerer.rs` |
 
 ### Common (`src/common/`)
 
@@ -862,7 +862,7 @@ Any unification variable still unresolved after phase 2 is given a fallback:
 
 After this phase, every HIR node has a concrete type and the HIR is complete (though, it may be erroneous).
 
-## Stage 4: HIR Lowering
+## Stage 4: MIR Lowering
 
 Crawfish introduces a **mid-level intermediate representation (MIR)** between the HIR and LLVM IR.
 

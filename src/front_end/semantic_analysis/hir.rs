@@ -6,7 +6,7 @@ use soup::handle_map::HandleMap;
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
 use crate::front_end::semantic_analysis::types::TypeId;
-use crate::front_end::syntactic_analysis::ast::{BinOp, UnOp};
+use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 
 /// The complete HIR for a source file, produced by type-checking and
 /// lowering the AST.

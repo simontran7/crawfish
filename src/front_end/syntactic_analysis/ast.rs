@@ -1,8 +1,8 @@
-mod handles;
-mod nodes;
+pub mod handles;
+pub mod nodes;
 
-pub use handles::*;
-pub use nodes::*;
+use handles::*;
+use nodes::*;
 
 use soup::handle_map::HandleMap;
 
@@ -73,8 +73,6 @@ pub struct Ast {
 }
 
 impl Ast {
-    // constructor
-
     pub(crate) fn new(source_size: usize) -> Self {
         Self {
             source_file: SourceFileNode {
@@ -122,8 +120,6 @@ impl Ast {
             function_call_arguments: Vec::new(),
         }
     }
-
-    // accessors
 
     /// Returns the [`Span`] of the node `id` refers to, dispatching to the
     /// arena named by [`ItemId::kind`]. Every `span_of_*` accessor below
@@ -209,8 +205,6 @@ impl Ast {
             PatternKind::Error => self.erroneous_patterns[idx.into()].span,
         }
     }
-
-    // modifiers
 
     /// Appends `item` to the [`Ast::source_file_items`] pool and grows
     /// [`SourceFileNode::items`] to cover it. Each call extends the

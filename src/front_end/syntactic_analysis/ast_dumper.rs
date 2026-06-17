@@ -2,16 +2,20 @@ use std::fmt::{self, Write};
 use std::str;
 
 use crate::common::string_interner::StringInterner;
-use crate::front_end::syntactic_analysis::ast::{
-    AssignNode, Ast, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode,
+use crate::front_end::syntactic_analysis::ast::Ast;
+use crate::front_end::syntactic_analysis::ast::handles::{
+    ExpressionId, ExpressionKind, IdentifierId, IdentifierKind, ItemId, ItemKind, ParameterId,
+    ParameterKind, PatternId, PatternKind, StatementId, StatementKind, TypeAnnotationId,
+    TypeAnnotationKind,
+};
+use crate::front_end::syntactic_analysis::ast::nodes::{
+    AssignNode, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode,
     ConstantDefinitionNode, ErrorExpressionNode, ErrorIdentifierNode, ErrorItemNode,
     ErrorParameterNode, ErrorPatternNode, ErrorStatementNode, ErrorTypeAnnotationNode,
-    ExpressionId, ExpressionKind, ExpressionStatementNode, FunctionCallNode,
-    FunctionDefinitionNode, IdentifierId, IdentifierKind, IdentifierPatternNode, IfExpressionNode,
-    IntegerLiteralNode, ItemId, ItemKind, ItemStatementNode, LetStatementNode,
-    NamedTypeAnnotationNode, ParameterId, ParameterKind, PatternId, PatternKind, ReturnNode,
-    StatementId, StatementKind, TypeAnnotationId, TypeAnnotationKind, UnaryOperationNode,
-    UnitLiteralNode, ValidIdentifierNode, ValidParameterNode, VariableNode,
+    ExpressionStatementNode, FunctionCallNode, FunctionDefinitionNode, IdentifierPatternNode,
+    IfExpressionNode, IntegerLiteralNode, ItemStatementNode, LetStatementNode,
+    NamedTypeAnnotationNode, ReturnNode, UnaryOperationNode, UnitLiteralNode, ValidIdentifierNode,
+    ValidParameterNode, VariableNode,
 };
 
 /// Pretty-prints an [`Ast`] as nested `NodeName(field=value, ...)`

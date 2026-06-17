@@ -5,7 +5,7 @@ use soup::handle_map::ReservedValue;
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
 use crate::front_end::semantic_analysis::types::TypeId;
-use crate::front_end::syntactic_analysis::ast::{BinOp, UnOp};
+use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 
 /// A single function's MIR.
 ///
@@ -484,6 +484,31 @@ impl SizeClass {
     /// `count` is 4, 8, 16, 32, ....
     const fn exceeds_capacity(count: usize) -> bool {
         count > 3 && count.is_power_of_two()
+    }
+}
+
+impl Function {
+    // pub(crate) fn create_block(&mut self) -> BlockId {
+    //     self.dfg.blocks.add(Block {
+    //         parameters: ValueList::new(),
+    //     });
+    // }
+
+    pub(crate) fn append_block_parameter(&mut self, block: BlockId, ty: TypeId) -> ValueId {
+        todo!()
+    }
+
+    pub(crate) fn append_instruction(
+        &mut self,
+        block: BlockId,
+        inst: Instruction,
+        result_tys: &[TypeId],
+    ) -> InstructionId {
+        todo!()
+    }
+
+    pub(crate) fn set_terminator(&mut self, block: BlockId, terminator: Instruction) {
+        todo!()
     }
 }
 

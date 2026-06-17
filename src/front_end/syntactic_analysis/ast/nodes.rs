@@ -5,19 +5,6 @@ use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
 use crate::front_end::lexical_analysis::token::TokenKind;
 
-// ----------------------------------
-// Node types
-//
-// This is the untyped AST produced by parsing, before name resolution and
-// type-checking turn it into [`crate::front_end::semantic_analysis::hir::Hir`].
-//
-// Most categories (items, statements, expressions, parameters, identifiers,
-// type annotations, patterns) have an `Error*Node` variant. These are
-// inserted in place of a node that failed to parse, so a single syntax error
-// does not stop the parser from producing a complete tree for the rest of
-// the file.
-// ----------------------------------
-
 /// The root of the AST: the top-level items of a source file.
 #[derive(Debug)]
 pub struct SourceFileNode {
@@ -37,8 +24,9 @@ pub struct FunctionDefinitionNode {
     pub span: Span,
 }
 
-/// A top-level constant: `const name: annotation = value;`. Unlike
-/// [`LetStatementNode`], the type annotation is mandatory.
+/// A top-level constant: `const name: annotation = value;`.
+///
+/// Unlike [`LetStatementNode`], the type annotation is mandatory.
 #[derive(Debug)]
 pub struct ConstantDefinitionNode {
     pub name: IdentifierId,
@@ -108,8 +96,9 @@ pub struct BooleanLiteralNode {
     pub span: Span,
 }
 
-/// A reference to a binding by name. Resolved to a `BindingId` during HIR
-/// lowering.
+/// A reference to a binding by name.
+///
+/// Resolved to a `BindingId` during MIR lowering.
 #[derive(Debug)]
 pub struct VariableNode {
     pub symbol: Symbol,
@@ -133,8 +122,9 @@ pub struct BinaryOperationNode {
     pub span: Span,
 }
 
-/// `if condition { then_branch } else { else_branch }`. `else_branch` is
-/// `None` for an `if` without an `else`.
+/// `if condition { then_branch } else { else_branch }`.
+///
+/// `else_branch` is `None` for an `if` without an `else`.
 #[derive(Debug)]
 pub struct IfExpressionNode {
     pub condition: ExpressionId,
@@ -143,7 +133,9 @@ pub struct IfExpressionNode {
     pub span: Span,
 }
 
-/// `{ statements; tail }`. `tail` is the block's value, if it has one.
+/// `{ statements; tail }`.
+///
+/// `tail` is the block's value, if it has one.
 #[derive(Debug)]
 pub struct BlockExpressionNode {
     pub statements: StatementSlice,
@@ -234,10 +226,6 @@ pub struct ErrorPatternNode {
     pub span: Span,
 }
 
-// ----------------------------------
-// Operator enums
-// ----------------------------------
-
 /// A prefix unary operator.
 #[derive(Debug, Clone, Copy)]
 pub enum UnOp {
@@ -323,59 +311,3 @@ impl BinOp {
         }
     }
 }
-
-// ----------------------------------
-// Typed ID aliases
-// (each ties a node type to its typed handle family and kind discriminant)
-// ----------------------------------
-
-pub type FunctionDefinitionId =
-    TypedItemId<FunctionDefinitionNode, { ItemKind::FunctionDefinition as u8 }>;
-pub type ConstantDefinitionId =
-    TypedItemId<ConstantDefinitionNode, { ItemKind::ConstantDefinition as u8 }>;
-pub type ErrorItemId = TypedItemId<ErrorItemNode, { ItemKind::Error as u8 }>;
-
-pub type ExpressionStatementId =
-    TypedStatementId<ExpressionStatementNode, { StatementKind::ExpressionStatement as u8 }>;
-pub type ItemStatementId =
-    TypedStatementId<ItemStatementNode, { StatementKind::ItemStatement as u8 }>;
-pub type LetStatementId = TypedStatementId<LetStatementNode, { StatementKind::LetStatement as u8 }>;
-pub type ErrorStatementId = TypedStatementId<ErrorStatementNode, { StatementKind::Error as u8 }>;
-
-pub type UnitLiteralId = TypedExpressionId<UnitLiteralNode, { ExpressionKind::UnitLiteral as u8 }>;
-pub type IntegerLiteralId =
-    TypedExpressionId<IntegerLiteralNode, { ExpressionKind::IntegerLiteral as u8 }>;
-pub type BooleanLiteralId =
-    TypedExpressionId<BooleanLiteralNode, { ExpressionKind::BooleanLiteral as u8 }>;
-pub type VariableId = TypedExpressionId<VariableNode, { ExpressionKind::Variable as u8 }>;
-pub type UnaryOperationId =
-    TypedExpressionId<UnaryOperationNode, { ExpressionKind::UnaryOperation as u8 }>;
-pub type BinaryOperationId =
-    TypedExpressionId<BinaryOperationNode, { ExpressionKind::BinaryOperation as u8 }>;
-pub type IfExpressionId =
-    TypedExpressionId<IfExpressionNode, { ExpressionKind::IfExpression as u8 }>;
-pub type BlockExpressionId =
-    TypedExpressionId<BlockExpressionNode, { ExpressionKind::BlockExpression as u8 }>;
-pub type FunctionCallId =
-    TypedExpressionId<FunctionCallNode, { ExpressionKind::FunctionCall as u8 }>;
-pub type AssignId = TypedExpressionId<AssignNode, { ExpressionKind::Assign as u8 }>;
-pub type ReturnId = TypedExpressionId<ReturnNode, { ExpressionKind::Return as u8 }>;
-pub type ErrorExpressionId =
-    TypedExpressionId<ErrorExpressionNode, { ExpressionKind::Error as u8 }>;
-
-pub type ValidParameterId = TypedParameterId<ValidParameterNode, { ParameterKind::Valid as u8 }>;
-pub type ErrorParameterId = TypedParameterId<ErrorParameterNode, { ParameterKind::Error as u8 }>;
-
-pub type ValidIdentifierId =
-    TypedIdentifierId<ValidIdentifierNode, { IdentifierKind::Valid as u8 }>;
-pub type ErrorIdentifierId =
-    TypedIdentifierId<ErrorIdentifierNode, { IdentifierKind::Error as u8 }>;
-
-pub type NamedTypeAnnotationId =
-    TypedTypeAnnotationId<NamedTypeAnnotationNode, { TypeAnnotationKind::Named as u8 }>;
-pub type ErrorTypeAnnotationId =
-    TypedTypeAnnotationId<ErrorTypeAnnotationNode, { TypeAnnotationKind::Error as u8 }>;
-
-pub type IdentifierPatternId =
-    TypedPatternId<IdentifierPatternNode, { PatternKind::Identifier as u8 }>;
-pub type ErrorPatternId = TypedPatternId<ErrorPatternNode, { PatternKind::Error as u8 }>;

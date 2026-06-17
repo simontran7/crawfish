@@ -1,6 +1,16 @@
 use soup::handle_map::Handle;
 use std::marker::PhantomData;
 
+use super::nodes::{
+    AssignNode, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode,
+    ConstantDefinitionNode, ErrorExpressionNode, ErrorIdentifierNode, ErrorItemNode,
+    ErrorParameterNode, ErrorPatternNode, ErrorStatementNode, ErrorTypeAnnotationNode,
+    ExpressionStatementNode, FunctionCallNode, FunctionDefinitionNode, IdentifierPatternNode,
+    IfExpressionNode, IntegerLiteralNode, ItemStatementNode, LetStatementNode,
+    NamedTypeAnnotationNode, ReturnNode, UnaryOperationNode, UnitLiteralNode, ValidIdentifierNode,
+    ValidParameterNode, VariableNode,
+};
+
 // NOTE:
 // Clone/Copy/PartialEq/Eq/Handle are all manual (no derive) because derive
 // adds unwanted bounds like `T: Clone`, but T is purely a phantom marker
@@ -698,10 +708,6 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for PatternId {
     }
 }
 
-// ----------------------------------
-// Slice types
-// ----------------------------------
-
 /// A run of [`ItemId`]s, used by `SourceFileNode::items`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ItemSlice {
@@ -729,3 +735,54 @@ pub struct ParameterSlice {
     pub start: u32,
     pub len: u32,
 }
+
+pub type FunctionDefinitionId =
+    TypedItemId<FunctionDefinitionNode, { ItemKind::FunctionDefinition as u8 }>;
+pub type ConstantDefinitionId =
+    TypedItemId<ConstantDefinitionNode, { ItemKind::ConstantDefinition as u8 }>;
+pub type ErrorItemId = TypedItemId<ErrorItemNode, { ItemKind::Error as u8 }>;
+
+pub type ExpressionStatementId =
+    TypedStatementId<ExpressionStatementNode, { StatementKind::ExpressionStatement as u8 }>;
+pub type ItemStatementId =
+    TypedStatementId<ItemStatementNode, { StatementKind::ItemStatement as u8 }>;
+pub type LetStatementId = TypedStatementId<LetStatementNode, { StatementKind::LetStatement as u8 }>;
+pub type ErrorStatementId = TypedStatementId<ErrorStatementNode, { StatementKind::Error as u8 }>;
+
+pub type UnitLiteralId = TypedExpressionId<UnitLiteralNode, { ExpressionKind::UnitLiteral as u8 }>;
+pub type IntegerLiteralId =
+    TypedExpressionId<IntegerLiteralNode, { ExpressionKind::IntegerLiteral as u8 }>;
+pub type BooleanLiteralId =
+    TypedExpressionId<BooleanLiteralNode, { ExpressionKind::BooleanLiteral as u8 }>;
+pub type VariableId = TypedExpressionId<VariableNode, { ExpressionKind::Variable as u8 }>;
+pub type UnaryOperationId =
+    TypedExpressionId<UnaryOperationNode, { ExpressionKind::UnaryOperation as u8 }>;
+pub type BinaryOperationId =
+    TypedExpressionId<BinaryOperationNode, { ExpressionKind::BinaryOperation as u8 }>;
+pub type IfExpressionId =
+    TypedExpressionId<IfExpressionNode, { ExpressionKind::IfExpression as u8 }>;
+pub type BlockExpressionId =
+    TypedExpressionId<BlockExpressionNode, { ExpressionKind::BlockExpression as u8 }>;
+pub type FunctionCallId =
+    TypedExpressionId<FunctionCallNode, { ExpressionKind::FunctionCall as u8 }>;
+pub type AssignId = TypedExpressionId<AssignNode, { ExpressionKind::Assign as u8 }>;
+pub type ReturnId = TypedExpressionId<ReturnNode, { ExpressionKind::Return as u8 }>;
+pub type ErrorExpressionId =
+    TypedExpressionId<ErrorExpressionNode, { ExpressionKind::Error as u8 }>;
+
+pub type ValidParameterId = TypedParameterId<ValidParameterNode, { ParameterKind::Valid as u8 }>;
+pub type ErrorParameterId = TypedParameterId<ErrorParameterNode, { ParameterKind::Error as u8 }>;
+
+pub type ValidIdentifierId =
+    TypedIdentifierId<ValidIdentifierNode, { IdentifierKind::Valid as u8 }>;
+pub type ErrorIdentifierId =
+    TypedIdentifierId<ErrorIdentifierNode, { IdentifierKind::Error as u8 }>;
+
+pub type NamedTypeAnnotationId =
+    TypedTypeAnnotationId<NamedTypeAnnotationNode, { TypeAnnotationKind::Named as u8 }>;
+pub type ErrorTypeAnnotationId =
+    TypedTypeAnnotationId<ErrorTypeAnnotationNode, { TypeAnnotationKind::Error as u8 }>;
+
+pub type IdentifierPatternId =
+    TypedPatternId<IdentifierPatternNode, { PatternKind::Identifier as u8 }>;
+pub type ErrorPatternId = TypedPatternId<ErrorPatternNode, { PatternKind::Error as u8 }>;
