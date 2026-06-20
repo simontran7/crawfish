@@ -9,13 +9,13 @@ use crate::front_end::syntactic_analysis::parser::Parser;
 
 /// Compiles `source` named `filename`.
 pub fn compile(filename: &str, source: &str) {
+    // interners
     let mut string_interner = StringInterner::new();
     let mut type_interner = TypeInterner::new();
 
     // lexical analysis
     let mut tokenizer = Tokenizer::new(source, &mut string_interner);
     let tokens = tokenizer.tokenize();
-
     let token_trees = match TokenTreeParser::new(tokens).parse() {
         Ok(trees) => trees,
         Err(diagnostics) => {

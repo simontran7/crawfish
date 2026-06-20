@@ -32,7 +32,7 @@ pub struct Function {
 pub struct DataFlowGraph {
     pub(crate) values: HandleMap<ValueId, Value>,
     pub(crate) instructions: HandleMap<InstructionId, Instruction>,
-    pub(crate) instruction_results: HandleMap<InstructionId, ValueList>,
+    pub(crate) instruction_results: SideHandleMap<InstructionId, ValueList>,
     pub(crate) blocks: HandleMap<BlockId, Block>,
     pub(crate) function_references: HandleMap<FunctionReferenceId, FunctionReference>,
     pub(crate) signatures: HandleMap<SignatureId, Signature>,
@@ -49,8 +49,9 @@ pub struct DataFlowGraph {
 ///          inst0 → inst1 → inst2 → ... (last node is the block's terminator)
 pub struct Layout {
     pub(crate) entry: Option<BlockId>,
-    blocks: HandleMap<BlockId, BlockNode>,
-    instructions: HandleMap<InstructionId, InstructionNode>,
+    pub(crate) exit: Option<BlockId>,
+    blocks: SideHandleMap<BlockId, BlockNode>,
+    instructions: SideHandleMap<InstructionId, InstructionNode>,
 }
 
 /// A single SSA value, with its type and the [`ValueDefinition`] that
@@ -488,11 +489,14 @@ impl SizeClass {
 }
 
 impl Function {
-    // pub(crate) fn create_block(&mut self) -> BlockId {
-    //     self.dfg.blocks.add(Block {
-    //         parameters: ValueList::new(),
-    //     });
-    // }
+    pub(crate) fn create_block(&mut self) -> BlockId {
+        let block = Block {
+            parameters: ValueList::new(),
+        };
+        let block_id = self.dfg.blocks.add(block);
+        self.layout.blocks.add(block_id, BlockNode::default());
+        block_id
+    }
 
     pub(crate) fn append_block_parameter(&mut self, block: BlockId, ty: TypeId) -> ValueId {
         todo!()

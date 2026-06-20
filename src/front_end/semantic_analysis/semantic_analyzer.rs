@@ -8,8 +8,8 @@ use crate::front_end::semantic_analysis::hir::{
 use crate::front_end::semantic_analysis::symbol_table::{DefineError, ScopeKind, SymbolTable};
 use crate::front_end::semantic_analysis::types::{InferTy, Ty, TypeId, TypeInterner};
 use crate::front_end::semantic_analysis::unification_table::UnificationTable;
-use crate::front_end::syntactic_analysis::ast::{self, Ast};
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
+use crate::front_end::syntactic_analysis::ast::{self, Ast};
 
 /// Lowers an [`Ast`] to [`Hir`] while performing name resolution and type
 /// inference.

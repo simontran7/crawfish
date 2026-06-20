@@ -67,10 +67,7 @@ impl SymbolTable {
         name: Symbol,
         binding_id: BindingId,
     ) -> Result<(), DefineError> {
-        let scope = self
-            .scopes
-            .last_mut()
-            .unwrap();
+        let scope = self.scopes.last_mut().unwrap();
         if let Some(&prev_binding_id) = scope.bindings.get(&name) {
             return Err(DefineError::AlreadyDefined { prev_binding_id });
         }

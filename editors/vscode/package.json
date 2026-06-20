@@ -1,0 +1,33 @@
+{
+    "name": "crawfish-language",
+    "displayName": "Crawfish",
+    "description": "Syntax highlighting for the Crawfish programming language",
+    "publisher": "simon-tran",
+    "version": "0.1.0",
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "icon": "icon.png",
+    "categories": ["Programming Languages"],
+    "contributes": {
+        "languages": [
+            {
+                "id": "crawfish",
+                "aliases": ["Crawfish", "crw"],
+                "extensions": [".crw"],
+                "configuration": "./language-configuration.json",
+                "icon": {
+                    "light": "./icon.png",
+                    "dark": "./icon.png"
+                }
+            }
+        ],
+        "grammars": [
+            {
+                "language": "crawfish",
+                "scopeName": "source.crw",
+                "path": "./syntaxes/crawfish.tmLanguage.json"
+            }
+        ]
+    }
+}

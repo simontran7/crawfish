@@ -1,0 +1,264 @@
+{
+    "name": "Crawfish",
+    "scopeName": "source.crw",
+    "fileTypes": [
+        "crw"
+    ],
+    "patterns": [
+        {
+            "include": "#constants"
+        },
+        {
+            "include": "#functions"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#punctuation"
+        },
+        {
+            "include": "#variables"
+        }
+    ],
+    "repository": {
+        "constants": {
+            "patterns": [
+                {
+                    "comment": "ALL CAPS constants",
+                    "name": "constant.other.caps.crw",
+                    "match": "\\b[A-Z]{2}[A-Z0-9_]*\\b"
+                },
+                {
+                    "comment": "constant declarations",
+                    "match": "\\b(const)\\s+([a-z][A-Za-z0-9_]*)\\b",
+                    "captures": {
+                        "1": {
+                            "name": "storage.type.crw"
+                        },
+                        "2": {
+                            "name": "variable.other.constant.crw"
+                        }
+                    }
+                },
+                {
+                    "comment": "decimal integers",
+                    "name": "constant.numeric.decimal.crw",
+                    "match": "\\b[0-9][0-9_]*\\b"
+                },
+                {
+                    "comment": "hexadecimal integers",
+                    "name": "constant.numeric.hex.crw",
+                    "match": "\\b0x[0-9a-fA-F_]+\\b"
+                },
+                {
+                    "comment": "octal integers",
+                    "name": "constant.numeric.oct.crw",
+                    "match": "\\b0o[0-7_]+\\b"
+                },
+                {
+                    "comment": "binary integers",
+                    "name": "constant.numeric.bin.crw",
+                    "match": "\\b0b[01_]+\\b"
+                },
+                {
+                    "comment": "booleans",
+                    "name": "constant.language.bool.crw",
+                    "match": "\\b(true|false)\\b"
+                }
+            ]
+        },
+        "functions": {
+            "patterns": [
+                {
+                    "comment": "function definition",
+                    "name": "meta.function.definition.crw",
+                    "begin": "\\b(func)\\s+([A-Za-z_][A-Za-z0-9_]*)(\\()",
+                    "beginCaptures": {
+                        "1": {
+                            "name": "storage.type.crw"
+                        },
+                        "2": {
+                            "name": "entity.name.function.crw"
+                        },
+                        "3": {
+                            "name": "punctuation.brackets.round.crw"
+                        }
+                    },
+                    "end": "(\\{)|(;)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.brackets.curly.crw"
+                        },
+                        "2": {
+                            "name": "punctuation.semi.crw"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "#keywords"
+                        },
+                        {
+                            "include": "#constants"
+                        },
+                        {
+                            "include": "#types"
+                        },
+                        {
+                            "include": "#punctuation"
+                        },
+                        {
+                            "include": "#variables"
+                        }
+                    ]
+                },
+                {
+                    "comment": "function/method calls",
+                    "name": "meta.function.call.crw",
+                    "begin": "([A-Za-z_][A-Za-z0-9_]*)(\\()",
+                    "beginCaptures": {
+                        "1": {
+                            "name": "entity.name.function.crw"
+                        },
+                        "2": {
+                            "name": "punctuation.brackets.round.crw"
+                        }
+                    },
+                    "end": "\\)",
+                    "endCaptures": {
+                        "0": {
+                            "name": "punctuation.brackets.round.crw"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "#constants"
+                        },
+                        {
+                            "include": "#functions"
+                        },
+                        {
+                            "include": "#keywords"
+                        },
+                        {
+                            "include": "#types"
+                        },
+                        {
+                            "include": "#punctuation"
+                        },
+                        {
+                            "include": "#strings"
+                        },
+                        {
+                            "include": "#variables"
+                        }
+                    ]
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "comment": "built-in types",
+                    "name": "entity.name.type.crw",
+                    "match": "\\b(I32|I64|U32|U64|Bool|Unit|Never)\\b"
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "comment": "control flow",
+                    "name": "keyword.control.crw",
+                    "match": "\\b(if|else|return)\\b"
+                },
+                {
+                    "comment": "storage/declaration keywords",
+                    "name": "keyword.other.crw",
+                    "match": "\\b(let|const|func)\\b"
+                },
+                {
+                    "comment": "mutability modifier",
+                    "name": "storage.modifier.crw",
+                    "match": "\\bmut\\b"
+                },
+                {
+                    "comment": "logical operators (keywords)",
+                    "name": "keyword.operator.logical.crw",
+                    "match": "\\b(and|or|not)\\b"
+                },
+                {
+                    "comment": "arrow operator",
+                    "name": "keyword.operator.arrow.crw",
+                    "match": "->"
+                },
+                {
+                    "comment": "comparison operators",
+                    "name": "keyword.operator.comparison.crw",
+                    "match": "==|!="
+                },
+                {
+                    "comment": "comparison operators",
+                    "name": "keyword.operator.comparison.crw",
+                    "match": "[<>]"
+                },
+                {
+                    "comment": "assignment",
+                    "name": "keyword.operator.assignment.crw",
+                    "match": "="
+                },
+                {
+                    "comment": "arithmetic operators",
+                    "name": "keyword.operator.arithmetic.crw",
+                    "match": "[+*/]|-(?!>)"
+                }
+            ]
+        },
+        "punctuation": {
+            "patterns": [
+                {
+                    "comment": "semicolons",
+                    "name": "punctuation.semi.crw",
+                    "match": ";"
+                },
+                {
+                    "comment": "comma",
+                    "name": "punctuation.comma.crw",
+                    "match": ","
+                },
+                {
+                    "comment": "colon",
+                    "name": "punctuation.separator.type-annotation.crw",
+                    "match": ":"
+                },
+                {
+                    "comment": "parentheses",
+                    "name": "punctuation.brackets.round.crw",
+                    "match": "[()]"
+                },
+                {
+                    "comment": "curly braces",
+                    "name": "punctuation.brackets.curly.crw",
+                    "match": "[{}]"
+                },
+                {
+                    "comment": "square brackets",
+                    "name": "punctuation.brackets.square.crw",
+                    "match": "[\\[\\]]"
+                }
+            ]
+        },
+        "variables": {
+            "patterns": [
+                {
+                    "comment": "variables",
+                    "name": "variable.other.crw",
+                    "match": "\\b(?<!(?:[.]))[a-z_][A-Za-z0-9_]*\\b"
+                }
+            ]
+        }
+    }
+}
