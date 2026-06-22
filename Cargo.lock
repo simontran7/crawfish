@@ -723,7 +723,7 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 [[package]]
 name = "soup"
 version = "0.1.0"
-source = "git+https://github.com/simontran7/soup#9b93b66c2454bfd450f74b5c4880759c49c15c4c"
+source = "git+https://github.com/simontran7/soup#a41c50730a9da97cd743221758c24dda6d0eb335"
 
 [[package]]
 name = "syn"

@@ -46,7 +46,7 @@ impl UnificationTable {
 
     /// Allocates a new type variable as its own singleton equivalence class.
     pub(crate) fn make_type_var_set(&mut self) -> TypeVarId {
-        let id = TypeVarId::new(self.type_var_parent.len());
+        let id = TypeVarId::new(self.type_var_parent.count());
         self.type_var_parent.add(id);
         self.type_var_rank.add(0);
         self.type_var_concrete.add(None);
@@ -55,7 +55,7 @@ impl UnificationTable {
 
     /// Allocates a new integer variable as its own singleton equivalence class.
     pub(crate) fn make_int_var_set(&mut self) -> IntVarId {
-        let id = IntVarId::new(self.int_var_parent.len());
+        let id = IntVarId::new(self.int_var_parent.count());
         self.int_var_parent.add(id);
         self.int_var_rank.add(0);
         self.int_var_concrete.add(None);

@@ -1,6 +1,7 @@
 use soup::handle_map::Handle;
 use soup::handle_map::HandleMap;
 use soup::handle_map::ReservedValue;
+use soup::handle_map::SideHandleMap;
 
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
@@ -9,26 +10,47 @@ use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 
 /// A single function's MIR.
 ///
-/// Its signature, the SSA value and instruction graph that defines its body,
-/// the layout that orders blocks and instructions, and the source spans used
-/// to report diagnostics for each instruction.
+/// Its identity (name + signature), its body (an SSA control-flow graph),
+/// and the source spans used to report diagnostics for each instruction.
 pub struct Function {
     pub(crate) name: Symbol,
     pub(crate) signature: Signature,
-
-    pub(crate) dfg: DataFlowGraph,
-    pub(crate) layout: Layout,
-
-    pub(crate) source_locations: HandleMap<InstructionId, Span>,
+    pub(crate) cfg: Cfg,
+    pub(crate) source_locations: SideHandleMap<InstructionId, Span>,
 }
 
-/// The SSA value and instruction graph for a [`Function`].
+/// An SSA control-flow graph.
 ///
-/// Owns every [`Value`], [`Instruction`], [`Block`], [`FunctionReference`],
-/// and [`Signature`] belonging to the function, along with the
-/// [`ValueListAllocator`] that backs every [`ValueList`] reachable from these
-/// tables: block parameters, call and branch arguments, and instruction
-/// results.
+/// The def-use graph [`DataFlowGraph`] that captures data dependencies,
+/// combined with the [`Layout`] that orders blocks and instructions.
+///
+/// For instance:
+/// ```text
+/// Block0(v0: i32, v1: i32): ← block parameters define v0, v1
+///     v2 = Binary Add v0, v1 ← instruction consumes v0,v1 — produces v2
+///     v3 = IntegerLiteral 10 ← produces v3
+///     v4 = Binary Mul v2, v3 ← consumes v2,v3 — produces v4
+///     Jump Block1(v4) ← consumes v4, passes it as block argument
+///
+/// Block1(v5: i32): ← v5 receives v4 from predecessor
+///     Return v5
+/// ```
+pub struct Cfg {
+    pub(crate) dfg: DataFlowGraph,
+    pub(crate) layout: Layout,
+}
+
+/// A def-use graph of Values and Instructions for a [`Function`]
+/// This graph captures what flows where.
+///
+/// There are three kinds of nodes:
+/// - Instruction nodes: consume values (operands) and produce values (results)
+/// - Value nodes: values that are defined exactly once: either as an instruction result or a block parameter
+/// - Block nodes: groups instructions and have parameters (the SSA replacement for phi nodes)
+///
+/// And there are two kinds of edges:
+/// - Def edges: connects a definer (instruction or block) to the value it produces
+/// - Use edges: connects an instruction to a value it consumes as an operand
 pub struct DataFlowGraph {
     pub(crate) values: HandleMap<ValueId, Value>,
     pub(crate) instructions: HandleMap<InstructionId, Instruction>,
@@ -36,11 +58,10 @@ pub struct DataFlowGraph {
     pub(crate) blocks: HandleMap<BlockId, Block>,
     pub(crate) function_references: HandleMap<FunctionReferenceId, FunctionReference>,
     pub(crate) signatures: HandleMap<SignatureId, Signature>,
-
-    pub(crate) value_lists: ValueListAllocator,
+    pub(crate) allocator: ValueListAllocator,
 }
 
-/// An ordered view of the function body: what order do the blocks appear in,
+/// An ordered view of the [`Function`]'s body: what order do the blocks appear in,
 /// and what order do instructions appear in within each block.
 /// Implemented as two doubly-linked lists: one over blocks, one over instructions.
 ///
@@ -134,8 +155,8 @@ pub enum Instruction {
 /// Given a [`ValueDefinition`], you can find the defining instruction or block
 /// and trace the value back to its origin.
 pub enum ValueDefinition {
-    Result(InstructionId, u8),
-    Parameter(BlockId, u8),
+    Result(InstructionId, u16),
+    Parameter(BlockId, u16),
 }
 
 /// A reference to a function that can be called via [`Instruction::Call`].
@@ -236,7 +257,9 @@ pub struct ValueListAllocator {
 struct SizeClass(u8);
 
 /// Linked-list node for [`Layout`]'s block ordering.
-#[derive(Default)]
+// Clone: required by `SideHandleMap::add` for resize padding
+// Default: all fields are `Option`, so `None` is a valid unlinked node
+#[derive(Clone, Default)]
 struct BlockNode {
     prev: Option<BlockId>,
     next: Option<BlockId>,
@@ -245,6 +268,9 @@ struct BlockNode {
 }
 
 /// Linked-list node for [`Layout`]'s instruction ordering within a block.
+// Clone: required by `SideHandleMap::add` for resize padding
+// Default: manual impl below — `block` has no natural default, uses `BlockId::reserved()`
+#[derive(Clone)]
 struct InstructionNode {
     prev: Option<InstructionId>,
     block: BlockId,
@@ -320,8 +346,8 @@ impl ValueList {
         self.to_slice(pool).get(index).copied()
     }
 
-    /// Adds to the end of the list `value` and returns the logical list index (i.e., relative to the start of the values for this value list) where the `value` was inserted
-    pub(crate) fn add_last(&mut self, allocator: &mut ValueListAllocator, value: ValueId) -> usize {
+    /// Adds `value` to the end of the list.
+    pub(crate) fn add_last(&mut self, allocator: &mut ValueListAllocator, value: ValueId) {
         let start = self.start as usize;
         if let Some(count) = self.count(allocator) {
             let new_count = count + 1;
@@ -337,14 +363,11 @@ impl ValueList {
             allocator.data[block + new_count] = value;
 
             allocator.data[block] = ValueId::new(new_count);
-
-            count
         } else {
             let block = allocator.alloc(1);
             allocator.data[block] = ValueId::new(1);
             allocator.data[block + 1] = value;
             self.start = (block + 1) as u32;
-            0
         }
     }
 
@@ -488,18 +511,30 @@ impl SizeClass {
     }
 }
 
-impl Function {
+impl Cfg {
     pub(crate) fn create_block(&mut self) -> BlockId {
-        let block = Block {
+        self.dfg.blocks.add(Block {
             parameters: ValueList::new(),
-        };
-        let block_id = self.dfg.blocks.add(block);
-        self.layout.blocks.add(block_id, BlockNode::default());
-        block_id
+        })
     }
 
     pub(crate) fn append_block_parameter(&mut self, block: BlockId, ty: TypeId) -> ValueId {
-        todo!()
+        let parameter = self.dfg.values.next_key();
+        self.dfg.blocks[block]
+            .parameters
+            .add_last(&mut self.dfg.allocator, parameter);
+        let count = self.dfg.blocks[block]
+            .parameters
+            .count(&mut self.dfg.allocator)
+            .unwrap();
+        assert!(
+            count <= u16::MAX as usize,
+            "the block has too many parameters"
+        );
+        self.dfg.values.add(Value {
+            ty,
+            def: ValueDefinition::Parameter(block, count as u16),
+        })
     }
 
     pub(crate) fn append_instruction(

@@ -74,6 +74,9 @@ pub enum SemanticDiagnostic {
         expected: String,
         return_span: Span,
     },
+    ReturnOutsideFunction {
+        span: Span,
+    },
 }
 
 impl SemanticDiagnostic {
@@ -315,6 +318,13 @@ impl SemanticDiagnostic {
                             .with_message("cannot assign to this expression")
                             .with_color(Color::Red),
                     )
+                    .finish()
+            }
+            Self::ReturnOutsideFunction { span } => {
+                Report::build(ReportKind::Error, filename, span.start() as usize)
+                    .with_code("E0217")
+                    .with_message("return statement outside of function body")
+                    .with_label(Label::new((filename, span.into())).with_color(Color::Red))
                     .finish()
             }
         };

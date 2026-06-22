@@ -661,18 +661,20 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// Type-checks and lowers an expression against an expected [`TypeId`]
     /// (bidirectional type checking's "checking" mode).
     ///
-    /// Most expression kinds fall through to
-    /// [`SemanticAnalyzer::infer`] and then constrain the inferred type to
-    /// equal `ty` via [`Constraint::Equality`] with
-    /// [`Provenance::TypeMismatch`]. Two cases are handled directly instead,
-    /// because checking against `ty` gives more information than inferring
-    /// would: an [`ast::handles::ExpressionKind::IntegerLiteral`] checked against a
+    /// Most expression kinds fall through to [`SemanticAnalyzer::infer`]
+    /// and then constrain the inferred type to equal `ty` via [`Constraint::Equality`]
+    /// with [`Provenance::TypeMismatch`].
+    ///
+    /// Two cases are handled directly instead, because checking against `ty`
+    /// gives more information than inferring would:
+    ///
+    /// - Case 1: an [`ast::handles::ExpressionKind::IntegerLiteral`] checked against a
     /// concrete integer type is lowered with that exact type rather than a
-    /// fresh [`InferTy::IntVar`], and an
-    /// [`ast::handles::ExpressionKind::BinaryOperation`] with an arithmetic operator
-    /// checks both operands against `ty` directly so e.g. `1 + 2` checked
+    /// fresh [`InferTy::IntVar`]
+    /// - Case 2: an [`ast::handles::ExpressionKind::BinaryOperation`] with an arithmetic operator
+    /// checks both operands against `ty` directly (e.g. `1 + 2` checked
     /// against `u8` lowers both literals as `u8` rather than unifying two
-    /// separate [`InferTy::IntVar`]s.
+    /// separate [`InferTy::IntVar`]s)
     fn check(&mut self, id: ast::handles::ExpressionId, ty: TypeId) -> ExpressionId {
         match (id.kind(), self.type_interner.resolve(ty).unwrap()) {
             (ast::handles::ExpressionKind::IntegerLiteral, Ty::Signed(_) | Ty::Unsigned(_)) => {
@@ -1180,14 +1182,23 @@ impl<'ast> SemanticAnalyzer<'ast> {
     fn typecheck_return(&mut self, id: ast::handles::ReturnId) -> ExpressionId {
         let node = &self.ast.returns[id];
 
+        if self.current_return_ty.is_none() {
+            let value_id = node.value.map(|ast_expression_id| self.infer(ast_expression_id));
+            self.errors
+                .push(SemanticDiagnostic::ReturnOutsideFunction { span: node.span });
+            return self.hir.add_expression(
+                ExpressionKind::Return { value: value_id },
+                self.type_interner.error_id,
+                node.span,
+            );
+        }
+
+        let return_ty = self.current_return_ty.unwrap();
+
         // type-check and lower return
-        let value_id = match (node.value, self.current_return_ty) {
-            (Some(ast_expression_id), Some(return_ty)) => {
-                Some(self.check(ast_expression_id, return_ty))
-            }
-            (Some(ast_expression_id), None) => Some(self.infer(ast_expression_id)),
-            (None, Some(return_ty)) => {
-                // constraint `return;` to be of unit type
+        let value_id = match node.value {
+            Some(ast_expression_id) => Some(self.check(ast_expression_id, return_ty)),
+            None => {
                 self.constrain(Constraint::Equality {
                     expected: return_ty,
                     actual: self.type_interner.unit_id,
@@ -1197,7 +1208,6 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 });
                 None
             }
-            (None, None) => None,
         };
 
         // create HIR node
