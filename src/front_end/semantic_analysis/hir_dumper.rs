@@ -218,14 +218,14 @@ impl<'a> HirDumper<'a> {
             }
             ExpressionKind::Prefix { operator, rhs } => {
                 // dump header
-                writeln!(hir_output, "{padding}{label}{operator} : {ty}")?;
+                writeln!(hir_output, "{padding}{label}`{operator}` : {ty}")?;
 
                 // dump rhs
                 self.dump_expression(rhs, depth + 1, "", hir_output)?;
             }
             ExpressionKind::Infix { operator, lhs, rhs } => {
                 // dump header
-                writeln!(hir_output, "{padding}{label}{operator} : {ty}")?;
+                writeln!(hir_output, "{padding}{label}`{operator}` : {ty}")?;
 
                 // dump lhs
                 self.dump_expression(lhs, depth + 1, "", hir_output)?;

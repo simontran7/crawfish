@@ -1183,7 +1183,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let node = &self.ast.returns[id];
 
         if self.current_return_ty.is_none() {
-            let value_id = node.value.map(|ast_expression_id| self.infer(ast_expression_id));
+            let value_id = node
+                .value
+                .map(|ast_expression_id| self.infer(ast_expression_id));
             self.errors
                 .push(SemanticDiagnostic::ReturnOutsideFunction { span: node.span });
             return self.hir.add_expression(
