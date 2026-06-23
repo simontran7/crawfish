@@ -1,54 +1,23 @@
 # Testing
 
-The parser is tested using the [snapshot testing](https://www.cs.cornell.edu/~asampson/blog/turnt.html) technique using [insta](https://github.com/mitsuhiko/insta).
+## Approach
+
+Following [matklad's testing philosophy](https://matklad.github.io/2021/05/31/how-to-test.html), crawfish uses **integrated snapshot tests** as its primary testing strategy. Compilers are pure self-contained functions (source in, structured output out), which makes them ideal for this approach.
+
+Each test feeds a `.crw` source file through the full pipeline up to some stage, snapshots the output, and compares it against a saved baseline. This tests features, not code: the tests are independent of internal APIs, so refactoring internals doesn't break them. Adding a new test case is just adding a new `.crw` file.
+
+Unit tests are reserved for isolated algorithmic code where integrated tests wouldn't catch edge cases (e.g., the `ValueListAllocator`, `UnificationTable`).
+
+## Snapshot Tests with insta
+
+Crawfish uses [insta](https://github.com/mitsuhiko/insta) for [snapshot testing](https://www.cs.cornell.edu/~asampson/blog/turnt.html). Each compilation stage has a single test that globs over all `.crw` input files in its `inputs/` directory, runs the pipeline, and snapshots the result.
+
+### Adding a test
 
 1. Create an input file `.crw` in `lexical_analysis/inputs/`, `syntactic_analysis/inputs/`, or `semantic_analysis/inputs/`.
 
-2. Each phase has a single test that globs over all inputs (written once):
-```rust
-#[cfg(test)]
-mod tests {
-    use super::Parser;
-    use crate::common::string_interner::StringInterner;
-    use crate::front_end::lexical_analysis::token_tree_parser::TokenTreeParser;
-    use crate::front_end::lexical_analysis::tokenizer::Tokenizer;
-    use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;
+2. Run the test (it will fail because no snapshot exists yet).
 
-    #[test]
-    fn test_parser_output() {
-        insta::glob!("inputs/**/*.crw", |path| {
-            let source = std::fs::read_to_string(path).unwrap();
-            let filename = path.file_name().unwrap().to_str().unwrap();
+3. Review the snapshot using `cargo insta review` to make sure the output looks correct. If it does, accept it.
 
-            let mut string_interner = StringInterner::new();
-
-            let tokens = Tokenizer::new(&source, &mut string_interner).tokenize();
-
-            let token_trees = TokenTreeParser::new(tokens).parse().unwrap();
-
-            let ast = match Parser::new(&source, &token_trees, &string_interner).parse() {
-                Ok(ast) => ast,
-                Err(diagnostics) => {
-                    let output = diagnostics
-                        .iter()
-                        .map(|d| format!("{d:?}"))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    insta::assert_snapshot!(filename, output);
-                    return;
-                }
-            };
-
-            let output = AstDumper::new(&ast, &string_interner).dump().unwrap();
-            insta::assert_snapshot!(filename, output);
-        });
-    }
-}
-```
-
-3. Run the test (it'll fail because no snapshot exists yet).
-
-4. Review the snapshot using `cargo insta review` to make sure the output looks correct. If it does, accept it. The subsequent test run should pass because the output matches the accepted `.snap`.
-
-5. Commit the `.snap` file to git. This is what makes it a regression test going forward.
-
+4. Commit the `.snap` file to git. This is what makes it a regression test going forward.

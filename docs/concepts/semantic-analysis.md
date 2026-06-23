@@ -2,7 +2,7 @@
 
 ## Symbol Table
 
-An identifier's **scope** is the part of a program where it's accessible. An identifier may refer to different values in different parts of the program. Crawfish has **static scope**: visibility is determined by physical location in the source code, at compile-time.
+An identifier's **scope** is the part of a program where it's accessible. An identifier may refer to different values in different parts of the program. Crawfish has **static scope**, which means visibility is determined by *physical* location in the source code, at *compile-time*.
 
 The **symbol table** maps identifiers to their semantic information. It is a stack of scopes, where each scope is a `HashMap<Symbol, BindingId>`. When entering a scope, the semantic analyzer pushes a new scope frame onto the stack, and when exiting, pops it. Lookup searches from the topmost frame downward, so inner bindings shadow outer ones ([source](https://www.cs.cornell.edu/courses/cs4120/2023sp/notes.html?id=semantic#:~:text=Stack%20of%20hash,in%20most%20programs.)).
 

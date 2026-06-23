@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="170px" src="docs/logo.png">
+  <img width="170px" src="logo.png">
   <h1>crawfish</h1>
   <p>simple programming language for the layman</p>
 </div>
@@ -65,8 +65,3 @@ Options:
     -v, --version                 print compiler version
 ```
 
-See `docs/tour-of-crawfish.md` for a tour of the language.
-
-## Documentation
-
-See [simontran7.github.io/crawfish/](https://simontran7.github.io/crawfish/crawfish/index.html) for compiler internals and code documentation, `docs/testing.md` to learn the testing workflow, and `docs/style-guide.md` for code conventions.

@@ -15,3 +15,4 @@ https://www.reddit.com/r/rust/comments/wwbxhw/comment/ilkid50/?screen_view_count
 ## Commit Messages
 
 https://scopedcommits.com/
+

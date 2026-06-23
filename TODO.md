@@ -18,6 +18,9 @@
 
 - [ ] Alias resolution ([resolve_all_aliases()](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/ir/dfg.rs))
 
+- [ ] Builder with typestate for MIR construction — enforce block sealing at the API level so construction-order bugs (e.g. reading a block's parameters before all predecessors are known) are unrepresentable. Reference: Cranelift's [FunctionBuilder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs).
+- [ ] Visitor/Fold trait split for MIR passes — separate read-only traversal (Visitor) from transforming traversal (Fold), each with default no-op/identity methods per instruction kind. Factor out once verification, const evaluation, and codegen all walk the CFG the same way. Reference: rustc's [MIR visitors](https://github.com/rust-lang/rust/blob/master/compiler/rustc_middle/src/mir/visit.rs).
+
 ## Later
 
 ### Lexical Analysis
@@ -131,7 +134,7 @@ When the first `Ty` variant is defined with a `TypeId` field — most likely whe
 
 ### Code Generation
 
-Two-pass strategy (block parameters → LLVM phi nodes):
+Two-pass strategy (block parameters → LLVM phi nodes) (https://createlang.rs/03_secondlang/ir.html)
 
 **Pass 1:** Create all LLVM basic blocks and allocate phi nodes for block parameters.
 
@@ -183,3 +186,8 @@ for block in func.layout.blocks() {
 
 - [ ] introduce array literals (https://www.reddit.com/r/ProgrammingLanguages/comments/1dy9anu/comment/lcdf25s/)
 - [ ] introduce module system (https://www.reddit.com/r/ProgrammingLanguages/comments/1k4261j/comment/mo8rfxg/, https://www.reddit.com/r/ProgrammingLanguages/comments/1r6fhq8/comment/o5q5xk2/?context=3)
+
+### Miscellaneous
+
+- [ ] user website
+- [ ] web playground
