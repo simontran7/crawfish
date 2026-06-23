@@ -1,4 +1,4 @@
-use crate::driver::CompilerContext;
+use crate::common::context::CompilerContext;
 use crate::front_end::semantic_analysis::hir::{
     BindingId, BindingKind, ExpressionId, ExpressionKind, Hir, ItemId, ItemKind, StatementId,
     StatementKind,

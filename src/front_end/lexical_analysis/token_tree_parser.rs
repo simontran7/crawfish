@@ -201,7 +201,7 @@ impl TokenTreeParser {
 #[cfg(test)]
 mod tests {
     use super::TokenTreeParser;
-    use crate::driver::CompilerContext;
+    use crate::common::context::CompilerContext;
     use crate::front_end::lexical_analysis::tokenizer::Tokenizer;
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::common::span::Span;
 use crate::diagnostics::syntactic_diagnostics::SyntacticDiagnostic;
-use crate::driver::CompilerContext;
+use crate::common::context::CompilerContext;
 use crate::front_end::lexical_analysis::token::{LitKind, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
 use crate::front_end::syntactic_analysis::ast::Ast;
@@ -917,7 +917,7 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::Parser;
-    use crate::driver::CompilerContext;
+    use crate::common::context::CompilerContext;
     use crate::front_end::lexical_analysis::token_tree_parser::TokenTreeParser;
     use crate::front_end::lexical_analysis::tokenizer::Tokenizer;
     use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;

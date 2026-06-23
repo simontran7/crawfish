@@ -1,6 +1,6 @@
 use soup::handle_map::{Handle, HandleMap};
 
-use crate::front_end::semantic_analysis::types::TypeId;
+use crate::common::types::TypeId;
 
 // Opaque, 4-byte handles to the equivalence classes in a
 // [`UnificationTable`]. Each backs an `InferTy::TyVar`/`InferTy::IntVar`.

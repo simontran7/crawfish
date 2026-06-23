@@ -1,7 +1,7 @@
 use std::fmt::{self, Write};
 use std::str;
 
-use crate::driver::CompilerContext;
+use crate::common::context::CompilerContext;
 use crate::front_end::syntactic_analysis::ast::Ast;
 use crate::front_end::syntactic_analysis::ast::handles::{
     ExpressionId, ExpressionKind, IdentifierId, IdentifierKind, ItemId, ItemKind, ParameterId,

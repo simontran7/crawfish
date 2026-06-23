@@ -1,7 +1,7 @@
 use std::str::Chars;
 
 use crate::common::span::Span;
-use crate::driver::CompilerContext;
+use crate::common::context::CompilerContext;
 use crate::front_end::lexical_analysis::token::{LitKind, Token, TokenKind};
 
 /// Controls the tokenization process.

@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
-use crate::common::{preinterned_symbols, string_interner::Symbol};
+use crate::common::string_interner::{StringInterner, Symbol};
 use crate::front_end::semantic_analysis::unification_table::{IntVarId, TypeVarId};
-
 /// A type, interned as a [`TypeId`] by [`TypeInterner`].
 ///
 /// `Infer` variants are placeholders used during type inference, before
@@ -133,26 +132,26 @@ impl TypeInterner {
     /// Looks up the [`TypeId`] of a built-in type by name, e.g. `Bool` or
     /// `I32`. Returns `None` for any name that isn't a built-in type
     /// (including user-defined types, which this interner does not handle).
-    pub(crate) fn builtin_type_id(&self, s: Symbol) -> Option<TypeId> {
-        if s == preinterned_symbols::UNIT {
+    pub(crate) fn builtin_type_id(&self, s: Symbol, si: &StringInterner) -> Option<TypeId> {
+        if s == si.unit_symbol {
             return Some(self.unit_id);
         }
-        if s == preinterned_symbols::NEVER {
+        if s == si.never_symbol {
             return Some(self.never_id);
         }
-        if s == preinterned_symbols::BOOL {
+        if s == si.bool_symbol {
             return Some(self.bool_id);
         }
-        if s == preinterned_symbols::I32 {
+        if s == si.i32_symbol {
             return Some(self.i32_id);
         }
-        if s == preinterned_symbols::I64 {
+        if s == si.i64_symbol {
             return Some(self.i64_id);
         }
-        if s == preinterned_symbols::U32 {
+        if s == si.u32_symbol {
             return Some(self.u32_id);
         }
-        if s == preinterned_symbols::U64 {
+        if s == si.u64_symbol {
             return Some(self.u64_id);
         }
         None

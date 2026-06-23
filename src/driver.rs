@@ -1,26 +1,10 @@
-use crate::common::string_interner::StringInterner;
+use crate::common::context::CompilerContext;
 use crate::front_end::lexical_analysis::token_tree_parser::TokenTreeParser;
 use crate::front_end::lexical_analysis::tokenizer::Tokenizer;
 use crate::front_end::semantic_analysis::hir_dumper::HirDumper;
 use crate::front_end::semantic_analysis::semantic_analyzer::SemanticAnalyzer;
-use crate::front_end::semantic_analysis::types::TypeInterner;
 use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;
 use crate::front_end::syntactic_analysis::parser::Parser;
-
-/// Shared state threaded through all compilation stages.
-pub struct CompilerContext {
-    pub(crate) string_interner: StringInterner,
-    pub(crate) type_interner: TypeInterner,
-}
-
-impl CompilerContext {
-    pub fn new() -> Self {
-        Self {
-            string_interner: StringInterner::new(),
-            type_interner: TypeInterner::new(),
-        }
-    }
-}
 
 /// Compiles `source` named `filename`.
 pub fn compile(filename: &str, source: &str) {

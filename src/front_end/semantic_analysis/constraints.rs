@@ -1,5 +1,5 @@
 use crate::common::span::Span;
-use crate::front_end::semantic_analysis::types::TypeId;
+use crate::common::types::TypeId;
 
 /// Why a [`Constraint`] was generated, carrying the [`Span`]s needed to
 /// point at the relevant expressions if the constraint turns out to be

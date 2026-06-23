@@ -1,12 +1,16 @@
-use crate::common::preinterned_symbols::{self, STRS_TO_PREINTERN};
 use std::collections::HashMap;
 
 /// String Interner which interns literals and identifiers.
 pub struct StringInterner {
-    // symbols -> string literal
     strings: Vec<String>,
-    // string literal -> symbols
     symbols: HashMap<String, Symbol>,
+    pub unit_symbol: Symbol,
+    pub never_symbol: Symbol,
+    pub bool_symbol: Symbol,
+    pub u32_symbol: Symbol,
+    pub u64_symbol: Symbol,
+    pub i32_symbol: Symbol,
+    pub i64_symbol: Symbol,
 }
 
 /// Handle into the intern pool.
@@ -14,21 +18,25 @@ pub struct StringInterner {
 pub struct Symbol(pub u32);
 
 impl StringInterner {
-    /// Creates and returns an instance of `Interner`.
     pub(crate) fn new() -> Self {
         let mut si = Self {
             strings: Vec::new(),
             symbols: HashMap::new(),
+            unit_symbol: Symbol(0),
+            never_symbol: Symbol(0),
+            bool_symbol: Symbol(0),
+            u32_symbol: Symbol(0),
+            u64_symbol: Symbol(0),
+            i32_symbol: Symbol(0),
+            i64_symbol: Symbol(0),
         };
-
-        si.preintern(STRS_TO_PREINTERN);
-
-        debug_assert_eq!(si.strings.len(), STRS_TO_PREINTERN.len());
-        let i32_symbol = si.intern("I32");
-        debug_assert_eq!(i32_symbol, preinterned_symbols::I32);
-        let bool_symbol = si.intern("Bool");
-        debug_assert_eq!(bool_symbol, preinterned_symbols::BOOL);
-
+        si.unit_symbol = si.intern("Unit");
+        si.never_symbol = si.intern("Never");
+        si.bool_symbol = si.intern("Bool");
+        si.u32_symbol = si.intern("U32");
+        si.u64_symbol = si.intern("U64");
+        si.i32_symbol = si.intern("I32");
+        si.i64_symbol = si.intern("I64");
         si
     }
 
@@ -46,21 +54,6 @@ impl StringInterner {
     /// Resolves a string id back to its original string slice.
     pub(crate) fn resolve(&self, id: Symbol) -> Option<&str> {
         self.strings.get(id.0 as usize).map(|s| s.as_str())
-    }
-
-    fn preintern(&mut self, strs: &[&str]) {
-        assert!(self.strings.is_empty());
-        assert!(self.symbols.is_empty());
-
-        self.strings.reserve(strs.len());
-        self.symbols.reserve(strs.len());
-
-        for (i, &s) in strs.iter().enumerate() {
-            let owned = s.to_owned();
-            let sym = Symbol(i as u32);
-            self.strings.push(owned.clone());
-            self.symbols.insert(owned, sym);
-        }
     }
 }
 
