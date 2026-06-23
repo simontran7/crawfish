@@ -154,6 +154,7 @@ pub enum Instruction {
 ///
 /// Given a [`ValueDefinition`], you can find the defining instruction or block
 /// and trace the value back to its origin.
+#[derive(Clone, Copy)]
 pub enum ValueDefinition {
     Result(InstructionId, u16),
     Parameter(BlockId, u16),
@@ -543,11 +544,147 @@ impl Cfg {
         inst: Instruction,
         result_tys: &[TypeId],
     ) -> InstructionId {
-        todo!()
+        let inst_id = self.dfg.instructions.add(inst);
+        let results = result_tys
+            .iter()
+            .enumerate()
+            .map(|(i, &ty)| {
+                self.dfg.values.add(Value {
+                    ty,
+                    def: ValueDefinition::Result(inst_id, i as u16),
+                })
+            })
+            .collect::<Vec<_>>();
+        self.dfg
+            .instruction_results
+            .add(inst_id, ValueList::from(&mut self.dfg.allocator, &results));
+        self.layout.append_inst(block, inst_id);
+        inst_id
     }
 
     pub(crate) fn set_terminator(&mut self, block: BlockId, terminator: Instruction) {
-        todo!()
+        let inst_id = self.dfg.instructions.add(terminator);
+        self.dfg.instruction_results.add(inst_id, ValueList::new());
+        self.layout.append_inst(block, inst_id);
+    }
+}
+
+// --- Value queries ---
+
+impl DataFlowGraph {
+    pub(crate) fn value_type(&self, value: ValueId) -> TypeId {
+        self.values[value].ty
+    }
+
+    pub(crate) fn value_def(&self, value: ValueId) -> ValueDefinition {
+        self.values[value].def
+    }
+
+    pub(crate) fn inst_results(&self, inst: InstructionId) -> &[ValueId] {
+        self.instruction_results[inst].to_slice(&self.allocator)
+    }
+
+    pub(crate) fn first_result(&self, inst: InstructionId) -> Option<ValueId> {
+        self.instruction_results[inst].get(0, &self.allocator)
+    }
+
+    pub(crate) fn block_params(&self, block: BlockId) -> &[ValueId] {
+        self.blocks[block].parameters.to_slice(&self.allocator)
+    }
+}
+
+// --- Layout insertion ---
+
+impl Layout {
+    pub(crate) fn append_block(&mut self, block: BlockId) {
+        let node = BlockNode {
+            prev: self.exit,
+            next: None,
+            first_instruction: None,
+            last_instruction: None,
+        };
+        self.blocks.add(block, node);
+        if let Some(exit) = self.exit {
+            self.blocks[exit].next = Some(block);
+        }
+        if self.entry.is_none() {
+            self.entry = Some(block);
+        }
+        self.exit = Some(block);
+    }
+
+    pub(crate) fn append_inst(&mut self, block: BlockId, inst: InstructionId) {
+        let prev = self.blocks[block].last_instruction;
+        let node = InstructionNode {
+            block,
+            prev,
+            next: None,
+        };
+        self.instructions.add(inst, node);
+        if let Some(prev) = prev {
+            self.instructions[prev].next = Some(inst);
+        } else {
+            self.blocks[block].first_instruction = Some(inst);
+        }
+        self.blocks[block].last_instruction = Some(inst);
+    }
+}
+
+// --- Layout iteration ---
+
+impl Layout {
+    pub(crate) fn entry_block(&self) -> Option<BlockId> {
+        self.entry
+    }
+
+    pub(crate) fn last_inst(&self, block: BlockId) -> Option<InstructionId> {
+        self.blocks[block].last_instruction
+    }
+
+    pub(crate) fn inst_block(&self, inst: InstructionId) -> BlockId {
+        self.instructions[inst].block
+    }
+
+    pub(crate) fn blocks(&self) -> BlockIter<'_> {
+        BlockIter {
+            layout: self,
+            next: self.entry,
+        }
+    }
+
+    pub(crate) fn block_insts(&self, block: BlockId) -> InstIter<'_> {
+        InstIter {
+            layout: self,
+            next: self.blocks[block].first_instruction,
+        }
+    }
+}
+
+pub(crate) struct BlockIter<'a> {
+    layout: &'a Layout,
+    next: Option<BlockId>,
+}
+
+impl Iterator for BlockIter<'_> {
+    type Item = BlockId;
+    fn next(&mut self) -> Option<BlockId> {
+        let block = self.next?;
+        self.next = self.layout.blocks[block].next;
+        Some(block)
+    }
+}
+
+pub(crate) struct InstIter<'a> {
+    layout: &'a Layout,
+    next: Option<InstructionId>,
+}
+
+impl Iterator for InstIter<'_> {
+    type Item = InstructionId;
+    fn next(&mut self) -> Option<InstructionId> {
+        let inst = self.next?;
+        self.next = self.layout.instructions[inst].next;
+        Some(inst)
     }
 }
 

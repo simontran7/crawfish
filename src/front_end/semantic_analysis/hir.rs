@@ -205,13 +205,9 @@ pub type LocalBindingId = TypedBindingId<LocalInfo, { BindingKind::Local as u8 }
 /// A handle into [`Hir::item_bindings`].
 pub type ItemBindingId = TypedBindingId<ItemInfo, { BindingKind::Item as u8 }>;
 
-// ----------------------------------
-// Typed handle families
-//
 // Clone/Copy/PartialEq/Eq/Handle are all manual (no derive) because derive
 // adds unwanted bounds like `T: Clone`, but T is purely a phantom marker
 // (the real data is just a `u32`).
-// ----------------------------------
 
 /// A 4-byte handle into a [`HandleMap`] for `T`, distinguished by `KIND` so
 /// that [`LocalBindingId`] and [`ItemBindingId`] cannot be confused even
@@ -447,7 +443,7 @@ impl BindingId {
     }
 
     pub(crate) fn kind(self) -> BindingKind {
-        assert!(!self.is_error(), "called kind() on ERROR BindingId");
+        assert!(!self.is_error(), "called `kind()` on an error BindingId");
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => BindingKind::Local,
             _ => BindingKind::Item,
@@ -455,7 +451,7 @@ impl BindingId {
     }
 
     pub(crate) fn index(self) -> usize {
-        assert!(!self.is_error(), "called index() on ERROR BindingId");
+        assert!(!self.is_error(), "called `index()` on an error BindingId");
         (self.0 & Self::INDEX_MASK) as usize
     }
 

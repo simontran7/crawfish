@@ -23,7 +23,10 @@ pub enum Provenance {
     /// Binary operator: operand must be `Bool` (`and`/`or`).
     BinaryOperandNotBool { operand_span: Span },
     /// Unary operator: operand has the wrong type.
-    UnaryOperandMismatch { operand_span: Span },
+    UnaryOperandMismatch {
+        operator: String,
+        operand_span: Span,
+    },
     /// Block expected a non-unit value but has no tail expression.
     BlockMissingTail { block_span: Span },
     /// `return;` in a function with a non-unit return type.

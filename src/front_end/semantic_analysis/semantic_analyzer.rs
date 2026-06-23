@@ -5,7 +5,9 @@ use crate::front_end::semantic_analysis::hir::{
     BindingId, BindingKind, ExpressionId, ExpressionKind, ExpressionSlice, Hir, ItemId, ItemKind,
     LocalBindingId, StatementId, StatementKind,
 };
-use crate::front_end::semantic_analysis::symbol_table::{DefineError, ScopeKind, SymbolTable};
+use crate::front_end::semantic_analysis::symbol_table::{
+    DefineError, LookupError, ScopeKind, SymbolTable,
+};
 use crate::front_end::semantic_analysis::types::{InferTy, Ty, TypeId, TypeInterner};
 use crate::front_end::semantic_analysis::unification_table::UnificationTable;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
@@ -195,13 +197,15 @@ impl<'ast> SemanticAnalyzer<'ast> {
                             operand_span,
                         }
                     }
-                    Provenance::UnaryOperandMismatch { operand_span } => {
-                        SemanticDiagnostic::UnaryOperandMismatch {
-                            expected: e_str,
-                            found: a_str,
-                            operand_span,
-                        }
-                    }
+                    Provenance::UnaryOperandMismatch {
+                        operator,
+                        operand_span,
+                    } => SemanticDiagnostic::UnaryOperandMismatch {
+                        operator,
+                        expected: e_str,
+                        found: a_str,
+                        operand_span,
+                    },
                     Provenance::BlockMissingTail { block_span } => {
                         SemanticDiagnostic::BlockMissingTail {
                             expected: e_str,
@@ -356,7 +360,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     ///
     /// The function's own [`Ty::Func`] was already computed by
     /// [`SemanticAnalyzer::collect_item_definition`]; this method enters an
-    /// [`ScopeKind::ItemBoundary`] scope (so the body can't see local
+    /// [`ScopeKind::FunctionBoundary`] scope (so the body can't see local
     /// bindings from any enclosing scope, since crawfish has no closures),
     /// adds a local binding for each parameter, sets `current_return_ty` so
     /// that [`SemanticAnalyzer::typecheck_return`] can check `return`
@@ -368,7 +372,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // grab parameter type handle and return type handle
         let name = self.ast.valid_identifiers[node.name.index().into()].symbol;
-        let binding_id = self.symbol_table.find_binding(name);
+        let binding_id = self.symbol_table.find_binding(name).unwrap();
         let func_ty = self.hir.item_bindings[binding_id.index().into()].ty;
         let (parameter_tys, return_ty) = self
             .type_interner
@@ -376,7 +380,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
             .map(|(params, ret)| (params.to_vec(), ret))
             .unwrap();
 
-        self.symbol_table.enter_scope(ScopeKind::ItemBoundary);
+        self.symbol_table.enter_scope(ScopeKind::FunctionBoundary);
 
         // produce local bindings for all the parameters
         // since in the pre-pass, we only create a binding for the function itself
@@ -434,21 +438,22 @@ impl<'ast> SemanticAnalyzer<'ast> {
         )
     }
 
-    /// Type-checks and lowers a constant definition's value expression
-    /// against the [`TypeId`] already recorded for it by
-    /// [`SemanticAnalyzer::collect_item_definition`].
+    /// Type-checks and lowers a constant definition's value expression against
+    /// the [`TypeId`] already recorded for it by [`SemanticAnalyzer::collect_item_definition`].
     fn typecheck_constant_definition(&mut self, id: ast::handles::ConstantDefinitionId) -> ItemId {
         let node = &self.ast.constant_definitions[id];
 
         // get the binding id
         let name = self.ast.valid_identifiers[node.name.index().into()].symbol;
-        let binding_id = self.symbol_table.find_binding(name);
+        let binding_id = self.symbol_table.find_binding(name).unwrap();
 
         // type-check and lower the value
+        self.symbol_table.enter_scope(ScopeKind::ConstantBoundary);
         let value_id = self.check(
             node.value,
             self.hir.item_bindings[binding_id.index().into()].ty,
         );
+        self.symbol_table.exit_scope();
 
         // create the HIR node
         self.hir.add_item(
@@ -810,24 +815,45 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`SemanticAnalyzer::constrain`]'s error-type poisoning).
     fn typecheck_variable(&mut self, id: ast::handles::VariableId) -> ExpressionId {
         let node = &self.ast.variables[id];
-        let binding_id = self.symbol_table.find_binding(node.symbol);
 
-        // check if variable wasn't defined
-        if binding_id.is_error() {
-            self.errors.push(SemanticDiagnostic::UnresolvedName {
-                name: self
-                    .string_interner
-                    .resolve(node.symbol)
-                    .unwrap()
-                    .to_string(),
-                span: node.span,
-            });
-            return self.hir.add_expression(
-                ExpressionKind::Variable(BindingId::ERROR),
-                self.type_interner.error_id,
-                node.span,
-            );
-        }
+        // get binding id
+        let binding_id = match self.symbol_table.find_binding(node.symbol) {
+            Ok(id) => id,
+            Err(LookupError::BlockedByBoundary(ScopeKind::ConstantBoundary)) => {
+                self.errors
+                    .push(SemanticDiagnostic::NonConstantValue { span: node.span });
+                return self.hir.add_expression(
+                    ExpressionKind::Variable(BindingId::ERROR),
+                    self.type_interner.error_id,
+                    node.span,
+                );
+            }
+            Err(LookupError::BlockedByBoundary(ScopeKind::FunctionBoundary)) => {
+                self.errors
+                    .push(SemanticDiagnostic::CaptureInFunction { span: node.span });
+                return self.hir.add_expression(
+                    ExpressionKind::Variable(BindingId::ERROR),
+                    self.type_interner.error_id,
+                    node.span,
+                );
+            }
+            Err(LookupError::BlockedByBoundary(ScopeKind::Normal)) => unreachable!(),
+            Err(LookupError::NotFound) => {
+                self.errors.push(SemanticDiagnostic::UnresolvedName {
+                    name: self
+                        .string_interner
+                        .resolve(node.symbol)
+                        .unwrap()
+                        .to_string(),
+                    span: node.span,
+                });
+                return self.hir.add_expression(
+                    ExpressionKind::Variable(BindingId::ERROR),
+                    self.type_interner.error_id,
+                    node.span,
+                );
+            }
+        };
 
         // get type
         let ty = match binding_id.kind() {
@@ -858,6 +884,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     expected: self.type_interner.bool_id,
                     actual: self.hir.expressions[rhs_id].ty,
                     provenance: Provenance::UnaryOperandMismatch {
+                        operator: node.operator.to_string(),
                         operand_span: self.hir.expressions[rhs_id].span,
                     },
                 });
@@ -870,6 +897,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     expected: int_ty,
                     actual: self.hir.expressions[rhs_id].ty,
                     provenance: Provenance::UnaryOperandMismatch {
+                        operator: node.operator.to_string(),
                         operand_span: self.hir.expressions[rhs_id].span,
                     },
                 });

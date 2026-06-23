@@ -29,7 +29,19 @@ pub enum ScopeKind {
     /// A function body's outermost scope: local bindings from enclosing
     /// scopes are not visible, since crawfish has no closures. Item
     /// bindings (functions, constants) remain visible past this boundary.
-    ItemBoundary,
+    FunctionBoundary,
+    /// A constant item's value expression: local bindings from enclosing
+    /// scopes are not visible, since constants must be evaluable at
+    /// compile time.
+    ConstantBoundary,
+}
+
+/// Returned by [`SymbolTable::find_binding`] when a name cannot be resolved.
+#[derive(Debug)]
+pub enum LookupError {
+    NotFound,
+    /// The name exists as a local binding, but a scope boundary blocks access.
+    BlockedByBoundary(ScopeKind),
 }
 
 /// Returned by [`SymbolTable::add_binding`] when `name` is already bound in
@@ -76,24 +88,32 @@ impl SymbolTable {
     }
 
     /// Resolves `name` to a [`BindingId`], searching from the innermost
-    /// scope outwards. Once the search crosses an [`ScopeKind::ItemBoundary`]
-    /// scope, only [`BindingKind::Item`] bindings in further-out scopes are
-    /// visible; [`BindingKind::Local`] bindings are skipped, since crawfish
-    /// has no closures. Returns [`BindingId::ERROR`] if `name` is unbound.
-    pub(crate) fn find_binding(&self, name: Symbol) -> BindingId {
-        let mut block_outer_locals = false;
+    /// scope outwards. Once the search crosses a [`ScopeKind::FunctionBoundary`]
+    /// or [`ScopeKind::ConstantBoundary`], only [`BindingKind::Item`] bindings
+    /// in further-out scopes are visible; [`BindingKind::Local`] bindings are
+    /// skipped.
+    pub(crate) fn find_binding(&self, name: Symbol) -> Result<BindingId, LookupError> {
+        let mut boundary = None;
         for scope in self.scopes.iter().rev() {
             if let Some(&binding_id) = scope.bindings.get(&name) {
                 match binding_id.kind() {
-                    BindingKind::Item => return binding_id,
-                    BindingKind::Local if !block_outer_locals => return binding_id,
-                    BindingKind::Local => {}
+                    BindingKind::Item => return Ok(binding_id),
+                    BindingKind::Local if boundary.is_none() => return Ok(binding_id),
+                    BindingKind::Local => {
+                        return Err(LookupError::BlockedByBoundary(boundary.unwrap()));
+                    }
                 }
             }
-            if scope.kind == ScopeKind::ItemBoundary {
-                block_outer_locals = true;
+            // set the new boundary when we cross the *first* constant or the *first* function boundary
+            if boundary.is_none()
+                && matches!(
+                    scope.kind,
+                    ScopeKind::FunctionBoundary | ScopeKind::ConstantBoundary
+                )
+            {
+                boundary = Some(scope.kind);
             }
         }
-        BindingId::ERROR
+        Err(LookupError::NotFound)
     }
 }

@@ -62,6 +62,7 @@ pub enum SemanticDiagnostic {
         operand_span: Span,
     },
     UnaryOperandMismatch {
+        operator: String,
         expected: String,
         found: String,
         operand_span: Span,
@@ -75,6 +76,12 @@ pub enum SemanticDiagnostic {
         return_span: Span,
     },
     ReturnOutsideFunction {
+        span: Span,
+    },
+    NonConstantValue {
+        span: Span,
+    },
+    CaptureInFunction {
         span: Span,
     },
 }
@@ -267,12 +274,16 @@ impl SemanticDiagnostic {
                 )
                 .finish(),
             Self::UnaryOperandMismatch {
+                operator,
                 expected,
                 found,
                 operand_span,
             } => Report::build(ReportKind::Error, filename, operand_span.start() as usize)
                 .with_code("E0213")
-                .with_message(format!("unary operator requires `{}`", expected))
+                .with_message(format!(
+                    "cannot apply unary operator `{}` to type `{}`",
+                    operator, found
+                ))
                 .with_label(
                     Label::new((filename, operand_span.into()))
                         .with_message(format!("expected `{}`, found `{}`", expected, found))
@@ -325,6 +336,28 @@ impl SemanticDiagnostic {
                     .with_code("E0217")
                     .with_message("return statement outside of function body")
                     .with_label(Label::new((filename, span.into())).with_color(Color::Red))
+                    .finish()
+            }
+            Self::NonConstantValue { span } => {
+                Report::build(ReportKind::Error, filename, span.start() as usize)
+                    .with_code("E0218")
+                    .with_message("attempt to use a non-constant value in a constant")
+                    .with_label(
+                        Label::new((filename, span.into()))
+                            .with_message("non-constant value")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+            }
+            Self::CaptureInFunction { span } => {
+                Report::build(ReportKind::Error, filename, span.start() as usize)
+                    .with_code("E0219")
+                    .with_message("cannot capture variable from enclosing function")
+                    .with_label(
+                        Label::new((filename, span.into()))
+                            .with_message("not accessible inside nested function")
+                            .with_color(Color::Red),
+                    )
                     .finish()
             }
         };
