@@ -1,6 +1,6 @@
 use crate::common::span::Span;
-use crate::common::string_interner::StringInterner;
 use crate::diagnostics::syntactic_diagnostics::SyntacticDiagnostic;
+use crate::driver::CompilerContext;
 use crate::front_end::lexical_analysis::token::{LitKind, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
 use crate::front_end::syntactic_analysis::ast::Ast;
@@ -26,7 +26,7 @@ use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 pub struct Parser<'a> {
     cursor: Cursor<'a>,
     errors: Vec<SyntacticDiagnostic>,
-    interner: &'a StringInterner,
+    ctx: &'a CompilerContext,
     ast: Ast,
 }
 
@@ -53,12 +53,12 @@ impl<'a> Parser<'a> {
     pub(crate) fn new(
         source: &'a str,
         token_trees: &'a [TokenTree],
-        interner: &'a StringInterner,
+        ctx: &'a CompilerContext,
     ) -> Self {
         Self {
             cursor: Cursor::new(token_trees),
             errors: Vec::new(),
-            interner,
+            ctx,
             ast: Ast::new(source.len()),
         }
     }
@@ -681,7 +681,7 @@ impl<'a> Parser<'a> {
         let span = token.span();
         let symbol = token.symbol().unwrap();
 
-        let raw = self.interner.resolve(symbol).unwrap();
+        let raw = self.ctx.string_interner.resolve(symbol).unwrap();
 
         let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
 
@@ -917,7 +917,7 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::Parser;
-    use crate::common::string_interner::StringInterner;
+    use crate::driver::CompilerContext;
     use crate::front_end::lexical_analysis::token_tree_parser::TokenTreeParser;
     use crate::front_end::lexical_analysis::tokenizer::Tokenizer;
     use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;
@@ -928,13 +928,13 @@ mod tests {
             let source = std::fs::read_to_string(path).unwrap();
             let filename = path.file_name().unwrap().to_str().unwrap();
 
-            let mut string_interner = StringInterner::new();
+            let mut ctx = CompilerContext::new();
 
-            let tokens = Tokenizer::new(&source, &mut string_interner).tokenize();
+            let tokens = Tokenizer::new(&source, &mut ctx).tokenize();
 
             let token_trees = TokenTreeParser::new(tokens).parse().unwrap();
 
-            let ast = match Parser::new(&source, &token_trees, &string_interner).parse() {
+            let ast = match Parser::new(&source, &token_trees, &ctx).parse() {
                 Ok(ast) => ast,
                 Err(diagnostics) => {
                     let output = diagnostics
@@ -947,7 +947,7 @@ mod tests {
                 }
             };
 
-            let output = AstDumper::new(&ast, &string_interner).dump().unwrap();
+            let output = AstDumper::new(&ast, &ctx).dump().unwrap();
             insta::assert_snapshot!(filename, output);
         });
     }

@@ -1,5 +1,5 @@
-use crate::common::string_interner::StringInterner;
 use crate::diagnostics::semantic_diagnostics::SemanticDiagnostic;
+use crate::driver::CompilerContext;
 use crate::front_end::semantic_analysis::constraints::{Constraint, Provenance};
 use crate::front_end::semantic_analysis::hir::{
     BindingId, BindingKind, ExpressionId, ExpressionKind, ExpressionSlice, Hir, ItemId, ItemKind,
@@ -30,8 +30,7 @@ use crate::front_end::syntactic_analysis::ast::{self, Ast};
 /// into the [`Hir`].
 pub struct SemanticAnalyzer<'ast> {
     ast: &'ast Ast,
-    string_interner: &'ast StringInterner,
-    type_interner: &'ast mut TypeInterner,
+    ctx: &'ast mut CompilerContext,
     symbol_table: SymbolTable,
     hir: Hir,
     constraints: Vec<Constraint>,
@@ -48,15 +47,10 @@ enum UnificationError {
 
 impl<'ast> SemanticAnalyzer<'ast> {
     /// Creates and returns an instance of `SemanticAnalyzer`.
-    pub(crate) fn new(
-        ast: &'ast Ast,
-        string_interner: &'ast StringInterner,
-        type_interner: &'ast mut TypeInterner,
-    ) -> Self {
+    pub(crate) fn new(ast: &'ast Ast, ctx: &'ast mut CompilerContext) -> Self {
         Self {
             ast,
-            string_interner,
-            type_interner,
+            ctx,
             symbol_table: SymbolTable::new(),
             hir: Hir::new(ast.source_file.span.end() as usize),
             substitutions: UnificationTable::new(),
@@ -155,8 +149,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
             {
                 let e_resolved = self.shallow_resolve(e);
                 let a_resolved = self.shallow_resolve(a);
-                let e_str = self.type_interner.to_string(e_resolved);
-                let a_str = self.type_interner.to_string(a_resolved);
+                let e_str = self.ctx.type_interner.to_string(e_resolved);
+                let a_str = self.ctx.type_interner.to_string(a_resolved);
                 let diagnostic = match provenance {
                     Provenance::TypeMismatch { span } => SemanticDiagnostic::TypeMismatch {
                         expected: e_str,
@@ -243,9 +237,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
             .collect();
         let tys: Vec<_> = tys.iter().map(|&ty| self.shallow_resolve(ty)).collect();
         for (expression, ty) in self.hir.expressions.values_mut().zip(tys) {
-            expression.ty = match self.type_interner.resolve(ty).unwrap() {
-                Ty::Infer(InferTy::IntVar(_)) => self.type_interner.i32_id,
-                Ty::Infer(InferTy::TyVar(_)) => self.type_interner.error_id,
+            expression.ty = match self.ctx.type_interner.resolve(ty).unwrap() {
+                Ty::Infer(InferTy::IntVar(_)) => self.ctx.type_interner.i32_id,
+                Ty::Infer(InferTy::TyVar(_)) => self.ctx.type_interner.error_id,
                 _ => ty,
             };
         }
@@ -254,9 +248,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let tys: Vec<_> = self.hir.local_bindings.values().map(|b| b.ty).collect();
         let tys: Vec<_> = tys.iter().map(|&ty| self.shallow_resolve(ty)).collect();
         for (binding, ty) in self.hir.local_bindings.values_mut().zip(tys) {
-            binding.ty = match self.type_interner.resolve(ty).unwrap() {
-                Ty::Infer(InferTy::IntVar(_)) => self.type_interner.i32_id,
-                Ty::Infer(InferTy::TyVar(_)) => self.type_interner.error_id,
+            binding.ty = match self.ctx.type_interner.resolve(ty).unwrap() {
+                Ty::Infer(InferTy::IntVar(_)) => self.ctx.type_interner.i32_id,
+                Ty::Infer(InferTy::TyVar(_)) => self.ctx.type_interner.error_id,
                 _ => ty,
             };
         }
@@ -298,21 +292,21 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     .collect();
 
                 // resolve the return type annotation to a TypeId (defaults to unit if omitted)
-                let return_ty = node
-                    .annotation
-                    .map_or(self.type_interner.unit_id, |annotation| {
-                        let ast_identifier_id =
-                            &self.ast.named_type_annotations[annotation.index().into()].name;
-                        self.resolve_type_annotation(
-                            &self.ast.valid_identifiers[ast_identifier_id.index().into()],
-                        )
-                    });
+                let return_ty =
+                    node.annotation
+                        .map_or(self.ctx.type_interner.unit_id, |annotation| {
+                            let ast_identifier_id =
+                                &self.ast.named_type_annotations[annotation.index().into()].name;
+                            self.resolve_type_annotation(
+                                &self.ast.valid_identifiers[ast_identifier_id.index().into()],
+                            )
+                        });
 
                 // create a binding, and reporting an error if the name is already defined
                 let name = self.ast.valid_identifiers[node.name.index().into()].symbol;
                 let item_binding_id = self.hir.add_item_binding(
                     name,
-                    self.type_interner.intern(Ty::Func {
+                    self.ctx.type_interner.intern(Ty::Func {
                         parameters: parameters_ty,
                         return_value: return_ty,
                     }),
@@ -322,7 +316,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     self.symbol_table.add_binding(name, item_binding_id.into())
                 {
                     self.errors.push(SemanticDiagnostic::DuplicateDefinition {
-                        name: self.string_interner.resolve(name).unwrap().to_string(),
+                        name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
                         span: node.span,
                         previous_span: self.hir.item_bindings[prev_binding_id.index().into()].span,
                     });
@@ -344,7 +338,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     self.symbol_table.add_binding(name, item_binding_id.into())
                 {
                     self.errors.push(SemanticDiagnostic::DuplicateDefinition {
-                        name: self.string_interner.resolve(name).unwrap().to_string(),
+                        name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
                         span: node.span,
                         previous_span: self.hir.item_bindings[prev_binding_id.index().into()].span,
                     });
@@ -375,6 +369,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let binding_id = self.symbol_table.find_binding(name).unwrap();
         let func_ty = self.hir.item_bindings[binding_id.index().into()].ty;
         let (parameter_tys, return_ty) = self
+            .ctx
             .type_interner
             .as_func(func_ty)
             .map(|(params, ret)| (params.to_vec(), ret))
@@ -404,7 +399,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 self.symbol_table.add_binding(name, local_binding_id.into())
             {
                 self.errors.push(SemanticDiagnostic::DuplicateDefinition {
-                    name: self.string_interner.resolve(name).unwrap().to_string(),
+                    name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
                     span: parameter.span,
                     previous_span: self.hir.local_bindings[prev_binding_id.index().into()].span,
                 });
@@ -545,15 +540,15 @@ impl<'ast> SemanticAnalyzer<'ast> {
             (None, Some(expected)) => {
                 self.constrain(Constraint::Equality {
                     expected,
-                    actual: self.type_interner.unit_id,
+                    actual: self.ctx.type_interner.unit_id,
                     provenance: Provenance::BlockMissingTail {
                         block_span: node.span,
                     },
                 });
-                (None, self.type_interner.unit_id)
+                (None, self.ctx.type_interner.unit_id)
             }
             // no tail, no expected type: block is unit
-            (None, None) => (None, self.type_interner.unit_id),
+            (None, None) => (None, self.ctx.type_interner.unit_id),
         };
 
         // create HIR node
@@ -642,7 +637,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     self.symbol_table.add_binding(name, local_binding_id.into())
                 {
                     self.errors.push(SemanticDiagnostic::DuplicateDefinition {
-                        name: self.string_interner.resolve(name).unwrap().to_string(),
+                        name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
                         span: node.span,
                         previous_span: self.hir.local_bindings[prev_binding_id.index().into()].span,
                     });
@@ -681,7 +676,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// against `u8` lowers both literals as `u8` rather than unifying two
     /// separate [`InferTy::IntVar`]s)
     fn check(&mut self, id: ast::handles::ExpressionId, ty: TypeId) -> ExpressionId {
-        match (id.kind(), self.type_interner.resolve(ty).unwrap()) {
+        match (id.kind(), self.ctx.type_interner.resolve(ty).unwrap()) {
             (ast::handles::ExpressionKind::IntegerLiteral, Ty::Signed(_) | Ty::Unsigned(_)) => {
                 let node = &self.ast.integer_literals[id.index().into()];
                 self.hir
@@ -764,14 +759,17 @@ impl<'ast> SemanticAnalyzer<'ast> {
         match id.kind() {
             ast::handles::ExpressionKind::UnitLiteral => {
                 let node = &self.ast.unit_literals[id.index().into()];
-                self.hir
-                    .add_expression(ExpressionKind::Unit, self.type_interner.unit_id, node.span)
+                self.hir.add_expression(
+                    ExpressionKind::Unit,
+                    self.ctx.type_interner.unit_id,
+                    node.span,
+                )
             }
             ast::handles::ExpressionKind::BooleanLiteral => {
                 let node = &self.ast.boolean_literals[id.index().into()];
                 self.hir.add_expression(
                     ExpressionKind::Boolean(node.value),
-                    self.type_interner.bool_id,
+                    self.ctx.type_interner.bool_id,
                     node.span,
                 )
             }
@@ -824,7 +822,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     .push(SemanticDiagnostic::NonConstantValue { span: node.span });
                 return self.hir.add_expression(
                     ExpressionKind::Variable(BindingId::ERROR),
-                    self.type_interner.error_id,
+                    self.ctx.type_interner.error_id,
                     node.span,
                 );
             }
@@ -833,7 +831,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     .push(SemanticDiagnostic::CaptureInFunction { span: node.span });
                 return self.hir.add_expression(
                     ExpressionKind::Variable(BindingId::ERROR),
-                    self.type_interner.error_id,
+                    self.ctx.type_interner.error_id,
                     node.span,
                 );
             }
@@ -841,6 +839,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
             Err(LookupError::NotFound) => {
                 self.errors.push(SemanticDiagnostic::UnresolvedName {
                     name: self
+                        .ctx
                         .string_interner
                         .resolve(node.symbol)
                         .unwrap()
@@ -849,7 +848,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 });
                 return self.hir.add_expression(
                     ExpressionKind::Variable(BindingId::ERROR),
-                    self.type_interner.error_id,
+                    self.ctx.type_interner.error_id,
                     node.span,
                 );
             }
@@ -881,14 +880,14 @@ impl<'ast> SemanticAnalyzer<'ast> {
             UnOp::Not => {
                 // constraint for the operand to be a boolean
                 self.constrain(Constraint::Equality {
-                    expected: self.type_interner.bool_id,
+                    expected: self.ctx.type_interner.bool_id,
                     actual: self.hir.expressions[rhs_id].ty,
                     provenance: Provenance::UnaryOperandMismatch {
                         operator: node.operator.to_string(),
                         operand_span: self.hir.expressions[rhs_id].span,
                     },
                 });
-                self.type_interner.bool_id
+                self.ctx.type_interner.bool_id
             }
             UnOp::Neg => {
                 // constraint for the operand to be numeric
@@ -979,25 +978,25 @@ impl<'ast> SemanticAnalyzer<'ast> {
                         operand_span: self.hir.expressions[lhs_id].span,
                     },
                 });
-                self.type_interner.bool_id
+                self.ctx.type_interner.bool_id
             }
             // logical: both sides must be `Bool`, result type is `Bool`
             BinOp::And | BinOp::Or => {
                 self.constrain(Constraint::Equality {
-                    expected: self.type_interner.bool_id,
+                    expected: self.ctx.type_interner.bool_id,
                     actual: self.hir.expressions[lhs_id].ty,
                     provenance: Provenance::BinaryOperandNotBool {
                         operand_span: self.hir.expressions[lhs_id].span,
                     },
                 });
                 self.constrain(Constraint::Equality {
-                    expected: self.type_interner.bool_id,
+                    expected: self.ctx.type_interner.bool_id,
                     actual: self.hir.expressions[rhs_id].ty,
                     provenance: Provenance::BinaryOperandNotBool {
                         operand_span: self.hir.expressions[rhs_id].span,
                     },
                 });
-                self.type_interner.bool_id
+                self.ctx.type_interner.bool_id
             }
             // equality: both sides must be the same type, result type is `Bool`
             BinOp::Eq | BinOp::Ne => {
@@ -1010,7 +1009,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                         rhs_span: self.hir.expressions[rhs_id].span,
                     },
                 });
-                self.type_interner.bool_id
+                self.ctx.type_interner.bool_id
             }
         };
 
@@ -1068,7 +1067,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // check value against target type if valid, otherwise infer to surface errors
         let value_id = if target_is_error
-            || self.hir.expressions[target_id].ty == self.type_interner.error_id
+            || self.hir.expressions[target_id].ty == self.ctx.type_interner.error_id
         {
             self.infer(node.value)
         } else {
@@ -1081,7 +1080,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 target: target_id,
                 value: value_id,
             },
-            self.type_interner.unit_id,
+            self.ctx.type_interner.unit_id,
             node.span,
         )
     }
@@ -1109,7 +1108,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let callee_id = self.infer(node.callee);
 
         // poison if callee resolved to an error (e.g. unresolved name)
-        if self.hir.expressions[callee_id].ty == self.type_interner.error_id {
+        if self.hir.expressions[callee_id].ty == self.ctx.type_interner.error_id {
             for &ast_arg_id in ast_arg_slice {
                 self.infer(ast_arg_id); // surface errors inside args
             }
@@ -1118,7 +1117,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     callee: callee_id,
                     arguments: ExpressionSlice { start: 0, len: 0 },
                 },
-                self.type_interner.error_id,
+                self.ctx.type_interner.error_id,
                 node.span,
             );
         }
@@ -1128,12 +1127,14 @@ impl<'ast> SemanticAnalyzer<'ast> {
             parameters,
             return_value: ret,
         } = self
+            .ctx
             .type_interner
             .resolve(self.hir.expressions[callee_id].ty)
             .unwrap()
         else {
             self.errors.push(SemanticDiagnostic::NotCallable {
                 found: self
+                    .ctx
                     .type_interner
                     .to_string(self.hir.expressions[callee_id].ty),
                 callee_span: self.hir.expressions[callee_id].span,
@@ -1147,7 +1148,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     callee: callee_id,
                     arguments: ExpressionSlice { start: 0, len: 0 },
                 },
-                self.type_interner.error_id,
+                self.ctx.type_interner.error_id,
                 node.span,
             );
         };
@@ -1182,7 +1183,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // get type
         let ty = if ast_arg_len != parameter_tys.len() {
-            self.type_interner.error_id
+            self.ctx.type_interner.error_id
         } else {
             return_ty
         };
@@ -1218,7 +1219,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 .push(SemanticDiagnostic::ReturnOutsideFunction { span: node.span });
             return self.hir.add_expression(
                 ExpressionKind::Return { value: value_id },
-                self.type_interner.error_id,
+                self.ctx.type_interner.error_id,
                 node.span,
             );
         }
@@ -1231,7 +1232,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
             None => {
                 self.constrain(Constraint::Equality {
                     expected: return_ty,
-                    actual: self.type_interner.unit_id,
+                    actual: self.ctx.type_interner.unit_id,
                     provenance: Provenance::ReturnMissingValue {
                         return_span: node.span,
                     },
@@ -1243,7 +1244,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         // create HIR node
         self.hir.add_expression(
             ExpressionKind::Return { value: value_id },
-            self.type_interner.never_id,
+            self.ctx.type_interner.never_id,
             node.span,
         )
     }
@@ -1261,7 +1262,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let node = &self.ast.if_expressions[id];
 
         // type-check and lower condition
-        let condition_id = self.check(node.condition, self.type_interner.bool_id);
+        let condition_id = self.check(node.condition, self.ctx.type_interner.bool_id);
 
         // type-check and lower then branch
         let then_branch_id = self.analyze_block(node.then_branch, None);
@@ -1288,12 +1289,12 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 // constraint then branch to be of unit type
                 self.constrain(Constraint::Equality {
                     expected: self.hir.expressions[then_branch_id].ty,
-                    actual: self.type_interner.unit_id,
+                    actual: self.ctx.type_interner.unit_id,
                     provenance: Provenance::IfWithoutElse {
                         then_span: self.hir.expressions[then_branch_id].span,
                     },
                 });
-                (None, self.type_interner.unit_id)
+                (None, self.ctx.type_interner.unit_id)
             }
         };
 
@@ -1315,19 +1316,20 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`SemanticDiagnostic::UnknownType`] and resolved to
     /// [`TypeInterner::error_id`].
     fn resolve_type_annotation(&mut self, node: &ast::nodes::ValidIdentifierNode) -> TypeId {
-        if let Some(ty) = self.type_interner.builtin_type_id(node.symbol) {
+        if let Some(ty) = self.ctx.type_interner.builtin_type_id(node.symbol) {
             return ty;
         }
         // TODO: try resolve user-defined types here
         self.errors.push(SemanticDiagnostic::UnknownType {
             name: self
+                .ctx
                 .string_interner
                 .resolve(node.symbol)
                 .unwrap()
                 .to_string(),
             span: node.span,
         });
-        self.type_interner.error_id
+        self.ctx.type_interner.error_id
     }
 
     /// Records `constraint` to be solved later by
@@ -1343,7 +1345,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
             expected, actual, ..
         } = &constraint;
         // don't constrain error types, but poison silently
-        if *expected == self.type_interner.error_id || *actual == self.type_interner.error_id {
+        if *expected == self.ctx.type_interner.error_id
+            || *actual == self.ctx.type_interner.error_id
+        {
             return;
         }
         self.constraints.push(constraint);
@@ -1351,19 +1355,25 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
     /// Resolves inference variables, but doesn't recurse into the structure of the type itself.
     fn shallow_resolve(&mut self, ty: TypeId) -> TypeId {
-        match self.type_interner.resolve(ty).unwrap() {
+        match self.ctx.type_interner.resolve(ty).unwrap() {
             Ty::Infer(InferTy::TyVar(vid)) => {
                 let root = self.substitutions.find_type_var(*vid);
                 match self.substitutions.get_concrete_type_var(root) {
                     Some(concrete) => self.shallow_resolve(concrete),
-                    None => self.type_interner.intern(Ty::Infer(InferTy::TyVar(root))),
+                    None => self
+                        .ctx
+                        .type_interner
+                        .intern(Ty::Infer(InferTy::TyVar(root))),
                 }
             }
             Ty::Infer(InferTy::IntVar(vid)) => {
                 let root = self.substitutions.find_int_var(*vid);
                 match self.substitutions.get_concrete_int_var(root) {
                     Some(concrete) => self.shallow_resolve(concrete),
-                    None => self.type_interner.intern(Ty::Infer(InferTy::IntVar(root))),
+                    None => self
+                        .ctx
+                        .type_interner
+                        .intern(Ty::Infer(InferTy::IntVar(root))),
                 }
             }
             _ => ty,
@@ -1393,8 +1403,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
         }
 
         match (
-            self.type_interner.resolve(expected).unwrap(),
-            self.type_interner.resolve(actual).unwrap(),
+            self.ctx.type_interner.resolve(expected).unwrap(),
+            self.ctx.type_interner.resolve(actual).unwrap(),
         ) {
             (Ty::Infer(InferTy::TyVar(vid1)), Ty::Infer(InferTy::TyVar(vid2))) => {
                 self.substitutions.union_type_vars(*vid1, *vid2);
@@ -1428,7 +1438,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`UnificationTable`] and interns it as a [`TypeId`].
     fn fresh_ty_var(&mut self) -> TypeId {
         let vid = self.substitutions.make_type_var_set();
-        self.type_interner.intern(Ty::Infer(InferTy::TyVar(vid)))
+        self.ctx
+            .type_interner
+            .intern(Ty::Infer(InferTy::TyVar(vid)))
     }
 
     /// Allocates a new [`InferTy::IntVar`] in its own singleton set in the
@@ -1437,6 +1449,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`SemanticAnalyzer::infer`]).
     fn fresh_int_var(&mut self) -> TypeId {
         let vid = self.substitutions.make_int_var_set();
-        self.type_interner.intern(Ty::Infer(InferTy::IntVar(vid)))
+        self.ctx
+            .type_interner
+            .intern(Ty::Infer(InferTy::IntVar(vid)))
     }
 }

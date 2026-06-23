@@ -1,9 +1,8 @@
-use crate::common::string_interner::StringInterner;
+use crate::driver::CompilerContext;
 use crate::front_end::semantic_analysis::hir::{
     BindingId, BindingKind, ExpressionId, ExpressionKind, Hir, ItemId, ItemKind, StatementId,
     StatementKind,
 };
-use crate::front_end::semantic_analysis::types::TypeInterner;
 
 use std::fmt::{self, Write};
 
@@ -22,25 +21,16 @@ use std::fmt::{self, Write};
 /// [`AstDumper`]: crate::front_end::syntactic_analysis::ast_dumper::AstDumper
 pub struct HirDumper<'a> {
     hir: &'a Hir,
-    type_interner: &'a TypeInterner,
-    string_interner: &'a StringInterner,
+    ctx: &'a CompilerContext,
 }
 
 impl<'a> HirDumper<'a> {
     const INDENT: &'static str = "  ";
 
-    /// Creates and returns a `HirDumper` borrowing `hir` and the interners
+    /// Creates and returns a `HirDumper` borrowing `hir` and the context
     /// needed to resolve its interned names and types.
-    pub(crate) const fn new(
-        hir: &'a Hir,
-        type_interner: &'a TypeInterner,
-        string_interner: &'a StringInterner,
-    ) -> Self {
-        HirDumper {
-            hir,
-            type_interner,
-            string_interner,
-        }
+    pub(crate) const fn new(hir: &'a Hir, ctx: &'a CompilerContext) -> Self {
+        HirDumper { hir, ctx }
     }
 
     /// Dumps every top-level item in `hir`'s source file, separated by blank
@@ -72,8 +62,8 @@ impl<'a> HirDumper<'a> {
                 body,
             } => {
                 let binding_info = &self.hir.item_bindings[name];
-                let name = self.string_interner.resolve(binding_info.name).unwrap();
-                let ty = self.type_interner.to_string(binding_info.ty);
+                let name = self.ctx.string_interner.resolve(binding_info.name).unwrap();
+                let ty = self.ctx.type_interner.to_string(binding_info.ty);
 
                 // dump header
                 writeln!(hir_output, "{padding}func {name} : {ty}")?;
@@ -82,6 +72,7 @@ impl<'a> HirDumper<'a> {
                 for &local_binding_id in self.hir.get_parameter_slice(parameters) {
                     let local_binding_info = &self.hir.local_bindings[local_binding_id];
                     let parameter_name = self
+                        .ctx
                         .string_interner
                         .resolve(local_binding_info.name)
                         .unwrap();
@@ -89,7 +80,7 @@ impl<'a> HirDumper<'a> {
                         hir_output,
                         "{}  parameter {parameter_name} : {}",
                         padding,
-                        self.type_interner.to_string(local_binding_info.ty)
+                        self.ctx.type_interner.to_string(local_binding_info.ty)
                     )?;
                 }
 
@@ -98,8 +89,8 @@ impl<'a> HirDumper<'a> {
             }
             ItemKind::Constant { name, value } => {
                 let binding_info = &self.hir.item_bindings[name];
-                let name = self.string_interner.resolve(binding_info.name).unwrap();
-                let ty = self.type_interner.to_string(binding_info.ty);
+                let name = self.ctx.string_interner.resolve(binding_info.name).unwrap();
+                let ty = self.ctx.type_interner.to_string(binding_info.ty);
 
                 // dump header
                 writeln!(hir_output, "{padding}const {name} : {ty}")?;
@@ -135,9 +126,9 @@ impl<'a> HirDumper<'a> {
             }
             StatementKind::Let { pattern, value } => {
                 let binding_info = &self.hir.local_bindings[pattern];
-                let name = self.string_interner.resolve(binding_info.name).unwrap();
+                let name = self.ctx.string_interner.resolve(binding_info.name).unwrap();
                 let mutability = if binding_info.mutable { "mut " } else { "" };
-                let ty = self.type_interner.to_string(binding_info.ty);
+                let ty = self.ctx.type_interner.to_string(binding_info.ty);
 
                 // dump the whole statement inline or with the expression nested
                 if let Some(v) = self.try_inline(value) {
@@ -176,7 +167,7 @@ impl<'a> HirDumper<'a> {
     ) -> fmt::Result {
         let expression = &self.hir.expressions[id];
         let padding = Self::pad(depth);
-        let ty = self.type_interner.to_string(expression.ty);
+        let ty = self.ctx.type_interner.to_string(expression.ty);
 
         match expression.kind {
             ExpressionKind::Block { statements, tail } => {
@@ -302,11 +293,13 @@ impl<'a> HirDumper<'a> {
         }
         match binding.kind() {
             BindingKind::Local => self
+                .ctx
                 .string_interner
                 .resolve(self.hir.local_bindings[binding.index().into()].name)
                 .unwrap()
                 .to_string(),
             BindingKind::Item => self
+                .ctx
                 .string_interner
                 .resolve(self.hir.item_bindings[binding.index().into()].name)
                 .unwrap()

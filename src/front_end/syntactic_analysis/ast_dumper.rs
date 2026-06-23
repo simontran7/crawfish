@@ -1,7 +1,7 @@
 use std::fmt::{self, Write};
 use std::str;
 
-use crate::common::string_interner::StringInterner;
+use crate::driver::CompilerContext;
 use crate::front_end::syntactic_analysis::ast::Ast;
 use crate::front_end::syntactic_analysis::ast::handles::{
     ExpressionId, ExpressionKind, IdentifierId, IdentifierKind, ItemId, ItemKind, ParameterId,
@@ -32,7 +32,7 @@ use crate::front_end::syntactic_analysis::ast::nodes::{
 /// through the same `dump_*` methods at `depth + 1`.
 pub struct AstDumper<'a> {
     ast: &'a Ast,
-    interner: &'a StringInterner,
+    ctx: &'a CompilerContext,
     depth: usize,
 }
 
@@ -40,12 +40,8 @@ impl<'a> AstDumper<'a> {
     const INDENT: &'static str = "    ";
 
     /// Creates and returns an instance of `AstDumper`, at depth `0`.
-    pub(crate) const fn new(ast: &'a Ast, interner: &'a StringInterner) -> Self {
-        AstDumper {
-            ast,
-            interner,
-            depth: 0,
-        }
+    pub(crate) const fn new(ast: &'a Ast, ctx: &'a CompilerContext) -> Self {
+        AstDumper { ast, ctx, depth: 0 }
     }
 
     /// Dumps [`Ast::source_file`] and its entire tree, returning the
@@ -413,7 +409,11 @@ impl<'a> AstDumper<'a> {
         self.open_node(s, "VariableNode")?;
 
         self.write_field_label(s, "symbol")?;
-        writeln!(s, "\"{}\",", self.interner.resolve(node.symbol).unwrap())?;
+        writeln!(
+            s,
+            "\"{}\",",
+            self.ctx.string_interner.resolve(node.symbol).unwrap()
+        )?;
 
         self.write_field_label(s, "span")?;
         writeln!(s, "{}", node.span)?;
@@ -664,7 +664,11 @@ impl<'a> AstDumper<'a> {
         self.open_node(s, "ValidIdentifierNode")?;
 
         self.write_field_label(s, "symbol")?;
-        writeln!(s, "\"{}\",", self.interner.resolve(node.symbol).unwrap())?;
+        writeln!(
+            s,
+            "\"{}\",",
+            self.ctx.string_interner.resolve(node.symbol).unwrap()
+        )?;
 
         self.write_field_label(s, "span")?;
         writeln!(s, "{}", node.span)?;

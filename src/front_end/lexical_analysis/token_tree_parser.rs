@@ -201,7 +201,7 @@ impl TokenTreeParser {
 #[cfg(test)]
 mod tests {
     use super::TokenTreeParser;
-    use crate::common::string_interner::StringInterner;
+    use crate::driver::CompilerContext;
     use crate::front_end::lexical_analysis::tokenizer::Tokenizer;
 
     #[test]
@@ -210,9 +210,9 @@ mod tests {
             let source = std::fs::read_to_string(path).unwrap();
             let filename = path.file_name().unwrap().to_str().unwrap();
 
-            let mut string_interner = StringInterner::new();
+            let mut ctx = CompilerContext::new();
 
-            let tokens = Tokenizer::new(&source, &mut string_interner).tokenize();
+            let tokens = Tokenizer::new(&source, &mut ctx).tokenize();
 
             match TokenTreeParser::new(tokens).parse() {
                 Ok(trees) => insta::assert_snapshot!(filename, format!("{:#?}", trees)),

@@ -7,14 +7,27 @@ use crate::front_end::semantic_analysis::types::TypeInterner;
 use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;
 use crate::front_end::syntactic_analysis::parser::Parser;
 
+/// Shared state threaded through all compilation stages.
+pub struct CompilerContext {
+    pub(crate) string_interner: StringInterner,
+    pub(crate) type_interner: TypeInterner,
+}
+
+impl CompilerContext {
+    pub fn new() -> Self {
+        Self {
+            string_interner: StringInterner::new(),
+            type_interner: TypeInterner::new(),
+        }
+    }
+}
+
 /// Compiles `source` named `filename`.
 pub fn compile(filename: &str, source: &str) {
-    // interners
-    let mut string_interner = StringInterner::new();
-    let mut type_interner = TypeInterner::new();
+    let mut ctx = CompilerContext::new();
 
     // lexical analysis
-    let mut tokenizer = Tokenizer::new(source, &mut string_interner);
+    let mut tokenizer = Tokenizer::new(source, &mut ctx);
     let tokens = tokenizer.tokenize();
     let token_trees = match TokenTreeParser::new(tokens).parse() {
         Ok(trees) => trees,
@@ -27,7 +40,7 @@ pub fn compile(filename: &str, source: &str) {
     };
 
     // syntactic analysis
-    let ast = match Parser::new(source, &token_trees, &string_interner).parse() {
+    let ast = match Parser::new(source, &token_trees, &ctx).parse() {
         Ok(ast) => ast,
         Err(diagnostics) => {
             for d in &diagnostics {
@@ -37,13 +50,13 @@ pub fn compile(filename: &str, source: &str) {
         }
     };
     #[cfg(debug_assertions)]
-    match AstDumper::new(&ast, &string_interner).dump() {
+    match AstDumper::new(&ast, &ctx).dump() {
         Ok(output) => println!("{}", output),
         Err(e) => eprintln!("Error dumping AST: {}", e),
     };
 
     // semantic analysis
-    let hir = match SemanticAnalyzer::new(&ast, &string_interner, &mut type_interner).analyze() {
+    let hir = match SemanticAnalyzer::new(&ast, &mut ctx).analyze() {
         Ok(result) => result,
         Err(diagnostics) => {
             for d in &diagnostics {
@@ -53,7 +66,7 @@ pub fn compile(filename: &str, source: &str) {
         }
     };
     #[cfg(debug_assertions)]
-    match HirDumper::new(&hir, &type_interner, &string_interner).dump() {
+    match HirDumper::new(&hir, &ctx).dump() {
         Ok(output) => print!("{}", output),
         Err(e) => eprintln!("Error dumping HIR: {}", e),
     };

@@ -1,15 +1,14 @@
 use std::str::Chars;
 
 use crate::common::span::Span;
-use crate::common::string_interner::StringInterner;
+use crate::driver::CompilerContext;
 use crate::front_end::lexical_analysis::token::{LitKind, Token, TokenKind};
 
 /// Controls the tokenization process.
 pub struct Tokenizer<'a> {
     /// User source code.
     source: &'a str,
-    /// Global string interner.
-    interner: &'a mut StringInterner,
+    ctx: &'a mut CompilerContext,
     // Char abstraction over `source`.
     cursor: Chars<'a>,
 }
@@ -19,10 +18,10 @@ impl<'a> Tokenizer<'a> {
     const EOF_CHAR: char = '\0';
 
     /// Creates and returns an instance of `Tokenizer`.
-    pub(crate) fn new(source: &'a str, interner: &'a mut StringInterner) -> Self {
+    pub(crate) fn new(source: &'a str, ctx: &'a mut CompilerContext) -> Self {
         Self {
             source,
-            interner,
+            ctx,
             cursor: source.chars(),
         }
     }
@@ -119,7 +118,7 @@ impl<'a> Tokenizer<'a> {
             let lexeme = &self.source[start_pos as usize..self.pos() as usize];
             Token::new(
                 token_kind,
-                Some(self.interner.intern(lexeme)),
+                Some(self.ctx.string_interner.intern(lexeme)),
                 Span::new(start_pos, end_pos),
             )
         } else {
