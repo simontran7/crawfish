@@ -3,6 +3,9 @@ name = "crawfish"
 version = "0.0.1"
 edition = "2024"
 
+[features]
+bench-support = []
+
 [dependencies]
 ariadne = "0.4"
 ena = "0.14.4"
@@ -12,3 +15,8 @@ soup = { git = "https://github.com/simontran7/soup" }
 [dev-dependencies]
 insta = { version = "1", features = ["glob"] }
 criterion = "0.8.2"
+
+[[bench]]
+name = "tokenizer"
+harness = false
+required-features = ["bench-support"]

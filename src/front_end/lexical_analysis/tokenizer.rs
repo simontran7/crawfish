@@ -13,6 +13,7 @@ pub struct Tokenizer<'a> {
     cursor: Chars<'a>,
 }
 
+
 impl<'a> Tokenizer<'a> {
     /// Character to mark the end of file
     const EOF_CHAR: char = '\0';
@@ -28,7 +29,7 @@ impl<'a> Tokenizer<'a> {
 
     /// Returns a list of tokens from `source`.
     pub(crate) fn tokenize(&mut self) -> Vec<Token> {
-        let mut tokens = Vec::new();
+        let mut tokens = Vec::with_capacity(self.source.len() / 3);
         loop {
             let token = self.next_token();
             let is_eof = matches!(token.kind(), TokenKind::Eof);
@@ -188,4 +189,25 @@ impl<'a> Tokenizer<'a> {
             );
         }
     }
+
+    #[cfg(feature = "bench-support")]
+    pub fn tokenize_with_cap(&mut self, n: usize) -> Vec<Token> {
+        let mut tokens = Vec::with_capacity(n);
+        loop {
+            let token = self.next_token();
+            let is_eof = matches!(token.kind(), TokenKind::Eof);
+            tokens.push(token);
+            if is_eof {
+                break;
+            }
+        }
+        tokens
+    }
 }
+
+#[cfg(feature = "bench-support")]
+pub fn bench_tokenize(source: &str, ctx: &mut CompilerContext, cap: usize) -> usize {
+    Tokenizer::new(source, ctx).tokenize_with_cap(cap).len()
+}
+
+
