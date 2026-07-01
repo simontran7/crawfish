@@ -6,7 +6,7 @@ use crate::common::string_interner::Symbol;
 /// A single lexed token: its [`TokenKind`], an optional interned [`Symbol`]
 /// (for identifiers and literals), and the [`Span`] it was lexed from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Token {  
+pub struct Token {
     kind: TokenKind,
     symbol: Option<Symbol>,
     span: Span,

@@ -1,5 +1,6 @@
-use crate::diagnostics::semantic_diagnostics::SemanticDiagnostic;
 use crate::common::context::CompilerContext;
+use crate::common::types::{InferTy, Ty, TypeId, TypeInterner};
+use crate::diagnostics::semantic_diagnostics::SemanticDiagnostic;
 use crate::front_end::semantic_analysis::constraints::{Constraint, Provenance};
 use crate::front_end::semantic_analysis::hir::{
     BindingId, BindingKind, ExpressionId, ExpressionKind, ExpressionSlice, Hir, ItemId, ItemKind,
@@ -8,7 +9,6 @@ use crate::front_end::semantic_analysis::hir::{
 use crate::front_end::semantic_analysis::symbol_table::{
     DefineError, LookupError, ScopeKind, SymbolTable,
 };
-use crate::common::types::{InferTy, Ty, TypeId, TypeInterner};
 use crate::front_end::semantic_analysis::unification_table::UnificationTable;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::front_end::syntactic_analysis::ast::{self, Ast};
@@ -1316,7 +1316,11 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`SemanticDiagnostic::UnknownType`] and resolved to
     /// [`TypeInterner::error_id`].
     fn resolve_type_annotation(&mut self, node: &ast::nodes::ValidIdentifierNode) -> TypeId {
-        if let Some(ty) = self.ctx.type_interner.builtin_type_id(node.symbol, &self.ctx.string_interner) {
+        if let Some(ty) = self
+            .ctx
+            .type_interner
+            .builtin_type_id(node.symbol, &self.ctx.string_interner)
+        {
             return ty;
         }
         // TODO: try resolve user-defined types here

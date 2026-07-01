@@ -2,24 +2,16 @@
 
 ## Now
 
-- [ ] MIR data structures ([DataFlowGraph](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/ir/dfg.rs), [Layout](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/ir/layout.rs))
-  - [ ] `Cfg::append_instruction`: add instruction to DFG, create result values, link into layout
-  - [ ] `Cfg::set_terminator`: add terminator instruction as the last instruction of a block
-  - [ ] Value queries: `value_type`, `value_def`, `inst_results`, `first_result`
-  - [ ] Block queries: `block_params`
-  - [ ] Layout iteration: `blocks()`, `block_insts()`, `entry_block()`, `last_inst()`, `inst_block()`
-  - [ ] Layout insertion: `append_block()`, `append_inst()`
+- [ ] MIR construction ([frontend builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs), [ssa builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/ssa.rs), and [paper](https://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf))
+  - [ ] Builder with typestate: enforce block sealing at the API level so construction-order bugs (e.g. reading a block's parameters before all predecessors are known) are unrepresentable. Reference: Cranelift's [FunctionBuilder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs).
 
-- [ ] SSA construction ([frontend builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs), [ssa builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/ssa.rs), and [paper](https://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf))
-
-- [ ] Verifier ([verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs))
-
-- [ ] Const checker: prevents non-const functions as values of a constant definition ([mir_const_qualif](https://github.com/rust-lang/rust/blob/master/compiler/rustc_mir_transform/src/lib.rs), [check.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/check.rs), [ops.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/ops.rs), [ConstContext](https://github.com/rust-lang/rust/blob/master/compiler/rustc_hir/src/hir.rs))
+- [ ] Visitor/Fold trait split for MIR passes: separate read-only traversal (Visitor) from transforming traversal (Fold), each with default no-op/identity methods per instruction kind. Factor out once verification, const evaluation, and codegen all walk the CFG the same way. Reference: rustc's [MIR visitors](https://github.com/rust-lang/rust/blob/master/compiler/rustc_middle/src/mir/visit.rs).
 
 - [ ] Alias resolution ([resolve_all_aliases()](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/ir/dfg.rs))
 
-- [ ] Builder with typestate for MIR construction — enforce block sealing at the API level so construction-order bugs (e.g. reading a block's parameters before all predecessors are known) are unrepresentable. Reference: Cranelift's [FunctionBuilder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs).
-- [ ] Visitor/Fold trait split for MIR passes — separate read-only traversal (Visitor) from transforming traversal (Fold), each with default no-op/identity methods per instruction kind. Factor out once verification, const evaluation, and codegen all walk the CFG the same way. Reference: rustc's [MIR visitors](https://github.com/rust-lang/rust/blob/master/compiler/rustc_middle/src/mir/visit.rs).
+- [ ] MIR verification ([verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs))
+
+- [ ] Const checking: prevents non-const functions as values of a constant definition ([mir_const_qualif](https://github.com/rust-lang/rust/blob/master/compiler/rustc_mir_transform/src/lib.rs), [check.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/check.rs), [ops.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/ops.rs), [ConstContext](https://github.com/rust-lang/rust/blob/master/compiler/rustc_hir/src/hir.rs))
 
 ## Later
 
@@ -104,8 +96,6 @@ unify(Func(a_arg, a_ret), Func(b_arg, b_ret))
 → unify(a_arg, b_arg)
 → unify(a_ret, b_ret)
 
-
-
 Without this, two function types that differ only in their type parameters
 would always fail unification even when the parameters could be made equal.
 
@@ -117,8 +107,6 @@ Before pinning an inference variable `?v` to a concrete type `T`, check that
 
 occurs_check(?v, T) → error if ?v ∈ free_vars(T)
 union_find.set(?v, T)  // only if check passes
-
-
 
 Without the occurs check, infinite types would cause infinite loops during
 `substitute` / normalization.
@@ -133,6 +121,16 @@ When the first `Ty` variant is defined with a `TypeId` field — most likely whe
 - [ ] introduce ARC (https://nonstrict.eu/wwdcindex/wwdc2011/323/?t=397, https://github.com/swiftlang/swift/blob/main/docs/SIL/SIL.md, https://github.com/swiftlang/swift/blob/main/docs/SIL/Instructions.md)
 
 ### Code Generation
+
+High-level pipeline — one function at a time, no whole-program MIR collection needed:
+
+```text
+for each function in Hir:
+    lower Hir function → MIR Function   (Lowerer)
+    run MIR passes                      (verifier, alias resolution, const checker, ...)
+    emit LLVM IR for Function           (Codegen)
+    add to LLVM Module
+```
 
 Two-pass strategy (block parameters → LLVM phi nodes) (https://createlang.rs/03_secondlang/ir.html)
 

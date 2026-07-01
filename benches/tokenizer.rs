@@ -14,7 +14,11 @@ const LARGE: &str = include_str!("fixtures/large.crw");
     args = [0, 1, 2, 3, 4, 8],
 )]
 fn bench_small(cap_divisor: usize) -> usize {
-    let cap = if cap_divisor == 0 { 0 } else { SMALL.len() / cap_divisor };
+    let cap = if cap_divisor == 0 {
+        0
+    } else {
+        SMALL.len() / cap_divisor
+    };
     bench_tokenize(SMALL, &mut CompilerContext::new(), cap)
 }
 
@@ -23,7 +27,11 @@ fn bench_small(cap_divisor: usize) -> usize {
     args = [0, 1, 2, 3, 4, 8],
 )]
 fn bench_medium(cap_divisor: usize) -> usize {
-    let cap = if cap_divisor == 0 { 0 } else { MEDIUM.len() / cap_divisor };
+    let cap = if cap_divisor == 0 {
+        0
+    } else {
+        MEDIUM.len() / cap_divisor
+    };
     bench_tokenize(MEDIUM, &mut CompilerContext::new(), cap)
 }
 
@@ -32,6 +40,10 @@ fn bench_medium(cap_divisor: usize) -> usize {
     args = [0, 1, 2, 3, 4, 8],
 )]
 fn bench_large(cap_divisor: usize) -> usize {
-    let cap = if cap_divisor == 0 { 0 } else { LARGE.len() / cap_divisor };
+    let cap = if cap_divisor == 0 {
+        0
+    } else {
+        LARGE.len() / cap_divisor
+    };
     bench_tokenize(LARGE, &mut CompilerContext::new(), cap)
 }

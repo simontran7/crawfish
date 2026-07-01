@@ -1,7 +1,7 @@
 use std::str::Chars;
 
-use crate::common::span::Span;
 use crate::common::context::CompilerContext;
+use crate::common::span::Span;
 use crate::front_end::lexical_analysis::token::{LitKind, Token, TokenKind};
 
 /// Controls the tokenization process.
@@ -12,7 +12,6 @@ pub struct Tokenizer<'a> {
     // Char abstraction over `source`.
     cursor: Chars<'a>,
 }
-
 
 impl<'a> Tokenizer<'a> {
     /// Character to mark the end of file
@@ -209,5 +208,3 @@ impl<'a> Tokenizer<'a> {
 pub fn bench_tokenize(source: &str, ctx: &mut CompilerContext, cap: usize) -> usize {
     Tokenizer::new(source, ctx).tokenize_with_cap(cap).len()
 }
-
-

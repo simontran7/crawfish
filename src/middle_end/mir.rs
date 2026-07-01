@@ -1,30 +1,30 @@
-use soup::handle_map::Handle;
 use soup::handle_map::HandleMap;
-use soup::handle_map::ReservedValue;
 use soup::handle_map::SideHandleMap;
 
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
+use crate::middle_end::value_list::{ValueId, ValueList, ValueListAllocator};
+
+/// A collection of functions.
+pub type Mir = Vec<Function>;
 
 /// A single function's MIR.
-///
-/// Its identity (name + signature), its body (an SSA control-flow graph),
-/// and the source spans used to report diagnostics for each instruction.
 pub struct Function {
     pub(crate) name: Symbol,
     pub(crate) signature: Signature,
-    pub(crate) cfg: Cfg,
+    pub(crate) body: Cfg,
     pub(crate) source_locations: SideHandleMap<InstructionId, Span>,
 }
 
-/// An SSA control-flow graph.
+/// The body of a single function: an SSA control-flow graph.
 ///
-/// The def-use graph [`DataFlowGraph`] that captures data dependencies,
-/// combined with the [`Layout`] that orders blocks and instructions.
+/// Internally split into a def-use graph ([`DataFlowGraph`]) that captures
+/// data dependencies, and a [`Layout`] that orders blocks and instructions.
+/// All operations are exposed directly on `Cfg` — callers never touch the
+/// internal sub-structures.
 ///
-/// For instance:
 /// ```text
 /// Block0(v0: i32, v1: i32): ← block parameters define v0, v1
 ///     v2 = Binary Add v0, v1 ← instruction consumes v0,v1 — produces v2
@@ -36,76 +36,75 @@ pub struct Function {
 ///     Return v5
 /// ```
 pub struct Cfg {
-    pub(crate) dfg: DataFlowGraph,
-    pub(crate) layout: Layout,
+    dfg: DataFlowGraph,
+    layout: Layout,
 }
 
-/// A def-use graph of Values and Instructions for a [`Function`]
+/// A def-use graph of Values and Instructions for a [`Function`].
 /// This graph captures what flows where.
 ///
 /// There are three kinds of nodes:
 /// - Instruction nodes: consume values (operands) and produce values (results)
-/// - Value nodes: values that are defined exactly once: either as an instruction result or a block parameter
-/// - Block nodes: groups instructions and have parameters (the SSA replacement for phi nodes)
+/// - Value nodes: defined exactly once, either as an instruction result or a block parameter
+/// - Block nodes: group instructions and carry parameters (the SSA replacement for phi nodes)
 ///
-/// And there are two kinds of edges:
-/// - Def edges: connects a definer (instruction or block) to the value it produces
-/// - Use edges: connects an instruction to a value it consumes as an operand
-pub struct DataFlowGraph {
-    pub(crate) values: HandleMap<ValueId, Value>,
-    pub(crate) instructions: HandleMap<InstructionId, Instruction>,
-    pub(crate) instruction_results: SideHandleMap<InstructionId, ValueList>,
-    pub(crate) blocks: HandleMap<BlockId, Block>,
-    pub(crate) function_references: HandleMap<FunctionReferenceId, FunctionReference>,
-    pub(crate) signatures: HandleMap<SignatureId, Signature>,
-    pub(crate) allocator: ValueListAllocator,
+/// And two kinds of edges:
+/// - Def edges: connect a definer (instruction or block) to the value it produces
+/// - Use edges: connect an instruction to a value it consumes as an operand
+struct DataFlowGraph {
+    values: HandleMap<ValueId, Value>,
+    instructions: HandleMap<InstructionId, Instruction>,
+    instruction_results: SideHandleMap<InstructionId, ValueList>,
+    blocks: HandleMap<BlockId, Block>,
+    function_references: HandleMap<FunctionReferenceId, FunctionReference>,
+    signatures: HandleMap<SignatureId, Signature>,
+    allocator: ValueListAllocator,
 }
 
-/// An ordered view of the [`Function`]'s body: what order do the blocks appear in,
-/// and what order do instructions appear in within each block.
+/// An ordered view of the control flow graph (the sequence of blocks and 
+/// the sequence of instructions within each block).
+/// 
 /// Implemented as two doubly-linked lists: one over blocks, one over instructions.
 ///
 /// entry → block0 → block1 → block2 → ...
 ///            ↓
 ///          inst0 → inst1 → inst2 → ... (last node is the block's terminator)
-pub struct Layout {
-    pub(crate) entry: Option<BlockId>,
-    pub(crate) exit: Option<BlockId>,
+struct Layout {
+    /// the head of the linked list
+    entry: Option<BlockId>,
+    /// the tail of the linked list
+    exit: Option<BlockId>,
     blocks: SideHandleMap<BlockId, BlockNode>,
     instructions: SideHandleMap<InstructionId, InstructionNode>,
 }
 
-/// A single SSA value, with its type and the [`ValueDefinition`] that
-/// produces it.
+/// A single SSA value, with its type and the [`ValueDefinition`] that produces it.
 pub struct Value {
-    pub(crate) ty: TypeId,
-    pub(crate) def: ValueDefinition,
+    ty: TypeId,
+    def: ValueDefinition,
 }
 
-/// A basic block. Its `parameters` take the place of the phi nodes a
-/// non-SSA representation would need at this point in the control flow
-/// graph: each predecessor supplies one argument per parameter when
-/// jumping or branching to this block.
+/// A basic block. 
 pub struct Block {
+    /// The SSA equivalent of φ-nodes (i.e., they 
+    /// unify values from different predecessor 
+    /// edges at a control-flow join).
     pub(crate) parameters: ValueList,
 }
 
 /// A single MIR instruction.
 ///
 /// Each instruction may produce zero or more results, recorded separately
-/// in [`DataFlowGraph::instruction_results`]. `Jump`, `BranchIf`, `Return`,
-/// and `Unreachable` are terminators: they end a block and determine which
-/// block, if any, runs next.
+/// in [`DataFlowGraph::instruction_results`].
 pub enum Instruction {
     // Arithmetic
     Binary {
         operator: BinOp,
-        left: ValueId,
-        right: ValueId,
+        args: [ValueId; 2],
     },
     Unary {
         operator: UnOp,
-        operand: ValueId,
+        arg: ValueId,
     },
 
     // Literals
@@ -120,23 +119,23 @@ pub enum Instruction {
     // Calls
     Call {
         callee: FunctionReferenceId,
-        arguments: ValueList,
+        args: ValueList,
     },
 
-    // Control flow (branches carry block arguments)
+    // Terminators (i.e., they end a block and determine which block, if any, runs next)
     Jump {
         destination: BlockId,
-        arguments: ValueList,
+        args: ValueList,
     },
     BranchIf {
-        condition: ValueId,
+        arg: ValueId,
         then_destination: BlockId,
-        then_arguments: ValueList,
+        then_args: ValueList,
         else_destination: BlockId,
-        else_arguments: ValueList,
+        else_args: ValueList,
     },
     Return {
-        values: ValueList,
+        args: ValueList,
     },
     Unreachable,
 }
@@ -145,12 +144,11 @@ pub enum Instruction {
 ///
 /// In SSA form, every value is defined exactly once, at one of two sites:
 ///
-/// - [`Result`]: an output of an instruction. The `u8` is the result index,
-///   since one instruction can produce multiple values (e.g. `divmod → (quot, rem)`).
+/// - [`ValueDefinition::Result`]: an output of an instruction. The `u16` is the index of
+///   the instruction's result in [`DataFlowGraph::instruction_results`].
 ///
-/// - [`Parameter`]: an incoming parameter of a block. The `u8` is the
-///   parameter index. Block parameters are the SSA equivalent of φ-nodes:
-///   they unify values from different predecessor edges at a control-flow join.
+/// - [`ValueDefinition::Parameter`]: an incoming parameter of a block. The `u16` is the 
+///   index of this parameter in [`Block::parameters`].
 ///
 /// Given a [`ValueDefinition`], you can find the defining instruction or block
 /// and trace the value back to its origin.
@@ -173,496 +171,304 @@ pub struct Signature {
     pub(crate) return_type: TypeId,
 }
 
-// Opaque, 4-byte handles into the tables above. Each one indexes a
-// `HandleMap` in `DataFlowGraph` or `Layout`.
+// Opaque, 4-byte handles into the tables above.
 soup::handle_impl!(pub(crate) BlockId);
-soup::handle_impl!(pub(crate) ValueId);
 soup::handle_impl!(pub(crate) InstructionId);
 soup::handle_impl!(pub(crate) FunctionReferenceId);
 soup::handle_impl!(pub(crate) SignatureId);
 
-/// A 4-byte handle to a growable, mutable list of `ValueId`s living
-/// in a [`ValueListAllocator`]. Used wherever MIR needs a variable-length run of
-/// values (e.g., block parameters, call/branch arguments, return values, and
-/// instruction results).
-///
-/// `start` is the index in the pool's backing storage `ValueListAllocator::data` where this list's
-/// elements begin. The live element count lives in the header, at index `start - 1`. This common trick keeps the
-/// handle 4 bytes large and `Copy` (unlike a `Vec`, which would
-/// be 24 bytes and owned).
-///
-/// # Safety
-///
-/// [`ValueList`] is `Copy`, but must be treated as a unique logical owner of its
-/// allocated block. Aliasing copies (e.g. cloning a handle and calling [`ValueList::clear`]
-/// through one while the other still exists) will leave the surviving copy dangling:
-/// the allocator may hand the freed block out to a new list, and the stale handle
-/// would then silently read or corrupt someone else's data.
-///
-/// There is no generation counter or other mechanism to detect this. The caller is
-/// responsible for ensuring that at most one live handle refers to any given allocation
-/// at any time.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ValueList {
-    start: u32,
-}
-
-/// A Segregated Free List allocator storing every [`ValueList`]'s content.
-///
-/// # Layout
-///
-/// `data` holds every value list contiguously. A value list "points" to a contiguous chunk
-/// of slots called a **memory block**. This memory block has three components:
-///
-/// ```text
-/// [header][elements][spare]
-/// ```
-///
-/// 1. **Header**: one slot, which holds the number of live elements.
-/// 2. **Elements**: the list's actual contents.
-/// 3. **Spare**: reserved slots left over from rounding up to a size class.
-///
-/// Every memory block is sized according to [`SizeClass`].
-///
-/// A **free list** is an *intrusive* linked list where each node is a *free* block.
-/// This allocator creates at most one free list per size class. Concretely, `free`
-/// is an array list that maps a [`SizeClass`] as an index, to its free list's head node as element.
-/// As such, for some size class `sz` without a free list, its element at `free[sz]` is the Value`0` (see [`ValueList`]'s documentation).
-/// Every free block's header is `ValueId(0)`, and the free list's node's next pointer is also embedded in `data` as a `ValueId`.
-/// The tail node of a free list's next pointer is `0`.
-///
-/// A free block may be visualized as follows:
-/// ```text
-///               free[<size class>] = <head>
-///                                      │
-///                                      ▼
-///      data: [ ... | ValueId(0) | ValueId(<next pointer>) | ... | ... | ... | ... | ... | ... | ... ]           
-///                        ^            ^                                   ^    ^           ^
-///                        |            └───────────────────────────────────┘    └───────-───┘
-///                    header slot              element slots                    spare slot
-/// ```
-///
-/// NOTE: No coalescing is needed because freed blocks are reused within their size
-/// class as-is. Additionally, no pointer patching is needed on realloc because [`ValueList`]
-/// handles are movable indices, not raw pointers.
-pub struct ValueListAllocator {
-    // all the value lists' contents
-    data: Vec<ValueId>,
-    // free list heads, one per size class
-    free: Vec<usize>,
-}
-
-/// Size class for the pool's segregated free lists.
-/// A size class `n` (0, 1, 2, ...) spans `4 << n` slots (4, 8, 16, 32, ...).
-#[derive(Clone, Copy)]
-struct SizeClass(u8);
-
 /// Linked-list node for [`Layout`]'s block ordering.
 // Clone: required by `SideHandleMap::add` for resize padding
-// Default: all fields are `Option`, so `None` is a valid unlinked node
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct BlockNode {
-    prev: Option<BlockId>,
-    next: Option<BlockId>,
-    first_instruction: Option<InstructionId>,
-    last_instruction: Option<InstructionId>,
+    pub(crate) prev: Option<BlockId>,
+    pub(crate) first_instruction: Option<InstructionId>,
+    pub(crate) last_instruction: Option<InstructionId>,
+    pub(crate) next: Option<BlockId>,
 }
 
 /// Linked-list node for [`Layout`]'s instruction ordering within a block.
 // Clone: required by `SideHandleMap::add` for resize padding
-// Default: manual impl below — `block` has no natural default, uses `BlockId::reserved()`
 #[derive(Clone)]
 struct InstructionNode {
-    prev: Option<InstructionId>,
-    block: BlockId,
-    next: Option<InstructionId>,
-}
-
-impl ValueList {
-    /// Marks an empty list.
-    ///
-    /// 0 may be used as the empty sentinel value because non-empty lists
-    /// *always* have a `start` >= 1 (give that 1 is lowest possible `start`
-    /// that would be able to accomodate a header `start - 1` within [0, ...]).
-    const EMPTY: u32 = 0;
-
-    /// Creates and returns a new, empty list.
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    /// Allocates a new list in `allocator` and copies `slice`'s elements
-    /// into it. Returns an empty list without allocating if `slice` is
-    /// empty.
-    pub(crate) fn from(allocator: &mut ValueListAllocator, slice: &[ValueId]) -> Self {
-        if slice.is_empty() {
-            return Self::new();
-        }
-        let count = slice.len();
-        let block = allocator.alloc(count);
-        allocator.data[block] = ValueId::new(count);
-        allocator.data[block + 1..=block + count].copy_from_slice(slice);
-        Self {
-            start: (block + 1) as u32,
-        }
-    }
-
-    /// Returns the number of elements in the list, or `None` if it's empty.
-    pub(crate) fn count(self, pool: &ValueListAllocator) -> Option<usize> {
-        // wrapping_sub so that start == 0 (empty) maps to usize::MAX, which is
-        // guaranteed out of bounds for any Vec. This makes .get() return None,
-        // collapsing the emptiness check and bounds check into one.
-        pool.data
-            .get((self.start as usize).wrapping_sub(1))
-            .map(|v| v.index())
-    }
-
-    /// Returns whether the list has no elements.
-    pub(crate) const fn is_empty(&self) -> bool {
-        self.start == Self::EMPTY
-    }
-
-    /// Returns the list's elements as a slice, or an empty slice if the list
-    /// is empty.
-    pub(crate) fn to_slice(self, allocator: &ValueListAllocator) -> &[ValueId] {
-        let start = self.start as usize;
-        match self.count(allocator) {
-            None => &[],
-            Some(count) => &allocator.data[start..start + count],
-        }
-    }
-
-    /// Returns the list's elements as a mutable slice, or an empty slice if
-    /// the list is empty.
-    pub(crate) fn to_mut_slice(self, allocator: &mut ValueListAllocator) -> &mut [ValueId] {
-        let start = self.start as usize;
-        match self.count(allocator) {
-            None => &mut [],
-            Some(len) => &mut allocator.data[start..start + len],
-        }
-    }
-
-    /// Returns the element at `index`, or `None` if `index` is out of bounds.
-    pub(crate) fn get(&self, index: usize, pool: &ValueListAllocator) -> Option<ValueId> {
-        self.to_slice(pool).get(index).copied()
-    }
-
-    /// Adds `value` to the end of the list.
-    pub(crate) fn add_last(&mut self, allocator: &mut ValueListAllocator, value: ValueId) {
-        let start = self.start as usize;
-        if let Some(count) = self.count(allocator) {
-            let new_count = count + 1;
-            let block;
-
-            if SizeClass::exceeds_capacity(new_count) {
-                block = allocator.realloc(start - 1, count, new_count, count + 1); // copy the header and the actual elements
-                self.start = (block + 1) as u32;
-            } else {
-                block = start - 1;
-            }
-
-            allocator.data[block + new_count] = value;
-
-            allocator.data[block] = ValueId::new(new_count);
-        } else {
-            let block = allocator.alloc(1);
-            allocator.data[block] = ValueId::new(1);
-            allocator.data[block + 1] = value;
-            self.start = (block + 1) as u32;
-        }
-    }
-
-    /// Frees the list's backing storage and resets it to empty.
-    ///
-    /// NOTE: Any other `Copy` of this handle still has the old `start` and is left
-    /// dangling, so it may point at a block the allocator later hands out to a
-    /// different list.
-    pub(crate) fn clear(&mut self, allocator: &mut ValueListAllocator) {
-        if let Some(count) = self.count(allocator) {
-            allocator.free(self.start as usize - 1, count);
-        }
-        self.start = Self::EMPTY;
-    }
-}
-
-impl ValueListAllocator {
-    /// Creates and returns an allocator for value lists.
-    pub(crate) const fn new() -> Self {
-        Self {
-            data: Vec::new(),
-            free: Vec::new(),
-        }
-    }
-
-    /// Drops every [`ValueList`]'s contents and free-list state, returning
-    /// the allocator to its initial empty state.
-    ///
-    /// NOTE: Any [`ValueList`] into this allocator are invalidated.
-    pub(crate) fn reset(&mut self) {
-        self.data.clear();
-        self.free.clear();
-    }
-
-    /// Returns the index of the block's header that can fit `count` elements.
-    fn alloc(&mut self, count: usize) -> usize {
-        // Compute the smallest size class given the desired amount of value ids to allocate
-        let size_class = SizeClass::new(count);
-
-        // If the size class's free list is not empty (i.e., it has a recycled free block),
-        // pop the head and return it.
-        if let Some(&head) = self.free.get(size_class.0 as usize)
-            && head > 0
-        // checks that the next pointer is *not* 0, which indicates it is at tail node of the free list
-        {
-            let next = self.data[head];
-            self.free[size_class.0 as usize] = next.index();
-            head - 1 // reminder: header index is one slot ahead
-        } else {
-            // Otherwise, allocate at the end of `data` a chunk of slots based on the smallest size class for `count`
-            let header_idx = self.data.len();
-            self.data
-                .resize(header_idx + size_class.capacity(), ValueId::reserved());
-            header_idx
-        }
-    }
-
-    /// Frees `block` which contains `count` slots.
-    fn free(&mut self, block: usize, count: usize) {
-        // Compute the smallest size class given the desired amount of value ids to free
-        let size_class = SizeClass::new(count);
-
-        // when there is no free list for the smallest size class, grow `free`
-        if self.free.len() <= size_class.0 as usize {
-            self.free.resize(size_class.0 as usize + 1, 0);
-        }
-
-        // push `block` onto the head of the free list of `size_class` (i.e., mark the block as free)
-        self.data[block] = ValueId::new(0); // zero the header
-        self.data[block + 1] = ValueId::new(self.free[size_class.0 as usize]); // store the current head as the next pointer
-        self.free[size_class.0 as usize] = block + 1; // set the freed `block` to be the new head
-    }
-
-    /// Moves a value list's current block to a block sized for `new_count`.
-    fn realloc(&mut self, block: usize, old_count: usize, new_count: usize, copy: usize) -> usize {
-        let new_block = self.alloc(new_count);
-
-        if copy > 0 {
-            let (old, new) = self.mut_slices(block, new_block);
-            new[..copy].copy_from_slice(&old[..copy]);
-        }
-
-        self.free(block, old_count);
-
-        new_block
-    }
-
-    /// Returns two mutable slices into `data` starting at `block0` and `block1` respectively.
-    ///
-    /// NOTE: Uses `split_at_mut` to satisfy Rust's aliasing rules, as you cannot take two mutable
-    /// references (specifically, slices) into the same `Vec` directly.
-    fn mut_slices(&mut self, block0: usize, block1: usize) -> (&mut [ValueId], &mut [ValueId]) {
-        if block0 < block1 {
-            let (s0, s1) = self.data.split_at_mut(block1);
-            let s0 = &mut s0[block0..]; // trims the front off (from `&mut data[0..block1]` to `&mut data[block0..block1]`)
-            (s0, s1)
-        } else {
-            let (s1, s0) = self.data.split_at_mut(block0);
-            let s1 = &mut s1[block1..]; // trims the front off (from `&mut data[0..block0]` to `&mut data[block1..block0]`)
-            (s0, s1)
-        }
-    }
-}
-
-impl SizeClass {
-    /// Determines the smallest size class that can fit the desired `count` of ValueIds (excluding the header slot).
-    fn new(count: usize) -> Self {
-        assert!(count > 0);
-        // GOAL: use the leading bit's position as the size class selector since all the counts that round up to the same power-of-two bucket
-        // share the same leading bit position. For example, when `count` is 4, 5, 6, or 7,
-        // they all have leading bit at position 2, and they all need a block of 8 slots.
-        // This mean we can simply substract the position by 1, Meanwhile,
-        // when count is  8 or 15 (both inclusive), they all have leading bit at position 3,
-        //
-        // Step 1: `(count | 3)` to clamp `count` to a minimum of `3` so that a `count` of 1 to 3 (both inclusive)
-        // will all have the same size class of 0 (i.e., 4 slots). Without this clamping, a `count` of 1
-        // would get a class size of 0 (good), while a `count` of 2 or 3 would get a size class of 1 (too much wasted slots).
-        // For `count` > 4, it may alter the lower bits, but that's alright since the leading bit is preserved
-        //
-        // Step 2: `ilog2()` to extract the position of the leading bit (0-indexed from the right)
-        //
-        // Step 3: `- 1` to shift the index range down by 1 (since clamping to a minimum of 3 in step 1 means
-        // `ilog2` in step 2 always returns at least 1), so that the smallest size class is 0 and we get
-        // `4 << 0 = 4` the correct slot count for it.
-        Self(((count | 3).ilog2() - 1) as u8)
-    }
-
-    /// Returns the number of slots that a size class may accomodate.
-    const fn capacity(&self) -> usize {
-        4 << self.0
-    }
-
-    /// Returns whether a list that just grew to `count` elements has
-    /// outgrown its current block and must be moved to the next size class.
-    ///
-    /// Block capacities (element slots, excluding the header) are
-    /// 3, 7, 15, 31, ..., so a list overflows its block exactly when
-    /// `count` is 4, 8, 16, 32, ....
-    const fn exceeds_capacity(count: usize) -> bool {
-        count > 3 && count.is_power_of_two()
-    }
+    pub(crate) prev: Option<InstructionId>,
+    pub(crate) block: BlockId,
+    pub(crate) next: Option<InstructionId>,
 }
 
 impl Cfg {
+    /// Creates and returns a handle to a basic block.
     pub(crate) fn create_block(&mut self) -> BlockId {
         self.dfg.blocks.add(Block {
             parameters: ValueList::new(),
         })
     }
 
-    pub(crate) fn append_block_parameter(&mut self, block: BlockId, ty: TypeId) -> ValueId {
-        let parameter = self.dfg.values.next_key();
-        self.dfg.blocks[block]
-            .parameters
-            .add_last(&mut self.dfg.allocator, parameter);
-        let count = self.dfg.blocks[block]
-            .parameters
-            .count(&mut self.dfg.allocator)
-            .unwrap();
+    /// Appends `block_id` to the end of the layout's block sequence.
+    pub(crate) fn append_block(&mut self, block_id: BlockId) {
         assert!(
-            count <= u16::MAX as usize,
-            "the block has too many parameters"
+            !self.layout.blocks.get(block_id).is_some(),
+            "cannot append a block that is already in the cfg"
         );
-        self.dfg.values.add(Value {
-            ty,
-            def: ValueDefinition::Parameter(block, count as u16),
-        })
-    }
-
-    pub(crate) fn append_instruction(
-        &mut self,
-        block: BlockId,
-        inst: Instruction,
-        result_tys: &[TypeId],
-    ) -> InstructionId {
-        let inst_id = self.dfg.instructions.add(inst);
-        let results = result_tys
-            .iter()
-            .enumerate()
-            .map(|(i, &ty)| {
-                self.dfg.values.add(Value {
-                    ty,
-                    def: ValueDefinition::Result(inst_id, i as u16),
-                })
-            })
-            .collect::<Vec<_>>();
-        self.dfg
-            .instruction_results
-            .add(inst_id, ValueList::from(&mut self.dfg.allocator, &results));
-        self.layout.append_inst(block, inst_id);
-        inst_id
-    }
-
-    pub(crate) fn set_terminator(&mut self, block: BlockId, terminator: Instruction) {
-        let inst_id = self.dfg.instructions.add(terminator);
-        self.dfg.instruction_results.add(inst_id, ValueList::new());
-        self.layout.append_inst(block, inst_id);
-    }
-}
-
-// --- Value queries ---
-
-impl DataFlowGraph {
-    pub(crate) fn value_type(&self, value: ValueId) -> TypeId {
-        self.values[value].ty
-    }
-
-    pub(crate) fn value_def(&self, value: ValueId) -> ValueDefinition {
-        self.values[value].def
-    }
-
-    pub(crate) fn inst_results(&self, inst: InstructionId) -> &[ValueId] {
-        self.instruction_results[inst].to_slice(&self.allocator)
-    }
-
-    pub(crate) fn first_result(&self, inst: InstructionId) -> Option<ValueId> {
-        self.instruction_results[inst].get(0, &self.allocator)
-    }
-
-    pub(crate) fn block_params(&self, block: BlockId) -> &[ValueId] {
-        self.blocks[block].parameters.to_slice(&self.allocator)
-    }
-}
-
-// --- Layout insertion ---
-
-impl Layout {
-    pub(crate) fn append_block(&mut self, block: BlockId) {
         let node = BlockNode {
-            prev: self.exit,
+            prev: self.layout.exit,
             next: None,
             first_instruction: None,
             last_instruction: None,
         };
-        self.blocks.add(block, node);
-        if let Some(exit) = self.exit {
-            self.blocks[exit].next = Some(block);
+        self.layout.blocks.add(block_id, node);
+        if let Some(exit) = self.layout.exit {
+            self.layout.blocks[exit].next = Some(block_id);
+        } else {
+            self.layout.entry = Some(block_id);
         }
-        if self.entry.is_none() {
-            self.entry = Some(block);
-        }
-        self.exit = Some(block);
+        self.layout.exit = Some(block_id);
     }
 
-    pub(crate) fn append_inst(&mut self, block: BlockId, inst: InstructionId) {
-        let prev = self.blocks[block].last_instruction;
-        let node = InstructionNode {
-            block,
-            prev,
-            next: None,
-        };
-        self.instructions.add(inst, node);
-        if let Some(prev) = prev {
-            self.instructions[prev].next = Some(inst);
-        } else {
-            self.blocks[block].first_instruction = Some(inst);
+    /// Returns a view over the entry block, or `None` if no blocks have been appended yet.
+    pub(crate) fn entry(&self) -> Option<BlockView<'_>> {
+        self.layout.entry.map(|block_id| BlockView { block_id, cfg: self })
+    }
+
+    /// Returns an iterator over all blocks in layout order.
+    pub(crate) fn blocks(&self) -> BlockIter<'_> {
+        BlockIter {
+            layout: &self.layout,
+            next: self.layout.entry,
         }
-        self.blocks[block].last_instruction = Some(inst);
+    }
+
+    /// Returns a view over `block_id` for block-local queries.
+    pub(crate) fn get_block(&self, block_id: BlockId) -> BlockView<'_> {
+        BlockView { block_id, cfg: self }
+    }
+
+    /// Returns a mutable view over `block_id` for block-local mutations.
+    pub(crate) fn get_block_mut(&mut self, block_id: BlockId) -> BlockViewMut<'_> {
+        BlockViewMut { block_id, cfg: self }
+    }
+
+    /// Returns a view over `instruction_id` for instruction-local queries.
+    pub(crate) fn get_instruction(&self, instruction_id: InstructionId) -> InstructionView<'_> {
+        InstructionView { instruction_id, cfg: self }
+    }
+
+    pub(crate) fn get_instruction_mut(&mut self, instruction_id: InstructionId) -> InstructionViewMut<'_> {
+        InstructionViewMut { instruction_id, cfg: self }
+    }
+
+    pub(crate) fn get_value(&self, value_id: ValueId) -> &Value {
+        &self.dfg.values[value_id]
     }
 }
 
-// --- Layout iteration ---
+pub(crate) struct BlockView<'a> {
+    block_id: BlockId,
+    cfg: &'a Cfg,
+}
 
-impl Layout {
-    pub(crate) fn entry_block(&self) -> Option<BlockId> {
-        self.entry
-    }
+pub(crate) struct BlockViewMut<'a> {
+    block_id: BlockId,
+    cfg: &'a mut Cfg,
+}
 
-    pub(crate) fn last_inst(&self, block: BlockId) -> Option<InstructionId> {
-        self.blocks[block].last_instruction
-    }
+pub(crate) struct InstructionView<'a> {
+    instruction_id: InstructionId,
+    cfg: &'a Cfg,
+}
 
-    pub(crate) fn inst_block(&self, inst: InstructionId) -> BlockId {
-        self.instructions[inst].block
-    }
+pub(crate) struct InstructionViewMut<'a> {
+    instruction_id: InstructionId,
+    cfg: &'a mut Cfg,
+}
 
-    pub(crate) fn blocks(&self) -> BlockIter<'_> {
-        BlockIter {
-            layout: self,
-            next: self.entry,
+impl<'a> BlockView<'a> {
+    /// Returns an iterator over all instructions in this block in layout order.
+    pub(crate) fn instructions(&self) -> InstructionIter<'a> {
+        InstructionIter {
+            layout: &self.cfg.layout,
+            next: self.cfg.layout.blocks[self.block_id].first_instruction,
         }
     }
 
-    pub(crate) fn block_insts(&self, block: BlockId) -> InstIter<'_> {
-        InstIter {
-            layout: self,
-            next: self.blocks[block].first_instruction,
+    /// Returns the first instruction in this block, or `None` if the block is empty.
+    pub(crate) fn first_instruction(&self) -> Option<InstructionId> {
+        self.cfg.layout.blocks[self.block_id].first_instruction
+    }
+
+    /// Returns the last instruction in this block, or `None` if the block is empty.
+    pub(crate) fn last_instruction(&self) -> Option<InstructionId> {
+        self.cfg.layout.blocks[self.block_id].last_instruction
+    }
+
+    /// Returns the block's parameters as a slice.
+    pub(crate) fn parameters(&self) -> &[ValueId] {
+        self.cfg.dfg.blocks[self.block_id].parameters.to_slice(&self.cfg.dfg.allocator)
+    }
+}
+
+impl<'a> InstructionView<'a> {
+    /// Returns the instruction's value operands as a slice.
+    ///
+    /// NOTE: For [`Instruction::BranchIf`], only the condition is returned (the
+    /// then/else block arguments are not operands in the traditional sense).
+    pub(crate) fn arguments(&self) -> &[ValueId] {
+        let allocator = &self.cfg.dfg.allocator;
+        match &self.cfg.dfg.instructions[self.instruction_id] {
+            Instruction::Binary { args, .. } => args,
+            Instruction::Unary { arg, .. } => std::slice::from_ref(arg),
+            Instruction::Call { args, .. } => args.to_slice(allocator),
+            Instruction::Jump { args, .. } => args.to_slice(allocator),
+            Instruction::BranchIf { arg, .. } => std::slice::from_ref(arg),
+            Instruction::Return { args } => args.to_slice(allocator),
+            Instruction::IntegerLiteral { .. }
+            | Instruction::BooleanLiteral { .. }
+            | Instruction::Unreachable => &[],
         }
+    }
+
+    /// Returns the instruction's result values as a slice.
+    pub(crate) fn results(&self) -> &[ValueId] {
+        self.cfg.dfg.instruction_results[self.instruction_id].to_slice(&self.cfg.dfg.allocator)
+    }
+
+    /// Returns the first result, or `None` if this instruction produces no results.
+    pub(crate) fn first_result(&self) -> Option<ValueId> {
+        self.cfg.dfg.instruction_results[self.instruction_id].get(0, &self.cfg.dfg.allocator)
+    }
+
+    /// Returns the block that contains this instruction.
+    pub(crate) fn containing_block(&self) -> BlockId {
+        self.cfg.layout.instructions[self.instruction_id].block
+    }
+}
+
+impl<'a> InstructionViewMut<'a> {
+    /// Rewrites every `ValueId` the instruction references by applying `f` to each one,
+    /// including `BranchIf`'s then/else block arguments.
+    pub(crate) fn rewrite_values(&mut self, mut f: impl FnMut(ValueId) -> ValueId) {
+        let allocator = &mut self.cfg.dfg.allocator;
+        match &mut self.cfg.dfg.instructions[self.instruction_id] {
+            Instruction::Binary { args, .. } => {
+                args[0] = f(args[0]);
+                args[1] = f(args[1]);
+            }
+            Instruction::Unary { arg, .. } => *arg = f(*arg),
+            Instruction::Call { args, .. } => {
+                for v in args.to_mut_slice(allocator) { *v = f(*v); }
+            }
+            Instruction::Jump { args, .. } => {
+                for v in args.to_mut_slice(allocator) { *v = f(*v); }
+            }
+            Instruction::BranchIf { arg, then_args, else_args, .. } => {
+                *arg = f(*arg);
+                for v in then_args.to_mut_slice(allocator) { *v = f(*v); }
+                for v in else_args.to_mut_slice(allocator) { *v = f(*v); }
+            }
+            Instruction::Return { args } => {
+                for v in args.to_mut_slice(allocator) { *v = f(*v); }
+            }
+            Instruction::IntegerLiteral { .. }
+            | Instruction::BooleanLiteral { .. }
+            | Instruction::Unreachable => {}
+        }
+    }
+}
+
+impl<'a> BlockViewMut<'a> {
+    /// Appends a parameter of type `ty` to this block and returns a handle to its associated value.
+    pub(crate) fn append_parameter(&mut self, ty: TypeId) -> ValueId {
+        let parameter = self.cfg.dfg.values.next_key();
+        self.cfg.dfg.blocks[self.block_id]
+            .parameters
+            .add_last(&mut self.cfg.dfg.allocator, parameter);
+        let count = self.cfg.dfg.blocks[self.block_id]
+            .parameters
+            .count(&self.cfg.dfg.allocator);
+        assert!(count <= u16::MAX as usize, "the block has too many parameters");
+        self.cfg.dfg.values.add(Value {
+            ty,
+            def: ValueDefinition::Parameter(self.block_id, count as u16),
+        })
+    }
+
+    /// Appends `instruction` to the end of this block, allocating result values with types `result_tys`.
+    pub(crate) fn append_instruction(&mut self, instruction: Instruction, result_tys: &[TypeId]) -> InstructionId {
+        let instruction_id = self.cfg.dfg.instructions.add(instruction);
+        let results: Vec<ValueId> = result_tys
+            .iter()
+            .enumerate()
+            .map(|(i, &ty)| {
+                self.cfg.dfg.values.add(Value {
+                    ty,
+                    def: ValueDefinition::Result(instruction_id, i as u16),
+                })
+            })
+            .collect();
+        self.cfg.dfg.instruction_results.add(
+            instruction_id,
+            ValueList::from(&mut self.cfg.dfg.allocator, &results),
+        );
+        self.link_instruction_to_block(self.block_id, instruction_id);
+        instruction_id
+    }
+
+    /// Appends a terminator to the end of this block. Terminators produce no results.
+    pub(crate) fn set_terminator(&mut self, terminator: Instruction) {
+        let instruction_id = self.cfg.dfg.instructions.add(terminator);
+        self.cfg.dfg.instruction_results.add(instruction_id, ValueList::new());
+        self.link_instruction_to_block(self.block_id, instruction_id);
+    }
+
+    /// Removes the block parameter at `index` by swapping it with the last and decrementing the count.
+    pub(crate) fn swap_remove_parameter(&mut self, index: usize) {
+        let params = self.cfg.dfg.blocks[self.block_id]
+            .parameters
+            .to_mut_slice(&mut self.cfg.dfg.allocator);
+        params.swap(index, params.len() - 1);
+        self.cfg.dfg.blocks[self.block_id]
+            .parameters
+            .clear_last(&mut self.cfg.dfg.allocator);
+    }
+
+    /// Detaches and returns the block's parameter list, leaving the block with no parameters.
+    pub(crate) fn detach_parameters(&mut self) -> ValueList {
+        let params = self.cfg.dfg.blocks[self.block_id].parameters;
+        self.cfg.dfg.blocks[self.block_id].parameters = ValueList::new();
+        params
+    }
+
+    fn link_instruction_to_block(&mut self, block_id: BlockId, instruction_id: InstructionId) {
+        let prev = self.cfg.layout.blocks[block_id].last_instruction;
+        let node = InstructionNode { block: block_id, prev, next: None };
+        self.cfg.layout.instructions.add(instruction_id, node);
+        if let Some(prev) = prev {
+            self.cfg.layout.instructions[prev].next = Some(instruction_id);
+        } else {
+            self.cfg.layout.blocks[block_id].first_instruction = Some(instruction_id);
+        }
+        self.cfg.layout.blocks[block_id].last_instruction = Some(instruction_id);
+    }
+}
+
+impl Value {
+    pub(crate) fn ty(&self) -> TypeId {
+        self.ty
+    }
+
+    pub(crate) fn definition(&self) -> ValueDefinition {
+        self.def
     }
 }
 
 pub(crate) struct BlockIter<'a> {
     layout: &'a Layout,
     next: Option<BlockId>,
+}
+
+pub(crate) struct InstructionIter<'a> {
+    layout: &'a Layout,
+    next: Option<InstructionId>,
 }
 
 impl Iterator for BlockIter<'_> {
@@ -674,12 +480,8 @@ impl Iterator for BlockIter<'_> {
     }
 }
 
-pub(crate) struct InstIter<'a> {
-    layout: &'a Layout,
-    next: Option<InstructionId>,
-}
 
-impl Iterator for InstIter<'_> {
+impl Iterator for InstructionIter<'_> {
     type Item = InstructionId;
     fn next(&mut self) -> Option<InstructionId> {
         let inst = self.next?;
@@ -688,12 +490,3 @@ impl Iterator for InstIter<'_> {
     }
 }
 
-impl Default for InstructionNode {
-    fn default() -> Self {
-        Self {
-            block: BlockId::reserved(),
-            prev: None,
-            next: None,
-        }
-    }
-}

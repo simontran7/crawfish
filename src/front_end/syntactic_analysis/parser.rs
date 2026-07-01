@@ -1,6 +1,6 @@
+use crate::common::context::CompilerContext;
 use crate::common::span::Span;
 use crate::diagnostics::syntactic_diagnostics::SyntacticDiagnostic;
-use crate::common::context::CompilerContext;
 use crate::front_end::lexical_analysis::token::{LitKind, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
 use crate::front_end::syntactic_analysis::ast::Ast;

@@ -1,0 +1,282 @@
+use soup::handle_map::{Handle, ReservedValue};
+
+soup::handle_impl!(pub(crate) ValueId);
+
+/// A 4-byte handle to a growable, mutable list of `ValueId`s living
+/// in a [`ValueListAllocator`]. Used wherever MIR needs a variable-length run of
+/// values (e.g., block parameters, call/branch arguments, return values, and
+/// instruction results).
+///
+/// `start` is the index in the allocator's backing storage `ValueListAllocator::data` where this list's
+/// elements begin. The live element count lives in the header, at index `start - 1`. This common trick keeps the
+/// handle 4 bytes large and `Copy` (unlike a `Vec`, which would
+/// be 24 bytes and owned).
+///
+/// # Safety
+///
+/// [`ValueList`] is `Copy`, but must be treated as a unique logical owner of its
+/// allocated block. Aliasing copies (e.g. cloning a handle and calling [`ValueList::clear`]
+/// through one while the other still exists) will leave the surviving copy dangling:
+/// the allocator may hand the freed block out to a new list, and the stale handle
+/// would then silently read or corrupt someone else's data.
+///
+/// There is no generation counter or other mechanism to detect this. The caller is
+/// responsible for ensuring that at most one live handle refers to any given allocation
+/// at any time.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ValueList {
+    pub(super) start: u32,
+}
+
+/// A Segregated Free List allocator storing every [`ValueList`]'s content.
+///
+/// # Layout
+///
+/// `data` holds every value list contiguously. A value list "points" to a contiguous chunk
+/// of slots called a **memory block**. This memory block has three components:
+///
+/// ```text
+/// [header][elements][spare]
+/// ```
+///
+/// 1. **Header**: one slot, which holds the number of live elements.
+/// 2. **Elements**: the list's actual contents.
+/// 3. **Spare**: reserved slots left over from rounding up to a size class.
+///
+/// Every memory block is sized according to [`SizeClass`].
+///
+/// A **free list** is an *intrusive* linked list where each node is a *free* block.
+/// This allocator creates at most one free list per size class. Concretely, `free`
+/// is an array list that maps a [`SizeClass`] as an index, to its free list's head node as element.
+/// As such, for some size class `sz` without a free list, its element at `free[sz]` is the Value`0` (see [`ValueList`]'s documentation).
+/// Every free block's header is `ValueId(0)`, and the free list's node's next pointer is also embedded in `data` as a `ValueId`.
+/// The tail node of a free list's next pointer is `0`.
+///
+/// A free block may be visualized as follows:
+/// ```text
+///               free[<size class>] = <head>
+///                                      │
+///                                      ▼
+///      data: [ ... | ValueId(0) | ValueId(<next pointer>) | ... | ... | ... | ... | ... | ... | ... ]
+///                        ^            ^                                   ^    ^           ^
+///                        |            └───────────────────────────────────┘    └───────-───┘
+///                    header slot              element slots                    spare slot
+/// ```
+///
+/// NOTE: No coalescing is needed because freed blocks are reused within their size
+/// class as-is. Additionally, no pointer patching is needed on realloc because [`ValueList`]
+/// handles are movable indices, not raw pointers.
+pub(crate) struct ValueListAllocator {
+    pub(super) data: Vec<ValueId>,
+    free: Vec<usize>,
+}
+
+/// Size class for the allocator's segregated free lists.
+/// A size class `n` (0, 1, 2, ...) spans `4 << n` slots (4, 8, 16, 32, ...).
+#[derive(Clone, Copy)]
+struct SizeClass(u8);
+
+impl ValueList {
+    /// Marks an empty list.
+    ///
+    /// 0 may be used as the empty sentinel value because non-empty lists
+    /// *always* have a `start` >= 1 (give that 1 is lowest possible `start`
+    /// that would be able to accomodate a header `start - 1` within [0, ...]).
+    const EMPTY: u32 = 0;
+
+    /// Creates and returns a new, empty list.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Allocates a new list in `allocator` and copies `slice`'s elements
+    /// into it. Returns an empty list without allocating if `slice` is empty.
+    pub(crate) fn from(allocator: &mut ValueListAllocator, slice: &[ValueId]) -> Self {
+        if slice.is_empty() {
+            return Self::new();
+        }
+        let count = slice.len();
+        let block = allocator.alloc(count);
+        allocator.data[block] = ValueId::new(count);
+        allocator.data[block + 1..=block + count].copy_from_slice(slice);
+        Self { start: (block + 1) as u32 }
+    }
+
+    /// Returns the number of elements in the list.
+    pub(crate) fn count(self, allocator: &ValueListAllocator) -> usize {
+        // wrapping_sub so that start == 0 (empty) maps to usize::MAX, which is
+        // guaranteed out of bounds for any Vec. This makes `.get()` return `None`,
+        // collapsing the emptiness check and bounds check into one.
+        allocator.data
+            .get((self.start as usize).wrapping_sub(1))
+            .map_or(0, |v| v.index())
+    }
+
+    /// Returns whether the list has no elements.
+    pub(crate) fn is_empty(self, allocator: &ValueListAllocator) -> bool {
+        self.count(allocator) == 0
+    }
+
+    /// Returns the list's elements as a slice, or an empty slice if empty.
+    pub(crate) fn to_slice(self, allocator: &ValueListAllocator) -> &[ValueId] {
+        if self.is_empty(allocator) {
+            &[]
+        } else {
+            &allocator.data[self.start as usize..self.start as usize + self.count(allocator)]
+        }
+    }
+
+    /// Returns the list's elements as a mutable slice, or an empty slice if empty.
+    pub(crate) fn to_mut_slice(self, allocator: &mut ValueListAllocator) -> &mut [ValueId] {
+        if self.is_empty(allocator) {
+            &mut []
+        } else {
+            let start = self.start as usize;
+            let count = self.count(allocator);
+            &mut allocator.data[start..start + count]
+        }
+    }
+
+    /// Returns the element at `index`, or `None` if out of bounds.
+    pub(crate) fn get(&self, index: usize, allocator: &ValueListAllocator) -> Option<ValueId> {
+        self.to_slice(allocator).get(index).copied()
+    }
+
+    /// Adds `value` to the end of the list.
+    pub(crate) fn add_last(&mut self, allocator: &mut ValueListAllocator, value: ValueId) {
+        let start = self.start as usize;
+        if self.is_empty(allocator) {
+            let block = allocator.alloc(1);
+            allocator.data[block] = ValueId::new(1);
+            allocator.data[block + 1] = value;
+            self.start = (block + 1) as u32;
+        } else {
+            let new_count = self.count(allocator) + 1;
+            let block;
+
+            if SizeClass::exceeds_capacity(new_count) {
+                block = allocator.realloc(start - 1, self.count(allocator), new_count, self.count(allocator) + 1);
+                self.start = (block + 1) as u32;
+            } else {
+                block = start - 1;
+            }
+
+            allocator.data[block + new_count] = value;
+            allocator.data[block] = ValueId::new(new_count);
+        }
+    }
+
+    /// Removes the last element, decrementing the header count in place.
+    /// The backing block is not freed or reallocated — the slot is simply abandoned.
+    /// Panics if the list is empty.
+    pub(crate) fn clear_last(&mut self, allocator: &mut ValueListAllocator) {
+        let count = self.count(allocator);
+        assert!(count > 0, "called `.clear_last()` on an empty value list");
+        allocator.data[self.start as usize - 1] = ValueId::new(count - 1);
+    }
+
+    /// Frees the list's backing storage and resets it to empty.
+    ///
+    /// NOTE: Any other `Copy` of this handle still has the old `start` and is left
+    /// dangling, so it may point at a block the allocator later hands out to a
+    /// different list.
+    pub(crate) fn clear(&mut self, allocator: &mut ValueListAllocator) {
+        if !self.is_empty(allocator) {
+            allocator.free(self.start as usize - 1, self.count(allocator));
+        }
+        self.start = Self::EMPTY;
+    }
+}
+
+impl ValueListAllocator {
+    /// Creates and returns an allocator for value lists.
+    pub(crate) const fn new() -> Self {
+        Self { data: Vec::new(), free: Vec::new() }
+    }
+
+    /// Drops every [`ValueList`]'s contents and free-list state, returning
+    /// the allocator to its initial empty state.
+    ///
+    /// NOTE: Any [`ValueList`] into this allocator are invalidated.
+    pub(crate) fn reset(&mut self) {
+        self.data.clear();
+        self.free.clear();
+    }
+
+    /// Returns the index of the block's header that can fit `count` elements.
+    fn alloc(&mut self, count: usize) -> usize {
+        let size_class = SizeClass::new(count);
+        if let Some(&head) = self.free.get(size_class.0 as usize)
+            && head > 0
+        {
+            let next = self.data[head];
+            self.free[size_class.0 as usize] = next.index();
+            head - 1
+        } else {
+            let header_idx = self.data.len();
+            self.data.resize(header_idx + size_class.capacity(), ValueId::reserved());
+            header_idx
+        }
+    }
+
+    /// Frees `block` which contains `count` slots.
+    fn free(&mut self, block: usize, count: usize) {
+        let size_class = SizeClass::new(count);
+        if self.free.len() <= size_class.0 as usize {
+            self.free.resize(size_class.0 as usize + 1, 0);
+        }
+        self.data[block] = ValueId::new(0);
+        self.data[block + 1] = ValueId::new(self.free[size_class.0 as usize]);
+        self.free[size_class.0 as usize] = block + 1;
+    }
+
+    /// Moves a value list's current block to a block sized for `new_count`.
+    fn realloc(&mut self, block: usize, old_count: usize, new_count: usize, copy: usize) -> usize {
+        let new_block = self.alloc(new_count);
+        if copy > 0 {
+            let (old, new) = self.mut_slices(block, new_block);
+            new[..copy].copy_from_slice(&old[..copy]);
+        }
+        self.free(block, old_count);
+        new_block
+    }
+
+    /// Returns two mutable slices into `data` starting at `block0` and `block1` respectively.
+    ///
+    /// NOTE: Uses `split_at_mut` to satisfy Rust's aliasing rules, as you cannot take two mutable
+    /// references (specifically, slices) into the same `Vec` directly.
+    fn mut_slices(&mut self, block0: usize, block1: usize) -> (&mut [ValueId], &mut [ValueId]) {
+        if block0 < block1 {
+            let (s0, s1) = self.data.split_at_mut(block1);
+            let s0 = &mut s0[block0..];
+            (s0, s1)
+        } else {
+            let (s1, s0) = self.data.split_at_mut(block0);
+            let s1 = &mut s1[block1..];
+            (s0, s1)
+        }
+    }
+}
+
+impl SizeClass {
+    /// Determines the smallest size class that can fit the desired `count` of ValueIds (excluding the header slot).
+    fn new(count: usize) -> Self {
+        assert!(count > 0);
+        Self(((count | 3).ilog2() - 1) as u8)
+    }
+
+    /// Returns the number of slots that a size class may accomodate.
+    const fn capacity(&self) -> usize {
+        4 << self.0
+    }
+
+    /// Returns whether a list that just grew to `count` elements has
+    /// outgrown its current block and must be moved to the next size class.
+    ///
+    /// Block capacities (element slots, excluding the header) are
+    /// 3, 7, 15, 31, ..., so a list overflows its block exactly when
+    /// `count` is 4, 8, 16, 32, ....
+    const fn exceeds_capacity(count: usize) -> bool {
+        count > 3 && count.is_power_of_two()
+    }
+}

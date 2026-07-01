@@ -1,9 +1,12 @@
 use crate::front_end::semantic_analysis::hir::LocalBindingId;
-use crate::middle_end::mir::{BlockId, ValueId};
+use crate::middle_end::mir::{BlockId, Mir};
+use crate::middle_end::value_list::ValueId;
 
-pub struct Lowerer {}
+pub struct MirBuilder {
+    pub(crate) mir: Mir,
+}
 
-impl Lowerer {
+impl MirBuilder {
     /// Records `value` as the current definition of `variable` in `block`.
     pub(crate) fn write_variable(
         &mut self,
