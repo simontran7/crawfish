@@ -61,9 +61,9 @@ struct DataFlowGraph {
     allocator: ValueListAllocator,
 }
 
-/// An ordered view of the control flow graph (the sequence of blocks and 
+/// An ordered view of the control flow graph (the sequence of blocks and
 /// the sequence of instructions within each block).
-/// 
+///
 /// Implemented as two doubly-linked lists: one over blocks, one over instructions.
 ///
 /// entry → block0 → block1 → block2 → ...
@@ -84,10 +84,10 @@ pub struct Value {
     def: ValueDefinition,
 }
 
-/// A basic block. 
+/// A basic block.
 pub struct Block {
-    /// The SSA equivalent of φ-nodes (i.e., they 
-    /// unify values from different predecessor 
+    /// The SSA equivalent of φ-nodes (i.e., they
+    /// unify values from different predecessor
     /// edges at a control-flow join).
     pub(crate) parameters: ValueList,
 }
@@ -147,7 +147,7 @@ pub enum Instruction {
 /// - [`ValueDefinition::Result`]: an output of an instruction. The `u16` is the index of
 ///   the instruction's result in [`DataFlowGraph::instruction_results`].
 ///
-/// - [`ValueDefinition::Parameter`]: an incoming parameter of a block. The `u16` is the 
+/// - [`ValueDefinition::Parameter`]: an incoming parameter of a block. The `u16` is the
 ///   index of this parameter in [`Block::parameters`].
 ///
 /// Given a [`ValueDefinition`], you can find the defining instruction or block
@@ -227,7 +227,10 @@ impl Cfg {
 
     /// Returns a view over the entry block, or `None` if no blocks have been appended yet.
     pub(crate) fn entry(&self) -> Option<BlockView<'_>> {
-        self.layout.entry.map(|block_id| BlockView { block_id, cfg: self })
+        self.layout.entry.map(|block_id| BlockView {
+            block_id,
+            cfg: self,
+        })
     }
 
     /// Returns an iterator over all blocks in layout order.
@@ -240,21 +243,36 @@ impl Cfg {
 
     /// Returns a view over `block_id` for block-local queries.
     pub(crate) fn get_block(&self, block_id: BlockId) -> BlockView<'_> {
-        BlockView { block_id, cfg: self }
+        BlockView {
+            block_id,
+            cfg: self,
+        }
     }
 
     /// Returns a mutable view over `block_id` for block-local mutations.
     pub(crate) fn get_block_mut(&mut self, block_id: BlockId) -> BlockViewMut<'_> {
-        BlockViewMut { block_id, cfg: self }
+        BlockViewMut {
+            block_id,
+            cfg: self,
+        }
     }
 
     /// Returns a view over `instruction_id` for instruction-local queries.
     pub(crate) fn get_instruction(&self, instruction_id: InstructionId) -> InstructionView<'_> {
-        InstructionView { instruction_id, cfg: self }
+        InstructionView {
+            instruction_id,
+            cfg: self,
+        }
     }
 
-    pub(crate) fn get_instruction_mut(&mut self, instruction_id: InstructionId) -> InstructionViewMut<'_> {
-        InstructionViewMut { instruction_id, cfg: self }
+    pub(crate) fn get_instruction_mut(
+        &mut self,
+        instruction_id: InstructionId,
+    ) -> InstructionViewMut<'_> {
+        InstructionViewMut {
+            instruction_id,
+            cfg: self,
+        }
     }
 
     pub(crate) fn get_value(&self, value_id: ValueId) -> &Value {
@@ -303,7 +321,9 @@ impl<'a> BlockView<'a> {
 
     /// Returns the block's parameters as a slice.
     pub(crate) fn parameters(&self) -> &[ValueId] {
-        self.cfg.dfg.blocks[self.block_id].parameters.to_slice(&self.cfg.dfg.allocator)
+        self.cfg.dfg.blocks[self.block_id]
+            .parameters
+            .to_slice(&self.cfg.dfg.allocator)
     }
 }
 
@@ -355,18 +375,33 @@ impl<'a> InstructionViewMut<'a> {
             }
             Instruction::Unary { arg, .. } => *arg = f(*arg),
             Instruction::Call { args, .. } => {
-                for v in args.to_mut_slice(allocator) { *v = f(*v); }
+                for v in args.to_mut_slice(allocator) {
+                    *v = f(*v);
+                }
             }
             Instruction::Jump { args, .. } => {
-                for v in args.to_mut_slice(allocator) { *v = f(*v); }
+                for v in args.to_mut_slice(allocator) {
+                    *v = f(*v);
+                }
             }
-            Instruction::BranchIf { arg, then_args, else_args, .. } => {
+            Instruction::BranchIf {
+                arg,
+                then_args,
+                else_args,
+                ..
+            } => {
                 *arg = f(*arg);
-                for v in then_args.to_mut_slice(allocator) { *v = f(*v); }
-                for v in else_args.to_mut_slice(allocator) { *v = f(*v); }
+                for v in then_args.to_mut_slice(allocator) {
+                    *v = f(*v);
+                }
+                for v in else_args.to_mut_slice(allocator) {
+                    *v = f(*v);
+                }
             }
             Instruction::Return { args } => {
-                for v in args.to_mut_slice(allocator) { *v = f(*v); }
+                for v in args.to_mut_slice(allocator) {
+                    *v = f(*v);
+                }
             }
             Instruction::IntegerLiteral { .. }
             | Instruction::BooleanLiteral { .. }
@@ -385,7 +420,10 @@ impl<'a> BlockViewMut<'a> {
         let count = self.cfg.dfg.blocks[self.block_id]
             .parameters
             .count(&self.cfg.dfg.allocator);
-        assert!(count <= u16::MAX as usize, "the block has too many parameters");
+        assert!(
+            count <= u16::MAX as usize,
+            "the block has too many parameters"
+        );
         self.cfg.dfg.values.add(Value {
             ty,
             def: ValueDefinition::Parameter(self.block_id, count as u16),
@@ -393,7 +431,11 @@ impl<'a> BlockViewMut<'a> {
     }
 
     /// Appends `instruction` to the end of this block, allocating result values with types `result_tys`.
-    pub(crate) fn append_instruction(&mut self, instruction: Instruction, result_tys: &[TypeId]) -> InstructionId {
+    pub(crate) fn append_instruction(
+        &mut self,
+        instruction: Instruction,
+        result_tys: &[TypeId],
+    ) -> InstructionId {
         let instruction_id = self.cfg.dfg.instructions.add(instruction);
         let results: Vec<ValueId> = result_tys
             .iter()
@@ -416,7 +458,10 @@ impl<'a> BlockViewMut<'a> {
     /// Appends a terminator to the end of this block. Terminators produce no results.
     pub(crate) fn set_terminator(&mut self, terminator: Instruction) {
         let instruction_id = self.cfg.dfg.instructions.add(terminator);
-        self.cfg.dfg.instruction_results.add(instruction_id, ValueList::new());
+        self.cfg
+            .dfg
+            .instruction_results
+            .add(instruction_id, ValueList::new());
         self.link_instruction_to_block(self.block_id, instruction_id);
     }
 
@@ -440,7 +485,11 @@ impl<'a> BlockViewMut<'a> {
 
     fn link_instruction_to_block(&mut self, block_id: BlockId, instruction_id: InstructionId) {
         let prev = self.cfg.layout.blocks[block_id].last_instruction;
-        let node = InstructionNode { block: block_id, prev, next: None };
+        let node = InstructionNode {
+            block: block_id,
+            prev,
+            next: None,
+        };
         self.cfg.layout.instructions.add(instruction_id, node);
         if let Some(prev) = prev {
             self.cfg.layout.instructions[prev].next = Some(instruction_id);
@@ -480,7 +529,6 @@ impl Iterator for BlockIter<'_> {
     }
 }
 
-
 impl Iterator for InstructionIter<'_> {
     type Item = InstructionId;
     fn next(&mut self) -> Option<InstructionId> {
@@ -489,4 +537,3 @@ impl Iterator for InstructionIter<'_> {
         Some(inst)
     }
 }
-

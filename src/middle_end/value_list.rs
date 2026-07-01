@@ -99,7 +99,9 @@ impl ValueList {
         let block = allocator.alloc(count);
         allocator.data[block] = ValueId::new(count);
         allocator.data[block + 1..=block + count].copy_from_slice(slice);
-        Self { start: (block + 1) as u32 }
+        Self {
+            start: (block + 1) as u32,
+        }
     }
 
     /// Returns the number of elements in the list.
@@ -107,7 +109,8 @@ impl ValueList {
         // wrapping_sub so that start == 0 (empty) maps to usize::MAX, which is
         // guaranteed out of bounds for any Vec. This makes `.get()` return `None`,
         // collapsing the emptiness check and bounds check into one.
-        allocator.data
+        allocator
+            .data
             .get((self.start as usize).wrapping_sub(1))
             .map_or(0, |v| v.index())
     }
@@ -155,7 +158,12 @@ impl ValueList {
             let block;
 
             if SizeClass::exceeds_capacity(new_count) {
-                block = allocator.realloc(start - 1, self.count(allocator), new_count, self.count(allocator) + 1);
+                block = allocator.realloc(
+                    start - 1,
+                    self.count(allocator),
+                    new_count,
+                    self.count(allocator) + 1,
+                );
                 self.start = (block + 1) as u32;
             } else {
                 block = start - 1;
@@ -191,7 +199,10 @@ impl ValueList {
 impl ValueListAllocator {
     /// Creates and returns an allocator for value lists.
     pub(crate) const fn new() -> Self {
-        Self { data: Vec::new(), free: Vec::new() }
+        Self {
+            data: Vec::new(),
+            free: Vec::new(),
+        }
     }
 
     /// Drops every [`ValueList`]'s contents and free-list state, returning
@@ -214,7 +225,8 @@ impl ValueListAllocator {
             head - 1
         } else {
             let header_idx = self.data.len();
-            self.data.resize(header_idx + size_class.capacity(), ValueId::reserved());
+            self.data
+                .resize(header_idx + size_class.capacity(), ValueId::reserved());
             header_idx
         }
     }
