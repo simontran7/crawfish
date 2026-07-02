@@ -4,7 +4,7 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 
 /// Possible delimiter errors encountered during token tree construction.
 #[derive(Debug, Clone)]
-pub enum DelimiterDiagnostic {
+pub(crate) enum DelimiterDiagnostic {
     /// An opening delimiter was not closed.
     Unclosed { span: Span, expected: TokenKind },
     /// A closing delimiter was found without a matching opening delimiter.

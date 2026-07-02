@@ -26,7 +26,7 @@ use super::nodes::{
 /// `FunctionDefinitionId` and `ConstantDefinitionId` cannot be confused even
 /// though both are backed by a `u32`. Converts to [`ItemId`].
 #[derive(Debug)]
-pub struct TypedItemId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedItemId<T, const KIND: u8>(u32, PhantomData<T>);
 
 impl<T, const KIND: u8> Clone for TypedItemId<T, KIND> {
     fn clone(&self) -> Self {
@@ -61,7 +61,7 @@ impl<T, const KIND: u8> From<TypedItemId<T, KIND>> for usize {
 
 /// A 4-byte handle to a statement node. Converts to [`StatementId`].
 #[derive(Debug)]
-pub struct TypedStatementId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedStatementId<T, const KIND: u8>(u32, PhantomData<T>);
 
 impl<T, const KIND: u8> Clone for TypedStatementId<T, KIND> {
     fn clone(&self) -> Self {
@@ -96,7 +96,7 @@ impl<T, const KIND: u8> From<TypedStatementId<T, KIND>> for usize {
 
 /// A 4-byte handle to an expression node. Converts to [`ExpressionId`].
 #[derive(Debug)]
-pub struct TypedExpressionId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedExpressionId<T, const KIND: u8>(u32, PhantomData<T>);
 
 impl<T, const KIND: u8> Clone for TypedExpressionId<T, KIND> {
     fn clone(&self) -> Self {
@@ -131,7 +131,7 @@ impl<T, const KIND: u8> From<TypedExpressionId<T, KIND>> for usize {
 
 /// A 4-byte handle to a function parameter node. Converts to [`ParameterId`].
 #[derive(Debug)]
-pub struct TypedParameterId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedParameterId<T, const KIND: u8>(u32, PhantomData<T>);
 
 impl<T, const KIND: u8> Clone for TypedParameterId<T, KIND> {
     fn clone(&self) -> Self {
@@ -166,7 +166,7 @@ impl<T, const KIND: u8> From<TypedParameterId<T, KIND>> for usize {
 
 /// A 4-byte handle to an identifier node. Converts to [`IdentifierId`].
 #[derive(Debug)]
-pub struct TypedIdentifierId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedIdentifierId<T, const KIND: u8>(u32, PhantomData<T>);
 
 impl<T, const KIND: u8> Clone for TypedIdentifierId<T, KIND> {
     fn clone(&self) -> Self {
@@ -201,7 +201,7 @@ impl<T, const KIND: u8> From<TypedIdentifierId<T, KIND>> for usize {
 
 /// A 4-byte handle to a type annotation node. Converts to [`TypeAnnotationId`].
 #[derive(Debug)]
-pub struct TypedTypeAnnotationId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedTypeAnnotationId<T, const KIND: u8>(u32, PhantomData<T>);
 
 impl<T, const KIND: u8> Clone for TypedTypeAnnotationId<T, KIND> {
     fn clone(&self) -> Self {
@@ -236,7 +236,7 @@ impl<T, const KIND: u8> From<TypedTypeAnnotationId<T, KIND>> for usize {
 
 /// A 4-byte handle to a `let` pattern node. Converts to [`PatternId`].
 #[derive(Debug)]
-pub struct TypedPatternId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedPatternId<T, const KIND: u8>(u32, PhantomData<T>);
 
 impl<T, const KIND: u8> Clone for TypedPatternId<T, KIND> {
     fn clone(&self) -> Self {
@@ -285,12 +285,12 @@ impl<T, const KIND: u8> From<TypedPatternId<T, KIND>> for usize {
 /// [`ItemId::kind`] to recover the concrete node type and its
 /// `TypedItemId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ItemId(u32);
+pub(crate) struct ItemId(u32);
 
 /// Which `*ItemNode` type an [`ItemId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum ItemKind {
+pub(crate) enum ItemKind {
     FunctionDefinition = 0,
     ConstantDefinition,
     Error,
@@ -346,12 +346,12 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ItemId {
 /// on [`StatementId::kind`] to recover the concrete node type and its
 /// `TypedStatementId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StatementId(u32);
+pub(crate) struct StatementId(u32);
 
 /// Which `*StatementNode` type a [`StatementId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum StatementKind {
+pub(crate) enum StatementKind {
     ExpressionStatement = 0,
     ItemStatement,
     LetStatement,
@@ -409,12 +409,12 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for StatementId {
 /// on [`ExpressionId::kind`] to recover the concrete node type and its
 /// `TypedExpressionId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ExpressionId(u32);
+pub(crate) struct ExpressionId(u32);
 
 /// Which `*ExpressionNode` type an [`ExpressionId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum ExpressionKind {
+pub(crate) enum ExpressionKind {
     UnitLiteral = 0,
     IntegerLiteral,
     BooleanLiteral,
@@ -488,12 +488,12 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ExpressionId {
 /// `ErrorParameterNode`: dispatch on [`ParameterId::kind`] to recover the
 /// concrete node type and its `TypedParameterId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ParameterId(u32);
+pub(crate) struct ParameterId(u32);
 
 /// Which parameter node type a [`ParameterId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum ParameterKind {
+pub(crate) enum ParameterKind {
     Valid = 0,
     Error,
 }
@@ -544,11 +544,11 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ParameterId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IdentifierId(u32);
+pub(crate) struct IdentifierId(u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum IdentifierKind {
+pub(crate) enum IdentifierKind {
     Valid = 0,
     Error,
 }
@@ -599,11 +599,11 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for IdentifierId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TypeAnnotationId(u32);
+pub(crate) struct TypeAnnotationId(u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum TypeAnnotationKind {
+pub(crate) enum TypeAnnotationKind {
     Named = 0,
     Error,
 }
@@ -654,11 +654,11 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for TypeAnnotationId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PatternId(u32);
+pub(crate) struct PatternId(u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum PatternKind {
+pub(crate) enum PatternKind {
     Identifier = 0,
     Error,
 }
@@ -710,79 +710,84 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for PatternId {
 
 /// A run of [`ItemId`]s, used by `SourceFileNode::items`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct ItemSlice {
-    pub start: u32,
-    pub len: u32,
+pub(crate) struct ItemSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 /// A run of [`StatementId`]s, used by `BlockExpressionNode::statements`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct StatementSlice {
-    pub start: u32,
-    pub len: u32,
+pub(crate) struct StatementSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 /// A run of [`ExpressionId`]s, used by `FunctionCallNode::arguments`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct ExpressionSlice {
-    pub start: u32,
-    pub len: u32,
+pub(crate) struct ExpressionSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 /// A run of [`ParameterId`]s, used by `FunctionDefinitionNode::parameters`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct ParameterSlice {
-    pub start: u32,
-    pub len: u32,
+pub(crate) struct ParameterSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
-pub type FunctionDefinitionId =
+pub(crate) type FunctionDefinitionId =
     TypedItemId<FunctionDefinitionNode, { ItemKind::FunctionDefinition as u8 }>;
-pub type ConstantDefinitionId =
+pub(crate) type ConstantDefinitionId =
     TypedItemId<ConstantDefinitionNode, { ItemKind::ConstantDefinition as u8 }>;
-pub type ErrorItemId = TypedItemId<ErrorItemNode, { ItemKind::Error as u8 }>;
+pub(crate) type ErrorItemId = TypedItemId<ErrorItemNode, { ItemKind::Error as u8 }>;
 
-pub type ExpressionStatementId =
+pub(crate) type ExpressionStatementId =
     TypedStatementId<ExpressionStatementNode, { StatementKind::ExpressionStatement as u8 }>;
-pub type ItemStatementId =
+pub(crate) type ItemStatementId =
     TypedStatementId<ItemStatementNode, { StatementKind::ItemStatement as u8 }>;
-pub type LetStatementId = TypedStatementId<LetStatementNode, { StatementKind::LetStatement as u8 }>;
-pub type ErrorStatementId = TypedStatementId<ErrorStatementNode, { StatementKind::Error as u8 }>;
+pub(crate) type LetStatementId =
+    TypedStatementId<LetStatementNode, { StatementKind::LetStatement as u8 }>;
+pub(crate) type ErrorStatementId =
+    TypedStatementId<ErrorStatementNode, { StatementKind::Error as u8 }>;
 
-pub type UnitLiteralId = TypedExpressionId<UnitLiteralNode, { ExpressionKind::UnitLiteral as u8 }>;
-pub type IntegerLiteralId =
+pub(crate) type UnitLiteralId =
+    TypedExpressionId<UnitLiteralNode, { ExpressionKind::UnitLiteral as u8 }>;
+pub(crate) type IntegerLiteralId =
     TypedExpressionId<IntegerLiteralNode, { ExpressionKind::IntegerLiteral as u8 }>;
-pub type BooleanLiteralId =
+pub(crate) type BooleanLiteralId =
     TypedExpressionId<BooleanLiteralNode, { ExpressionKind::BooleanLiteral as u8 }>;
-pub type VariableId = TypedExpressionId<VariableNode, { ExpressionKind::Variable as u8 }>;
-pub type UnaryOperationId =
+pub(crate) type VariableId = TypedExpressionId<VariableNode, { ExpressionKind::Variable as u8 }>;
+pub(crate) type UnaryOperationId =
     TypedExpressionId<UnaryOperationNode, { ExpressionKind::UnaryOperation as u8 }>;
-pub type BinaryOperationId =
+pub(crate) type BinaryOperationId =
     TypedExpressionId<BinaryOperationNode, { ExpressionKind::BinaryOperation as u8 }>;
-pub type IfExpressionId =
+pub(crate) type IfExpressionId =
     TypedExpressionId<IfExpressionNode, { ExpressionKind::IfExpression as u8 }>;
-pub type BlockExpressionId =
+pub(crate) type BlockExpressionId =
     TypedExpressionId<BlockExpressionNode, { ExpressionKind::BlockExpression as u8 }>;
-pub type FunctionCallId =
+pub(crate) type FunctionCallId =
     TypedExpressionId<FunctionCallNode, { ExpressionKind::FunctionCall as u8 }>;
-pub type AssignId = TypedExpressionId<AssignNode, { ExpressionKind::Assign as u8 }>;
-pub type ReturnId = TypedExpressionId<ReturnNode, { ExpressionKind::Return as u8 }>;
-pub type ErrorExpressionId =
+pub(crate) type AssignId = TypedExpressionId<AssignNode, { ExpressionKind::Assign as u8 }>;
+pub(crate) type ReturnId = TypedExpressionId<ReturnNode, { ExpressionKind::Return as u8 }>;
+pub(crate) type ErrorExpressionId =
     TypedExpressionId<ErrorExpressionNode, { ExpressionKind::Error as u8 }>;
 
-pub type ValidParameterId = TypedParameterId<ValidParameterNode, { ParameterKind::Valid as u8 }>;
-pub type ErrorParameterId = TypedParameterId<ErrorParameterNode, { ParameterKind::Error as u8 }>;
+pub(crate) type ValidParameterId =
+    TypedParameterId<ValidParameterNode, { ParameterKind::Valid as u8 }>;
+pub(crate) type ErrorParameterId =
+    TypedParameterId<ErrorParameterNode, { ParameterKind::Error as u8 }>;
 
-pub type ValidIdentifierId =
+pub(crate) type ValidIdentifierId =
     TypedIdentifierId<ValidIdentifierNode, { IdentifierKind::Valid as u8 }>;
-pub type ErrorIdentifierId =
+pub(crate) type ErrorIdentifierId =
     TypedIdentifierId<ErrorIdentifierNode, { IdentifierKind::Error as u8 }>;
 
-pub type NamedTypeAnnotationId =
+pub(crate) type NamedTypeAnnotationId =
     TypedTypeAnnotationId<NamedTypeAnnotationNode, { TypeAnnotationKind::Named as u8 }>;
-pub type ErrorTypeAnnotationId =
+pub(crate) type ErrorTypeAnnotationId =
     TypedTypeAnnotationId<ErrorTypeAnnotationNode, { TypeAnnotationKind::Error as u8 }>;
 
-pub type IdentifierPatternId =
+pub(crate) type IdentifierPatternId =
     TypedPatternId<IdentifierPatternNode, { PatternKind::Identifier as u8 }>;
-pub type ErrorPatternId = TypedPatternId<ErrorPatternNode, { PatternKind::Error as u8 }>;
+pub(crate) type ErrorPatternId = TypedPatternId<ErrorPatternNode, { PatternKind::Error as u8 }>;

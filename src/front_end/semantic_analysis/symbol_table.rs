@@ -7,22 +7,22 @@ use crate::front_end::semantic_analysis::hir::{BindingId, BindingKind};
 /// lowering. Pushed on [`SymbolTable::enter_scope`] and popped on
 /// [`SymbolTable::exit_scope`], following the lexical structure of the
 /// program: one scope per block, function body, and the top-level module.
-pub struct SymbolTable {
+pub(crate) struct SymbolTable {
     scopes: Vec<Scope>,
 }
 
 /// One lexical scope's bindings, plus the [`ScopeKind`] that controls how
 /// [`SymbolTable::find_binding`] searches past it.
 #[derive(Clone, Debug)]
-pub struct Scope {
-    pub kind: ScopeKind,
-    pub bindings: HashMap<Symbol, BindingId>,
+pub(crate) struct Scope {
+    pub(crate) kind: ScopeKind,
+    pub(crate) bindings: HashMap<Symbol, BindingId>,
 }
 
 /// Distinguishes a scope that closes over its enclosing scopes from one that
 /// doesn't.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ScopeKind {
+pub(crate) enum ScopeKind {
     /// A block scope (`{ ... }`): local bindings from enclosing scopes are
     /// visible.
     Normal,
@@ -38,7 +38,7 @@ pub enum ScopeKind {
 
 /// Returned by [`SymbolTable::find_binding`] when a name cannot be resolved.
 #[derive(Debug)]
-pub enum LookupError {
+pub(crate) enum LookupError {
     NotFound,
     /// The name exists as a local binding, but a scope boundary blocks access.
     BlockedByBoundary(ScopeKind),
@@ -47,7 +47,7 @@ pub enum LookupError {
 /// Returned by [`SymbolTable::add_binding`] when `name` is already bound in
 /// the current scope.
 #[derive(Debug)]
-pub enum DefineError {
+pub(crate) enum DefineError {
     AlreadyDefined { prev_binding_id: BindingId },
 }
 

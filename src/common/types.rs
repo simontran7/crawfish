@@ -12,7 +12,7 @@ use crate::front_end::semantic_analysis::unification_table::{IntVarId, TypeVarId
 ///
 /// [`UnificationTable`]: crate::front_end::semantic_analysis::unification_table::UnificationTable
 #[derive(Clone, Hash, Eq, PartialEq)]
-pub enum Ty {
+pub(crate) enum Ty {
     /// unit type
     Unit,
     /// bottom type
@@ -36,13 +36,13 @@ pub enum Ty {
 }
 
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug)]
-pub enum SignedIntTy {
+pub(crate) enum SignedIntTy {
     I32,
     I64,
 }
 
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug)]
-pub enum UnsignedIntTy {
+pub(crate) enum UnsignedIntTy {
     U32,
     U64,
 }
@@ -56,7 +56,7 @@ pub enum UnsignedIntTy {
 ///
 /// [`UnificationTable`]: crate::front_end::semantic_analysis::unification_table::UnificationTable
 #[derive(Clone, Copy, Hash, Eq, PartialEq)]
-pub enum InferTy {
+pub(crate) enum InferTy {
     TyVar(TypeVarId),
     IntVar(IntVarId),
 }
@@ -66,22 +66,22 @@ pub enum InferTy {
 /// handle instead of a cloned [`Ty`]. Also holds [`TypeId`]s for the
 /// built-in types (`unit_id`, `bool_id`, `i32_id`, etc.), interned once up
 /// front so they can be compared against directly.
-pub struct TypeInterner {
+pub(crate) struct TypeInterner {
     types: Vec<Ty>,
     ids: HashMap<Ty, TypeId>,
-    pub unit_id: TypeId,
-    pub never_id: TypeId,
-    pub bool_id: TypeId,
-    pub u32_id: TypeId,
-    pub u64_id: TypeId,
-    pub i32_id: TypeId,
-    pub i64_id: TypeId,
-    pub error_id: TypeId,
+    pub(crate) unit_id: TypeId,
+    pub(crate) never_id: TypeId,
+    pub(crate) bool_id: TypeId,
+    pub(crate) u32_id: TypeId,
+    pub(crate) u64_id: TypeId,
+    pub(crate) i32_id: TypeId,
+    pub(crate) i64_id: TypeId,
+    pub(crate) error_id: TypeId,
 }
 
 /// A handle to a [`Ty`] interned in a [`TypeInterner`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TypeId(pub u32);
+pub(crate) struct TypeId(pub(crate) u32);
 
 impl TypeInterner {
     /// Creates and returns a `TypeInterner` pre-populated with [`TypeId`]s

@@ -1,5 +1,5 @@
-pub mod handles;
-pub mod nodes;
+pub(crate) mod handles;
+pub(crate) mod nodes;
 
 use handles::*;
 use nodes::*;
@@ -20,56 +20,57 @@ use crate::common::string_interner::Symbol;
 /// [`ParameterSlice`], [`StatementSlice`], and [`ExpressionSlice`] handles
 /// embedded in node fields like [`SourceFileNode::items`] and
 /// [`BlockExpressionNode::statements`].
-pub struct Ast {
+pub(crate) struct Ast {
     /// root node
-    pub source_file: SourceFileNode,
+    pub(crate) source_file: SourceFileNode,
 
     /// item nodes
-    pub function_definitions: HandleMap<FunctionDefinitionId, FunctionDefinitionNode>,
-    pub constant_definitions: HandleMap<ConstantDefinitionId, ConstantDefinitionNode>,
-    pub erroneous_items: HandleMap<ErrorItemId, ErrorItemNode>,
+    pub(crate) function_definitions: HandleMap<FunctionDefinitionId, FunctionDefinitionNode>,
+    pub(crate) constant_definitions: HandleMap<ConstantDefinitionId, ConstantDefinitionNode>,
+    pub(crate) erroneous_items: HandleMap<ErrorItemId, ErrorItemNode>,
 
     /// statement nodes
-    pub expression_statements: HandleMap<ExpressionStatementId, ExpressionStatementNode>,
-    pub item_statements: HandleMap<ItemStatementId, ItemStatementNode>,
-    pub let_statements: HandleMap<LetStatementId, LetStatementNode>,
-    pub erroneous_statements: HandleMap<ErrorStatementId, ErrorStatementNode>,
+    pub(crate) expression_statements: HandleMap<ExpressionStatementId, ExpressionStatementNode>,
+    pub(crate) item_statements: HandleMap<ItemStatementId, ItemStatementNode>,
+    pub(crate) let_statements: HandleMap<LetStatementId, LetStatementNode>,
+    pub(crate) erroneous_statements: HandleMap<ErrorStatementId, ErrorStatementNode>,
 
     /// expression nodes
-    pub unit_literals: HandleMap<UnitLiteralId, UnitLiteralNode>,
-    pub integer_literals: HandleMap<IntegerLiteralId, IntegerLiteralNode>,
-    pub boolean_literals: HandleMap<BooleanLiteralId, BooleanLiteralNode>,
-    pub variables: HandleMap<VariableId, VariableNode>,
-    pub unary_operations: HandleMap<UnaryOperationId, UnaryOperationNode>,
-    pub binary_operations: HandleMap<BinaryOperationId, BinaryOperationNode>,
-    pub if_expressions: HandleMap<IfExpressionId, IfExpressionNode>,
-    pub block_expressions: HandleMap<BlockExpressionId, BlockExpressionNode>,
-    pub function_calls: HandleMap<FunctionCallId, FunctionCallNode>,
-    pub assigns: HandleMap<AssignId, AssignNode>,
-    pub returns: HandleMap<ReturnId, ReturnNode>,
-    pub erroneous_expressions: HandleMap<ErrorExpressionId, ErrorExpressionNode>,
+    pub(crate) unit_literals: HandleMap<UnitLiteralId, UnitLiteralNode>,
+    pub(crate) integer_literals: HandleMap<IntegerLiteralId, IntegerLiteralNode>,
+    pub(crate) boolean_literals: HandleMap<BooleanLiteralId, BooleanLiteralNode>,
+    pub(crate) variables: HandleMap<VariableId, VariableNode>,
+    pub(crate) unary_operations: HandleMap<UnaryOperationId, UnaryOperationNode>,
+    pub(crate) binary_operations: HandleMap<BinaryOperationId, BinaryOperationNode>,
+    pub(crate) if_expressions: HandleMap<IfExpressionId, IfExpressionNode>,
+    pub(crate) block_expressions: HandleMap<BlockExpressionId, BlockExpressionNode>,
+    pub(crate) function_calls: HandleMap<FunctionCallId, FunctionCallNode>,
+    pub(crate) assigns: HandleMap<AssignId, AssignNode>,
+    pub(crate) returns: HandleMap<ReturnId, ReturnNode>,
+    pub(crate) erroneous_expressions: HandleMap<ErrorExpressionId, ErrorExpressionNode>,
 
     /// parameter nodes
-    pub valid_parameters: HandleMap<ValidParameterId, ValidParameterNode>,
-    pub erroneous_parameters: HandleMap<ErrorParameterId, ErrorParameterNode>,
+    pub(crate) valid_parameters: HandleMap<ValidParameterId, ValidParameterNode>,
+    pub(crate) erroneous_parameters: HandleMap<ErrorParameterId, ErrorParameterNode>,
 
     /// identifier nodes
-    pub valid_identifiers: HandleMap<ValidIdentifierId, ValidIdentifierNode>,
-    pub erroneous_identifiers: HandleMap<ErrorIdentifierId, ErrorIdentifierNode>,
+    pub(crate) valid_identifiers: HandleMap<ValidIdentifierId, ValidIdentifierNode>,
+    pub(crate) erroneous_identifiers: HandleMap<ErrorIdentifierId, ErrorIdentifierNode>,
 
     /// type annotation nodes
-    pub named_type_annotations: HandleMap<NamedTypeAnnotationId, NamedTypeAnnotationNode>,
-    pub erroneous_type_annotations: HandleMap<ErrorTypeAnnotationId, ErrorTypeAnnotationNode>,
+    pub(crate) named_type_annotations: HandleMap<NamedTypeAnnotationId, NamedTypeAnnotationNode>,
+    pub(crate) erroneous_type_annotations:
+        HandleMap<ErrorTypeAnnotationId, ErrorTypeAnnotationNode>,
 
     /// pattern nodes
-    pub identifier_patterns: HandleMap<IdentifierPatternId, IdentifierPatternNode>,
-    pub erroneous_patterns: HandleMap<ErrorPatternId, ErrorPatternNode>,
+    pub(crate) identifier_patterns: HandleMap<IdentifierPatternId, IdentifierPatternNode>,
+    pub(crate) erroneous_patterns: HandleMap<ErrorPatternId, ErrorPatternNode>,
 
     /// child node pools
-    pub source_file_items: Vec<ItemId>,
-    pub function_definition_parameters: Vec<ParameterId>,
-    pub block_statements: Vec<StatementId>,
-    pub function_call_arguments: Vec<ExpressionId>,
+    pub(crate) source_file_items: Vec<ItemId>,
+    pub(crate) function_definition_parameters: Vec<ParameterId>,
+    pub(crate) block_statements: Vec<StatementId>,
+    pub(crate) function_call_arguments: Vec<ExpressionId>,
 }
 
 impl Ast {

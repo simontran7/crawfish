@@ -5,7 +5,7 @@ use crate::common::span::Span;
 use crate::front_end::lexical_analysis::token::{LitKind, Token, TokenKind};
 
 /// Controls the tokenization process.
-pub struct Tokenizer<'a> {
+pub(crate) struct Tokenizer<'a> {
     /// User source code.
     source: &'a str,
     ctx: &'a mut CompilerContext,
@@ -190,7 +190,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[cfg(feature = "bench-support")]
-    pub fn tokenize_with_cap(&mut self, n: usize) -> Vec<Token> {
+    pub(crate) fn tokenize_with_cap(&mut self, n: usize) -> Vec<Token> {
         let mut tokens = Vec::with_capacity(n);
         loop {
             let token = self.next_token();

@@ -19,7 +19,7 @@ use std::fmt::{self, Write};
 /// indentation for a given depth.
 ///
 /// [`AstDumper`]: crate::front_end::syntactic_analysis::ast_dumper::AstDumper
-pub struct HirDumper<'a> {
+pub(crate) struct HirDumper<'a> {
     hir: &'a Hir,
     ctx: &'a CompilerContext,
 }

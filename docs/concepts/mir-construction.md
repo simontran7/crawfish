@@ -1,4 +1,4 @@
-# MIR Analysis
+# MIR Construction
 
 Crawfish introduces a **mid-level intermediate representation (MIR)** between the HIR and LLVM IR.
 
@@ -9,7 +9,7 @@ Lowering to LLVM IR requires a CFG-like transformation regardless: flatten contr
 
 ## MIR
 
-A **control flow graph (CFG)** is a directed graph of **basic blocks**. A basic block is a straight-line sequence of instructions with a single entry point and a single exit. The exit is always a **terminator**: an instruction that transfers control to one or more successor blocks (a conditional branch, an unconditional jump, or a return). No jumps can appear in the middle of a block.
+A **mid-level intermediate representation** is an intermediate representation used for. It is typically a collection of functions, where the function's body is a **control flow graph (CFG)**: a directed graph of basic blocks. A **basic block** is a straight-line sequence of instructions with a single entry point and a single exit. The exit block is always a **terminator**: an instruction that transfers control to one or more successor blocks (a conditional branch, an unconditional jump, or a return). No jumps can appear in the middle of a block.
 
 ```text
           [entry]
@@ -71,17 +71,6 @@ block_D(x2):            <- x2 is a block parameter, defined here
     return
 ```
 
-### Organization
-
-The MIR is organized as a `Function`, which contains a `Cfg` (the SSA control-flow graph) plus metadata (name, signature, source locations).
-
-The `Cfg` is split into two parts:
-
-- **`DataFlowGraph`**: the def-use graph. It owns all `Value`s, `Instruction`s, `Block`s, `FunctionReference`s, and `Signature`s. It captures *what flows where*.
-- **`Layout`**: the ordering of blocks and instructions. Implemented as two doubly-linked lists (one over blocks, one over instructions within each block). It captures *what order things execute in*.
-
-This separation (following Cranelift) means you can reorder blocks or instructions by relinking the `Layout` without touching the `DataFlowGraph`.
-
 ### Nodes
 
 #### Values
@@ -96,11 +85,9 @@ Wherever the MIR needs a variable-length run of `ValueId`s (block parameters, ca
 
 Each `Instruction` variant is either a computation (`Binary`, `Unary`, `IntegerLiteral`, `BooleanLiteral`, `Call`) or a terminator (`Jump`, `BranchIf`, `Return`, `Unreachable`). Terminators end a block and determine which block runs next. Branches carry block arguments that fill the destination block's parameters.
 
-## Lowering
+## Function Builder
 
-### SSA Construction
-
-SSA form is constructed directly from the HIR using the Braun et al. algorithm ([paper](https://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf)). The `Lowerer` walks the HIR and builds MIR in SSA form as it goes, using six core functions from the paper:
+SSA form is constructed directly from the HIR using the Braun et al. algorithm ([paper](https://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf)). The `FunctionBuilder` walks the HIR and builds a function as it goes, using six core functions from the paper:
 
 | Paper | Crawfish (`Lowerer`) | Role |
 |---|---|---|

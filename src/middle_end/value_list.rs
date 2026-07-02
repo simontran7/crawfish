@@ -89,9 +89,9 @@ impl ValueList {
         Self::default()
     }
 
-    /// Allocates a new list in `allocator` and copies `slice`'s elements
-    /// into it. Returns an empty list without allocating if `slice` is empty.
+    /// Allocates a new list in `allocator` and copies `slice`'s elements into it.
     pub(crate) fn from(allocator: &mut ValueListAllocator, slice: &[ValueId]) -> Self {
+        // No allocation if `slice` is empty.
         if slice.is_empty() {
             return Self::new();
         }
@@ -174,21 +174,30 @@ impl ValueList {
         }
     }
 
+    /// Removes the element at `index`, shifting later elements down by one to preserve their relative order.
+    pub(crate) fn remove(&mut self, index: usize, allocator: &mut ValueListAllocator) {
+        let count = self.count(allocator);
+        assert!(index < count, "index out of bounds");
+        // The backing block is not freed or reallocated, just shrunk in place.
+        let start = self.start as usize;
+        allocator
+            .data
+            .copy_within(start + index + 1..start + count, start + index);
+        allocator.data[start - 1] = ValueId::new(count - 1);
+    }
+
     /// Removes the last element, decrementing the header count in place.
-    /// The backing block is not freed or reallocated — the slot is simply abandoned.
-    /// Panics if the list is empty.
     pub(crate) fn clear_last(&mut self, allocator: &mut ValueListAllocator) {
+        // The backing block is not freed or reallocated — the slot is simply abandoned.
         let count = self.count(allocator);
         assert!(count > 0, "called `.clear_last()` on an empty value list");
         allocator.data[self.start as usize - 1] = ValueId::new(count - 1);
     }
 
     /// Frees the list's backing storage and resets it to empty.
-    ///
-    /// NOTE: Any other `Copy` of this handle still has the old `start` and is left
-    /// dangling, so it may point at a block the allocator later hands out to a
-    /// different list.
     pub(crate) fn clear(&mut self, allocator: &mut ValueListAllocator) {
+        // Any other `Copy` of this handle still has the old `start` and is left dangling,
+        // so it may point at a block the allocator later hands out to a different list.
         if !self.is_empty(allocator) {
             allocator.free(self.start as usize - 1, self.count(allocator));
         }
@@ -205,11 +214,9 @@ impl ValueListAllocator {
         }
     }
 
-    /// Drops every [`ValueList`]'s contents and free-list state, returning
-    /// the allocator to its initial empty state.
-    ///
-    /// NOTE: Any [`ValueList`] into this allocator are invalidated.
+    /// Drops every [`ValueList`]'s contents and free-list state, returning the allocator to its initial empty state.
     pub(crate) fn reset(&mut self) {
+        // Any `ValueList` into this allocator is invalidated.
         self.data.clear();
         self.free.clear();
     }
@@ -254,10 +261,9 @@ impl ValueListAllocator {
     }
 
     /// Returns two mutable slices into `data` starting at `block0` and `block1` respectively.
-    ///
-    /// NOTE: Uses `split_at_mut` to satisfy Rust's aliasing rules, as you cannot take two mutable
-    /// references (specifically, slices) into the same `Vec` directly.
     fn mut_slices(&mut self, block0: usize, block1: usize) -> (&mut [ValueId], &mut [ValueId]) {
+        // Uses `split_at_mut` to satisfy Rust's aliasing rules, since you cannot take two
+        // mutable references (specifically, slices) into the same `Vec` directly.
         if block0 < block1 {
             let (s0, s1) = self.data.split_at_mut(block1);
             let s0 = &mut s0[block0..];
@@ -282,13 +288,150 @@ impl SizeClass {
         4 << self.0
     }
 
-    /// Returns whether a list that just grew to `count` elements has
-    /// outgrown its current block and must be moved to the next size class.
-    ///
-    /// Block capacities (element slots, excluding the header) are
-    /// 3, 7, 15, 31, ..., so a list overflows its block exactly when
-    /// `count` is 4, 8, 16, 32, ....
+    /// Returns whether a list that just grew to `count` elements has outgrown its current block and must be moved to the next size class.
     const fn exceeds_capacity(count: usize) -> bool {
+        // Block capacities (element slots, excluding the header) are 3, 7, 15, 31, ..., so
+        // a list overflows its block exactly when `count` is 4, 8, 16, 32, ....
         count > 3 && count.is_power_of_two()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ids(values: &[u32]) -> Vec<ValueId> {
+        values.iter().map(|&v| ValueId::new(v as usize)).collect()
+    }
+
+    #[test]
+    fn new_list_is_empty() {
+        let allocator = ValueListAllocator::new();
+        let list = ValueList::new();
+        assert!(list.is_empty(&allocator));
+        assert_eq!(list.count(&allocator), 0);
+        assert_eq!(list.to_slice(&allocator), &[]);
+    }
+
+    #[test]
+    fn from_empty_slice_is_empty_without_allocating() {
+        let mut allocator = ValueListAllocator::new();
+        let list = ValueList::from(&mut allocator, &[]);
+        assert!(list.is_empty(&allocator));
+        assert!(allocator.data.is_empty());
+    }
+
+    #[test]
+    fn from_slice_copies_elements() {
+        let mut allocator = ValueListAllocator::new();
+        let values = ids(&[10, 20, 30]);
+        let list = ValueList::from(&mut allocator, &values);
+        assert_eq!(list.count(&allocator), 3);
+        assert_eq!(list.to_slice(&allocator), values.as_slice());
+    }
+
+    #[test]
+    fn add_last_grows_across_size_class_boundaries() {
+        let mut allocator = ValueListAllocator::new();
+        let mut list = ValueList::new();
+        let values = ids(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        // Size class 0 holds 3 elements and class 1 holds 7, so this push sequence crosses
+        // both boundaries (at the 4th and 8th elements).
+        for &v in &values {
+            list.add_last(&mut allocator, v);
+        }
+        assert_eq!(list.count(&allocator), 8);
+        assert_eq!(list.to_slice(&allocator), values.as_slice());
+    }
+
+    #[test]
+    fn get_returns_none_out_of_bounds() {
+        let mut allocator = ValueListAllocator::new();
+        let list = ValueList::from(&mut allocator, &ids(&[10, 20]));
+        assert_eq!(list.get(1, &allocator), Some(ValueId::new(20)));
+        assert_eq!(list.get(2, &allocator), None);
+    }
+
+    #[test]
+    fn to_mut_slice_allows_in_place_mutation() {
+        let mut allocator = ValueListAllocator::new();
+        let list = ValueList::from(&mut allocator, &ids(&[10, 20, 30]));
+        list.to_mut_slice(&mut allocator)[1] = ValueId::new(99);
+        assert_eq!(list.to_slice(&allocator), ids(&[10, 99, 30]).as_slice());
+    }
+
+    #[test]
+    fn remove_shifts_later_elements_and_preserves_order() {
+        let mut allocator = ValueListAllocator::new();
+        let mut list = ValueList::from(&mut allocator, &ids(&[0, 1, 2, 3]));
+
+        list.remove(1, &mut allocator);
+        assert_eq!(list.to_slice(&allocator), ids(&[0, 2, 3]).as_slice());
+
+        list.remove(0, &mut allocator);
+        assert_eq!(list.to_slice(&allocator), ids(&[2, 3]).as_slice());
+
+        list.remove(1, &mut allocator);
+        assert_eq!(list.to_slice(&allocator), ids(&[2]).as_slice());
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn remove_panics_out_of_bounds() {
+        let mut allocator = ValueListAllocator::new();
+        let mut list = ValueList::from(&mut allocator, &ids(&[0, 1]));
+        list.remove(2, &mut allocator);
+    }
+
+    #[test]
+    fn clear_last_shrinks_from_the_end() {
+        let mut allocator = ValueListAllocator::new();
+        let mut list = ValueList::from(&mut allocator, &ids(&[0, 1, 2]));
+
+        list.clear_last(&mut allocator);
+        assert_eq!(list.to_slice(&allocator), ids(&[0, 1]).as_slice());
+
+        list.clear_last(&mut allocator);
+        list.clear_last(&mut allocator);
+        assert!(list.is_empty(&allocator));
+    }
+
+    #[test]
+    #[should_panic(expected = "empty value list")]
+    fn clear_last_panics_on_empty_list() {
+        let mut allocator = ValueListAllocator::new();
+        let mut list = ValueList::new();
+        list.clear_last(&mut allocator);
+    }
+
+    #[test]
+    fn clear_frees_the_block_for_reuse() {
+        let mut allocator = ValueListAllocator::new();
+        let mut a = ValueList::from(&mut allocator, &ids(&[0, 1, 2]));
+        let original_start = a.start;
+
+        a.clear(&mut allocator);
+        assert!(a.is_empty(&allocator));
+
+        // A second same-size-class list should be handed the block `a` just freed, instead
+        // of growing the allocator's backing storage.
+        let len_before = allocator.data.len();
+        let b = ValueList::from(&mut allocator, &ids(&[9, 8, 7]));
+        assert_eq!(b.start, original_start);
+        assert_eq!(allocator.data.len(), len_before);
+    }
+
+    #[test]
+    fn size_class_capacities_match_documented_thresholds() {
+        assert_eq!(SizeClass::new(1).capacity(), 4);
+        assert_eq!(SizeClass::new(3).capacity(), 4);
+        assert_eq!(SizeClass::new(4).capacity(), 8);
+        assert_eq!(SizeClass::new(7).capacity(), 8);
+        assert_eq!(SizeClass::new(8).capacity(), 16);
+
+        assert!(!SizeClass::exceeds_capacity(3));
+        assert!(SizeClass::exceeds_capacity(4));
+        assert!(!SizeClass::exceeds_capacity(5));
+        assert!(SizeClass::exceeds_capacity(8));
     }
 }

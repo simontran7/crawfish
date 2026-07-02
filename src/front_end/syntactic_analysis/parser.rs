@@ -23,7 +23,7 @@ use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 /// the rest of the source file. [`Parser::parse`] only returns `Err` (the
 /// full diagnostic list, discarding the partial [`Ast`]) if at least one
 /// such error was recorded.
-pub struct Parser<'a> {
+pub(crate) struct Parser<'a> {
     cursor: Cursor<'a>,
     errors: Vec<SyntacticDiagnostic>,
     ctx: &'a CompilerContext,

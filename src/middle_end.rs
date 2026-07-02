@@ -1,3 +1,4 @@
-pub mod mir;
-pub mod mir_builder;
-pub mod value_list;
+pub(crate) mod cursor;
+pub(crate) mod function_builder;
+pub(crate) mod mir;
+pub(crate) mod value_list;

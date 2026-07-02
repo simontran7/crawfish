@@ -4,7 +4,7 @@ use crate::front_end::lexical_analysis::token::{Token, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
 
 /// Builds token trees from a list of tokens.
-pub struct TokenTreeParser {
+pub(crate) struct TokenTreeParser {
     /// Iterator over the tokens to be processed.
     cursor: std::iter::Peekable<std::vec::IntoIter<Token>>,
     // Current token being processed.

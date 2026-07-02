@@ -8,7 +8,7 @@ use crate::common::types::TypeId;
 /// label.
 ///
 /// [`SemanticDiagnostic`]: crate::diagnostics::semantic_diagnostics::SemanticDiagnostic
-pub enum Provenance {
+pub(crate) enum Provenance {
     /// An expression's inferred type doesn't match the type expected from
     /// its context (e.g. a `let` annotation or a function's return type).
     TypeMismatch { span: Span },
@@ -43,7 +43,7 @@ pub enum Provenance {
 ///
 /// [`InferTy`]: crate::front_end::semantic_analysis::types::InferTy
 /// [`UnificationTable`]: crate::front_end::semantic_analysis::unification_table::UnificationTable
-pub enum Constraint {
+pub(crate) enum Constraint {
     Equality {
         expected: TypeId,
         actual: TypeId,

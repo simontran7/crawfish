@@ -30,7 +30,7 @@ use crate::front_end::syntactic_analysis::ast::nodes::{
 /// siblings (comma). [`AstDumper::open_node`]/[`AstDumper::close_node`]
 /// handle the surrounding `Kind(`/`)` and indentation; child nodes recurse
 /// through the same `dump_*` methods at `depth + 1`.
-pub struct AstDumper<'a> {
+pub(crate) struct AstDumper<'a> {
     ast: &'a Ast,
     ctx: &'a CompilerContext,
     depth: usize,

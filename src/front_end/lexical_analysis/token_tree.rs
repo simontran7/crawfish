@@ -12,7 +12,7 @@ use crate::front_end::lexical_analysis::token::{Token, TokenKind};
 /// unclosed delimiter, reported once here rather than as a cascade of
 /// "expected `)`" errors at every token until end of file.
 #[derive(Debug, Clone)]
-pub enum TokenTree {
+pub(crate) enum TokenTree {
     Token(Token),
     Delimited {
         open: Token,

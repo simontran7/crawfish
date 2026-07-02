@@ -2,7 +2,7 @@ use crate::common::span::Span;
 use ariadne::{Color, Label, Report, ReportKind, Source};
 
 #[derive(Debug, Clone)]
-pub enum SyntacticDiagnostic {
+pub(crate) enum SyntacticDiagnostic {
     InvalidTopLevelItem {
         span: Span,
         found: String,

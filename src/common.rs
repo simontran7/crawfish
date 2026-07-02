@@ -1,4 +1,4 @@
-pub mod context;
-pub mod span;
-pub mod string_interner;
-pub mod types;
+pub(crate) mod context;
+pub(crate) mod span;
+pub(crate) mod string_interner;
+pub(crate) mod types;

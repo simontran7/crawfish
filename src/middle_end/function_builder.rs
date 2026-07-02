@@ -1,12 +1,12 @@
 use crate::front_end::semantic_analysis::hir::LocalBindingId;
-use crate::middle_end::mir::{BlockId, Mir};
+use crate::middle_end::mir::{BlockId, Function};
 use crate::middle_end::value_list::ValueId;
 
-pub struct MirBuilder {
-    pub(crate) mir: Mir,
+pub(crate) struct FunctionBuilder {
+    pub(crate) function: Function,
 }
 
-impl MirBuilder {
+impl FunctionBuilder {
     /// Records `value` as the current definition of `variable` in `block`.
     pub(crate) fn write_variable(
         &mut self,

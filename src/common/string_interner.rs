@@ -1,21 +1,21 @@
 use std::collections::HashMap;
 
 /// String Interner which interns literals and identifiers.
-pub struct StringInterner {
+pub(crate) struct StringInterner {
     strings: Vec<String>,
     symbols: HashMap<String, Symbol>,
-    pub unit_symbol: Symbol,
-    pub never_symbol: Symbol,
-    pub bool_symbol: Symbol,
-    pub u32_symbol: Symbol,
-    pub u64_symbol: Symbol,
-    pub i32_symbol: Symbol,
-    pub i64_symbol: Symbol,
+    pub(crate) unit_symbol: Symbol,
+    pub(crate) never_symbol: Symbol,
+    pub(crate) bool_symbol: Symbol,
+    pub(crate) u32_symbol: Symbol,
+    pub(crate) u64_symbol: Symbol,
+    pub(crate) i32_symbol: Symbol,
+    pub(crate) i64_symbol: Symbol,
 }
 
 /// Handle into the intern pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Symbol(pub u32);
+pub(crate) struct Symbol(pub(crate) u32);
 
 impl StringInterner {
     pub(crate) fn new() -> Self {

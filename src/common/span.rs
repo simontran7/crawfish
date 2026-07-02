@@ -1,7 +1,7 @@
 use core::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Span {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub(crate) struct Span {
     start: u32,
     end: u32,
 }

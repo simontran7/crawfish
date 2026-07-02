@@ -6,7 +6,7 @@ use crate::common::string_interner::Symbol;
 /// A single lexed token: its [`TokenKind`], an optional interned [`Symbol`]
 /// (for identifiers and literals), and the [`Span`] it was lexed from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Token {
+pub(crate) struct Token {
     kind: TokenKind,
     symbol: Option<Symbol>,
     span: Span,
@@ -16,7 +16,7 @@ pub struct Token {
 /// lexing itself (see [`TokenKind::classify`]), so there is no
 /// separate `Identifier`-vs-keyword distinction left for the parser to make.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenKind {
+pub(crate) enum TokenKind {
     // IDENTIFIERS AND LITERALS
     Identifier,
     /// Literal
@@ -104,7 +104,7 @@ pub enum TokenKind {
 /// The kind of a [`TokenKind::Literal`]. `true`/`false` are not represented
 /// here: they are lexed directly as [`TokenKind::True`]/[`TokenKind::False`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LitKind {
+pub(crate) enum LitKind {
     Char,
     Integer,
     Float,

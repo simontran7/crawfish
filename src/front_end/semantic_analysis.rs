@@ -1,6 +1,6 @@
-pub mod constraints;
-pub mod hir;
-pub mod hir_dumper;
-pub mod semantic_analyzer;
-pub mod symbol_table;
-pub mod unification_table;
+pub(crate) mod constraints;
+pub(crate) mod hir;
+pub(crate) mod hir_dumper;
+pub(crate) mod semantic_analyzer;
+pub(crate) mod symbol_table;
+pub(crate) mod unification_table;

@@ -16,55 +16,55 @@ use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 /// [`StatementSlice`], [`ExpressionSlice`], and [`ParameterSlice`], and the
 /// binding tables ([`LocalInfo`] and [`ItemInfo`]) resolved from names
 /// during type-checking.
-pub struct Hir {
-    pub source_file: SourceFileNode,
+pub(crate) struct Hir {
+    pub(crate) source_file: SourceFileNode,
 
-    pub items: HandleMap<ItemId, ItemNode>,
-    pub statements: HandleMap<StatementId, StatementNode>,
-    pub expressions: HandleMap<ExpressionId, ExpressionNode>,
+    pub(crate) items: HandleMap<ItemId, ItemNode>,
+    pub(crate) statements: HandleMap<StatementId, StatementNode>,
+    pub(crate) expressions: HandleMap<ExpressionId, ExpressionNode>,
 
-    pub item_children: Vec<ItemId>,
-    pub statement_children: Vec<StatementId>,
-    pub expression_children: Vec<ExpressionId>,
-    pub parameter_children: Vec<LocalBindingId>,
+    pub(crate) item_children: Vec<ItemId>,
+    pub(crate) statement_children: Vec<StatementId>,
+    pub(crate) expression_children: Vec<ExpressionId>,
+    pub(crate) parameter_children: Vec<LocalBindingId>,
 
-    pub local_bindings: HandleMap<LocalBindingId, LocalInfo>,
-    pub item_bindings: HandleMap<ItemBindingId, ItemInfo>,
+    pub(crate) local_bindings: HandleMap<LocalBindingId, LocalInfo>,
+    pub(crate) item_bindings: HandleMap<ItemBindingId, ItemInfo>,
 }
 
 /// The root of the HIR: the top-level items of a source file.
-pub struct SourceFileNode {
-    pub items: ItemSlice,
-    pub span: Span,
+pub(crate) struct SourceFileNode {
+    pub(crate) items: ItemSlice,
+    pub(crate) span: Span,
 }
 
 /// A top-level item, with its [`ItemKind`] and source span.
 #[derive(Debug)]
-pub struct ItemNode {
-    pub kind: ItemKind,
-    pub span: Span,
+pub(crate) struct ItemNode {
+    pub(crate) kind: ItemKind,
+    pub(crate) span: Span,
 }
 
 /// A statement inside an [`ExpressionKind::Block`], with its
 /// [`StatementKind`] and source span.
 #[derive(Debug)]
-pub struct StatementNode {
-    pub kind: StatementKind,
-    pub span: Span,
+pub(crate) struct StatementNode {
+    pub(crate) kind: StatementKind,
+    pub(crate) span: Span,
 }
 
 /// A type-checked expression: its [`ExpressionKind`], resolved [`TypeId`],
 /// and source span.
 #[derive(Debug)]
-pub struct ExpressionNode {
-    pub kind: ExpressionKind,
-    pub ty: TypeId,
-    pub span: Span,
+pub(crate) struct ExpressionNode {
+    pub(crate) kind: ExpressionKind,
+    pub(crate) ty: TypeId,
+    pub(crate) span: Span,
 }
 
 /// The kind of a top-level item.
 #[derive(Debug)]
-pub enum ItemKind {
+pub(crate) enum ItemKind {
     /// A function definition: `func name(parameters) -> ReturnType { body }`.
     Function {
         name: ItemBindingId,
@@ -80,7 +80,7 @@ pub enum ItemKind {
 
 /// The kind of a statement inside a block.
 #[derive(Debug)]
-pub enum StatementKind {
+pub(crate) enum StatementKind {
     /// An expression statement, e.g. `foo();`, or a block's tail expression.
     /// `has_semicolon` distinguishes the two: a tail expression has no
     /// semicolon and becomes the block's value.
@@ -100,7 +100,7 @@ pub enum StatementKind {
 
 /// The kind of a type-checked expression.
 #[derive(Debug)]
-pub enum ExpressionKind {
+pub(crate) enum ExpressionKind {
     /// `()`.
     Unit,
     /// An integer literal.
@@ -151,59 +151,59 @@ soup::handle_impl!(pub(crate) ExpressionId);
 /// A run of [`ItemId`]s in [`Hir::item_children`], used by
 /// [`SourceFileNode`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ItemSlice {
-    pub start: u32,
-    pub len: u32,
+pub(crate) struct ItemSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 /// A run of [`StatementId`]s in [`Hir::statement_children`], used by
 /// [`ExpressionKind::Block`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StatementSlice {
-    pub start: u32,
-    pub len: u32,
+pub(crate) struct StatementSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 /// A run of [`ExpressionId`]s in [`Hir::expression_children`], used by
 /// [`ExpressionKind::Call`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ExpressionSlice {
-    pub start: u32,
-    pub len: u32,
+pub(crate) struct ExpressionSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 /// A run of [`LocalBindingId`]s in [`Hir::parameter_children`], used by
 /// [`ItemKind::Function`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ParameterSlice {
-    pub start: u32,
-    pub len: u32,
+pub(crate) struct ParameterSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 /// Resolved information about a local binding (a `let` pattern or function
 /// parameter), keyed by [`LocalBindingId`].
 #[derive(Debug)]
-pub struct LocalInfo {
-    pub name: Symbol,
-    pub mutable: bool,
-    pub annotation: Option<TypeId>,
-    pub ty: TypeId,
-    pub span: Span,
+pub(crate) struct LocalInfo {
+    pub(crate) name: Symbol,
+    pub(crate) mutable: bool,
+    pub(crate) annotation: Option<TypeId>,
+    pub(crate) ty: TypeId,
+    pub(crate) span: Span,
 }
 
 /// Resolved information about a top-level item (`func` or `const`), keyed
 /// by [`ItemBindingId`].
 #[derive(Debug)]
-pub struct ItemInfo {
-    pub name: Symbol,
-    pub ty: TypeId,
-    pub span: Span,
+pub(crate) struct ItemInfo {
+    pub(crate) name: Symbol,
+    pub(crate) ty: TypeId,
+    pub(crate) span: Span,
 }
 
 /// A handle into [`Hir::local_bindings`].
-pub type LocalBindingId = TypedBindingId<LocalInfo, { BindingKind::Local as u8 }>;
+pub(crate) type LocalBindingId = TypedBindingId<LocalInfo, { BindingKind::Local as u8 }>;
 /// A handle into [`Hir::item_bindings`].
-pub type ItemBindingId = TypedBindingId<ItemInfo, { BindingKind::Item as u8 }>;
+pub(crate) type ItemBindingId = TypedBindingId<ItemInfo, { BindingKind::Item as u8 }>;
 
 // Clone/Copy/PartialEq/Eq/Handle are all manual (no derive) because derive
 // adds unwanted bounds like `T: Clone`, but T is purely a phantom marker
@@ -212,18 +212,18 @@ pub type ItemBindingId = TypedBindingId<ItemInfo, { BindingKind::Item as u8 }>;
 /// A 4-byte handle into a [`HandleMap`] for `T`, distinguished by `KIND` so
 /// that [`LocalBindingId`] and [`ItemBindingId`] cannot be confused even
 /// though both are backed by a `u32`.
-pub struct TypedBindingId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedBindingId<T, const KIND: u8>(u32, PhantomData<T>);
 
 /// A reference to either a [`LocalBindingId`] or an [`ItemBindingId`],
 /// packed into a single `u32`. The high bit stores the [`BindingKind`] and
 /// the low 31 bits store the index within the corresponding table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BindingId(u32);
+pub(crate) struct BindingId(u32);
 
 /// Which table a [`BindingId`] indexes into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum BindingKind {
+pub(crate) enum BindingKind {
     Local = 0,
     Item,
 }
@@ -379,7 +379,7 @@ impl Hir {
 }
 
 impl<T, const KIND: u8> TypedBindingId<T, KIND> {
-    pub const ERROR: Self = Self(u32::MAX, PhantomData);
+    pub(crate) const ERROR: Self = Self(u32::MAX, PhantomData);
 
     pub(crate) const fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
@@ -436,7 +436,7 @@ impl BindingId {
     const KIND_MASK: u32 = 0b1 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
 
-    pub const ERROR: Self = Self(u32::MAX);
+    pub(crate) const ERROR: Self = Self(u32::MAX);
 
     pub(crate) const fn is_error(self) -> bool {
         self.0 == u32::MAX

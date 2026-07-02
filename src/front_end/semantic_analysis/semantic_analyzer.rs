@@ -28,7 +28,7 @@ use crate::front_end::syntactic_analysis::ast::{self, Ast};
 /// unify those variables via [`UnificationTable`] and report mismatches,
 /// then [`SemanticAnalyzer::substitute`] to write the resolved types back
 /// into the [`Hir`].
-pub struct SemanticAnalyzer<'ast> {
+pub(crate) struct SemanticAnalyzer<'ast> {
     ast: &'ast Ast,
     ctx: &'ast mut CompilerContext,
     symbol_table: SymbolTable,

@@ -19,7 +19,7 @@ soup::handle_impl!(pub(crate) IntVarId);
 ///
 /// [`Constraint`]: crate::front_end::semantic_analysis::constraints::Constraint
 /// [`Ty`]: crate::front_end::semantic_analysis::types::Ty
-pub struct UnificationTable {
+pub(crate) struct UnificationTable {
     type_var_parent: HandleMap<TypeVarId, TypeVarId>,
     type_var_rank: HandleMap<TypeVarId, u8>,
     type_var_concrete: HandleMap<TypeVarId, Option<TypeId>>,
