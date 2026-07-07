@@ -2,6 +2,66 @@
 
 ## Now
 
+### High-Level
+
+```text
+for each function in Hir:
+    lower Hir function → MIR Function   (Lowerer)
+    run MIR transformation passes       (verifier, alias resolution, const checker, ...)
+    emit LLVM IR for Function           (Codegen)
+    add to LLVM Module
+```
+
+Two-pass strategy (block parameters → LLVM phi nodes) (https://createlang.rs/03_secondlang/ir.html)
+
+**Pass 1:** Create all LLVM basic blocks and allocate phi nodes for block parameters.
+
+```rust
+for block in func.layout.blocks() {
+    let llvm_bb = llvm_func.append_basic_block(&ctx, "");
+    bb_map[block] = llvm_bb;
+
+    for (i, &param) in func.dfg.block_params(block).iter().enumerate() {
+        let ty = func.dfg.value_type(param);
+        let phi = builder.build_phi(llvm_ty(ty), "");
+        value_map[param] = phi.as_basic_value();
+        phi_map[block].push(phi);
+    }
+}
+```
+
+**Pass 2:** Emit instructions; on every branch, patch the phi nodes.
+
+```rust
+for block in function.cfg.blocks() {
+    builder.position_at_end(bb_map[block]);
+
+    for instruction in func.cfg.block_insts(block) {
+        match &func.dfg[inst] {
+            InstData::Jump { dest, args } => {
+                for (phi, &arg) in phi_map[*dest].iter().zip(args) {
+                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
+                }
+                builder.build_unconditional_branch(bb_map[*dest]);
+            }
+            InstData::Brif { cond, then_dest, then_args, else_dest, else_args } => {
+                for (phi, &arg) in phi_map[*then_dest].iter().zip(then_args) {
+                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
+                }
+                for (phi, &arg) in phi_map[*else_dest].iter().zip(else_args) {
+                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
+                }
+                let cond_val = value_map[*cond].into_int_value();
+                builder.build_conditional_branch(cond_val, bb_map[*then_dest], bb_map[*else_dest]);
+            }
+            // ... other instructions map straightforwardly
+        }
+    }
+}
+```
+
+### Concrete Steps
+
 - [ ] MIR construction ([frontend builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs), [ssa builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/ssa.rs), and [paper](https://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf))
   - [ ] Builder with typestate: enforce block sealing at the API level so construction-order bugs (e.g. reading a block's parameters before all predecessors are known) are unrepresentable. Reference: Cranelift's [FunctionBuilder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs).
 
@@ -116,69 +176,9 @@ Without the occurs check, infinite types would cause infinite loops during
 When the first `Ty` variant is defined with a `TypeId` field — most likely when generic functions or closures land. The occurs check and structural recursion arms in `unify` should land in the same commit.
 ```
 
-### MIR Lowering
+### MIR Transformation Passes
 
 - [ ] introduce ARC (https://nonstrict.eu/wwdcindex/wwdc2011/323/?t=397, https://github.com/swiftlang/swift/blob/main/docs/SIL/SIL.md, https://github.com/swiftlang/swift/blob/main/docs/SIL/Instructions.md)
-
-### Code Generation
-
-High-level pipeline — one function at a time, no whole-program MIR collection needed:
-
-```text
-for each function in Hir:
-    lower Hir function → MIR Function   (Lowerer)
-    run MIR passes                      (verifier, alias resolution, const checker, ...)
-    emit LLVM IR for Function           (Codegen)
-    add to LLVM Module
-```
-
-Two-pass strategy (block parameters → LLVM phi nodes) (https://createlang.rs/03_secondlang/ir.html)
-
-**Pass 1:** Create all LLVM basic blocks and allocate phi nodes for block parameters.
-
-```rust
-for block in func.layout.blocks() {
-    let llvm_bb = llvm_func.append_basic_block(&ctx, "");
-    bb_map[block] = llvm_bb;
-
-    for (i, &param) in func.dfg.block_params(block).iter().enumerate() {
-        let ty = func.dfg.value_type(param);
-        let phi = builder.build_phi(llvm_ty(ty), "");
-        value_map[param] = phi.as_basic_value();
-        phi_map[block].push(phi);
-    }
-}
-```
-
-**Pass 2:** Emit instructions; on every branch, patch the phi nodes.
-
-```rust
-for block in func.layout.blocks() {
-    builder.position_at_end(bb_map[block]);
-
-    for inst in func.layout.block_insts(block) {
-        match &func.dfg[inst] {
-            InstData::Jump { dest, args } => {
-                for (phi, &arg) in phi_map[*dest].iter().zip(args) {
-                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
-                }
-                builder.build_unconditional_branch(bb_map[*dest]);
-            }
-            InstData::Brif { cond, then_dest, then_args, else_dest, else_args } => {
-                for (phi, &arg) in phi_map[*then_dest].iter().zip(then_args) {
-                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
-                }
-                for (phi, &arg) in phi_map[*else_dest].iter().zip(else_args) {
-                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
-                }
-                let cond_val = value_map[*cond].into_int_value();
-                builder.build_conditional_branch(cond_val, bb_map[*then_dest], bb_map[*else_dest]);
-            }
-            // ... other instructions map straightforwardly
-        }
-    }
-}
-```
 
 ### Language Features
 
