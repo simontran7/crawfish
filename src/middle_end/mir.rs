@@ -22,8 +22,6 @@ pub(crate) struct Function {
 ///
 /// Internally split into a def-use graph ([`DataFlowGraph`]) that captures
 /// data dependencies, and a [`Layout`] that orders blocks and instructions.
-/// All operations are exposed directly on `Cfg` — callers never touch the
-/// internal sub-structures.
 ///
 /// ```text
 /// Block0(v0: i32, v1: i32): ← block parameters define v0, v1
@@ -164,6 +162,11 @@ pub(crate) struct InstructionViewMut<'a> {
     cfg: &'a mut Cfg,
 }
 
+pub(crate) struct ValueView<'a> {
+    value_id: ValueId,
+    cfg: &'a Cfg,
+}
+
 /// Iterator returned by [`InstructionView::used_values`].
 pub(crate) enum UsedValuesIter<'a> {
     Slice(slice::Iter<'a, ValueId>),
@@ -280,7 +283,7 @@ impl Cfg {
     }
 
     /// Returns a view over the last block in layout order, or `None` if no blocks have been appended yet.
-    pub(crate) fn last_block(&self) -> Option<BlockView<'_>> {
+    pub(crate) fn exit(&self) -> Option<BlockView<'_>> {
         self.layout.exit.map(|block_id| BlockView {
             block_id,
             cfg: self,
@@ -312,13 +315,11 @@ impl Cfg {
     }
 
     /// Returns whether `block_id` is currently part of the layout.
-    pub(crate) fn is_block_inserted(&self, block_id: BlockId) -> bool {
-        // Can't simply check `self.layout.blocks.get(block_id).is_some()`: `SideHandleMap`
-        // is a dense, `SecondaryMap`-style structure, so appending some higher-indexed
-        // block pads intermediate never-inserted slots with a default `BlockNode` — which
-        // would make `.get()` spuriously return `Some` for a block that was never
-        // appended. Presence has to be judged by the links themselves, exactly as CLIF's
-        // `Layout::is_block_inserted` does.
+    /// Can't simply check `self.layout.blocks.get(block_id).is_some()` since for `SideHandleMap`,
+    /// appending some higher-indexed block pads intermediate never-inserted slots
+    /// with a default `BlockNode`, which would make `.get()` spuriously return `Some`
+    /// for a block that was never appended.
+    pub(crate) fn is_block_linked(&self, block_id: BlockId) -> bool {
         Some(block_id) == self.layout.entry
             || self
                 .layout
@@ -330,7 +331,7 @@ impl Cfg {
     /// Appends `block_id` to the end of the layout's block sequence.
     pub(crate) fn append_block(&mut self, block_id: BlockId) {
         assert!(
-            !self.is_block_inserted(block_id),
+            !self.is_block_linked(block_id),
             "cannot append a block that is already in the cfg"
         );
         let node = BlockNode {
@@ -349,38 +350,38 @@ impl Cfg {
     }
 
     /// Inserts `block_id` into the layout immediately before `before`.
-    pub(crate) fn insert_block_before(&mut self, block_id: BlockId, before: BlockId) {
+    pub(crate) fn add_block_before(&mut self, block_id: BlockId, before: BlockId) {
         assert!(
-            !self.is_block_inserted(block_id),
+            !self.is_block_linked(block_id),
             "cannot insert a block that is already in the cfg"
         );
         assert!(
-            self.is_block_inserted(before),
+            self.is_block_linked(before),
             "block insertion point is not in the cfg"
         );
-        let after = self.layout.blocks[before].prev;
         let node = BlockNode {
-            prev: after,
+            prev: self.layout.blocks[before].prev,
             next: before.into(),
             first_instruction: None.into(),
             last_instruction: None.into(),
         };
         self.layout.blocks.add(block_id, node);
         self.layout.blocks[before].prev = block_id.into();
-        match after.expand() {
-            None => self.layout.entry = Some(block_id),
-            Some(a) => self.layout.blocks[a].next = block_id.into(),
+        if let Some(before_before_id) = self.layout.blocks[before].prev.expand() {
+            self.layout.blocks[before_before_id].next = block_id.into();
+        } else {
+            self.layout.entry = Some(block_id);
         }
     }
 
     /// Inserts `block_id` into the layout immediately after `after`.
-    pub(crate) fn insert_block_after(&mut self, block_id: BlockId, after: BlockId) {
+    pub(crate) fn add_block_after(&mut self, block_id: BlockId, after: BlockId) {
         assert!(
-            !self.is_block_inserted(block_id),
+            !self.is_block_linked(block_id),
             "cannot insert a block that is already in the cfg"
         );
         assert!(
-            self.is_block_inserted(after),
+            self.is_block_linked(after),
             "block insertion point is not in the cfg"
         );
         let before = self.layout.blocks[after].next;
@@ -400,7 +401,10 @@ impl Cfg {
 
     /// Removes `block_id` from the layout.
     pub(crate) fn remove_block(&mut self, block_id: BlockId) {
-        assert!(self.is_block_inserted(block_id), "block is not in the cfg");
+        assert!(
+            self.is_block_linked(block_id),
+            "block pointed by `block_id` is not in the cfg"
+        );
         assert!(
             self.layout.blocks[block_id].first_instruction.is_none(),
             "cannot remove a block that still has instructions"
@@ -419,13 +423,15 @@ impl Cfg {
         }
     }
 
-    /// Removes every instruction from `block_id` and then removes the block itself.
-    pub(crate) fn remove_block_and_instructions(&mut self, block_id: BlockId) {
-        assert!(self.is_block_inserted(block_id), "block is not in the cfg");
+    /// Removes every instruction from `block_id`, leaving it empty but still in the layout.
+    pub(crate) fn clear_block(&mut self, block_id: BlockId) {
+        assert!(
+            self.is_block_linked(block_id),
+            "block pointed by `block_id` is not in the cfg"
+        );
         while let Some(instruction_id) = self.layout.blocks[block_id].first_instruction.expand() {
             self.remove_instruction(instruction_id);
         }
-        self.remove_block(block_id);
     }
 
     /// Returns a view over `instruction_id` for instruction-local queries.
@@ -447,8 +453,8 @@ impl Cfg {
         }
     }
 
-    /// Allocates `instruction` and its results in the DFG, without inserting it into the layout.
-    fn alloc_instruction(
+    /// Creates `instruction` and its results in the DFG, without inserting it into the layout.
+    fn create_instruction(
         &mut self,
         instruction: Instruction,
         result_tys: &[TypeId],
@@ -490,132 +496,179 @@ impl Cfg {
 
     /// Inserts `instruction` immediately before `before` (in `before`'s block), allocating
     /// result values with types `result_tys`.
-    pub(crate) fn insert_instruction_before(
+    pub(crate) fn add_instruction_before(
         &mut self,
         instruction: Instruction,
         result_tys: &[TypeId],
         before: InstructionId,
     ) -> InstructionId {
-        let instruction_id = self.alloc_instruction(instruction, result_tys);
+        let instruction_id = self.create_instruction(instruction, result_tys);
+
         let block_id = self.layout.instructions[before]
             .block
             .expand()
             .expect("instruction insertion point is not in the cfg");
-        let after = self.layout.instructions[before].prev;
-        let node = InstructionNode {
-            block: block_id.into(),
-            prev: after,
-            next: before.into(),
-        };
-        self.layout.instructions.add(instruction_id, node);
+
+        self.layout.instructions.add(
+            instruction_id,
+            InstructionNode {
+                block: block_id.into(),
+                prev: self.layout.instructions[before].prev,
+                next: before.into(),
+            },
+        );
+
         self.layout.instructions[before].prev = instruction_id.into();
-        match after.expand() {
+
+        match self.layout.instructions[before].prev.expand() {
             None => self.layout.blocks[block_id].first_instruction = instruction_id.into(),
-            Some(a) => self.layout.instructions[a].next = instruction_id.into(),
+            Some(before_prev_id) => {
+                self.layout.instructions[before_prev_id].next = instruction_id.into()
+            }
         }
+
         instruction_id
     }
 
     /// Removes `instruction_id` from the layout.
+    // NOTE: Its DFG data (and any values it defines) remains valid but is no longer
+    // reachable via layout traversal.
     pub(crate) fn remove_instruction(&mut self, instruction_id: InstructionId) {
-        // Its DFG data (and any values it defines) remains valid but is no longer
-        // reachable via layout traversal.
         let block_id = self.layout.instructions[instruction_id]
             .block
             .expand()
             .expect("instruction is not in the cfg");
-        let prev = self.layout.instructions[instruction_id].prev;
-        let next = self.layout.instructions[instruction_id].next;
+
+        let old_prev = self.layout.instructions[instruction_id].prev;
+        let old_next = self.layout.instructions[instruction_id].next;
+
         self.layout.instructions[instruction_id].block = None.into();
         self.layout.instructions[instruction_id].prev = None.into();
         self.layout.instructions[instruction_id].next = None.into();
-        match prev.expand() {
-            None => self.layout.blocks[block_id].first_instruction = next,
-            Some(p) => self.layout.instructions[p].next = next,
+
+        match old_prev.expand() {
+            None => self.layout.blocks[block_id].first_instruction = old_next,
+            Some(old_prev_id) => self.layout.instructions[old_prev_id].next = old_next,
         }
-        match next.expand() {
-            None => self.layout.blocks[block_id].last_instruction = prev,
-            Some(n) => self.layout.instructions[n].prev = prev,
+        match old_next.expand() {
+            None => self.layout.blocks[block_id].last_instruction = old_prev,
+            Some(old_next_id) => self.layout.instructions[old_next_id].prev = old_prev,
         }
     }
 
-    /// Splits `block_id` in two at `before`, moving `before` and everything after it into
-    /// a newly inserted `new_block_id`.
-    pub(crate) fn split_block(&mut self, new_block_id: BlockId, before: InstructionId) {
-        // block_id:                    block_id:
-        //     i1                           i1
-        //     i2               ->          i2
-        //     i3  <- before             new_block_id:
-        //     i4                            i3  <- before
-        //                                   i4
+    /// Splits a block in two up till and excluding `partition_point`, moving `partition_point` and everything after it into
+    /// a newly inserted block pointed by `new_block_id`.
+    pub(crate) fn split_block(&mut self, new_block_id: BlockId, partition_point: InstructionId) {
         assert!(
-            !self.is_block_inserted(new_block_id),
+            !self.is_block_linked(new_block_id),
             "cannot split into a block that is already in the cfg"
         );
-        let old_block_id = self.layout.instructions[before]
+
+        let old_block_id = self.layout.instructions[partition_point]
             .block
             .expand()
             .expect("split point instruction is not in the cfg");
 
-        let next_block = self.layout.blocks[old_block_id].next;
-        let last_instruction = self.layout.blocks[old_block_id].last_instruction;
         self.layout.blocks.add(
             new_block_id,
             BlockNode {
                 prev: old_block_id.into(),
-                next: next_block,
-                first_instruction: before.into(),
-                last_instruction,
+                next: self.layout.blocks[old_block_id].next,
+                first_instruction: partition_point.into(),
+                last_instruction: self.layout.blocks[old_block_id].last_instruction,
             },
         );
+
+        let old_next = self.layout.blocks[old_block_id].next;
         self.layout.blocks[old_block_id].next = new_block_id.into();
-        match next_block.expand() {
+        match old_next.expand() {
             None => self.layout.exit = Some(new_block_id),
-            Some(n) => self.layout.blocks[n].prev = new_block_id.into(),
+            Some(old_next_id) => self.layout.blocks[old_next_id].prev = new_block_id.into(),
         }
 
-        let prev_instruction = self.layout.instructions[before].prev;
-        self.layout.instructions[before].prev = None.into();
-        self.layout.blocks[old_block_id].last_instruction = prev_instruction;
-        match prev_instruction.expand() {
+        let before_partition_id = self.layout.instructions[partition_point].prev;
+        self.layout.instructions[partition_point].prev = None.into();
+        self.layout.blocks[old_block_id].last_instruction = before_partition_id;
+
+        match before_partition_id.expand() {
             None => self.layout.blocks[old_block_id].first_instruction = None.into(),
-            Some(p) => self.layout.instructions[p].next = None.into(),
+            Some(instruction_id) => self.layout.instructions[instruction_id].next = None.into(),
         }
 
-        let mut cursor = Some(before);
-        while let Some(instruction_id) = cursor {
+        let mut current = Some(partition_point);
+        while let Some(instruction_id) = current {
             self.layout.instructions[instruction_id].block = new_block_id.into();
-            cursor = self.layout.instructions[instruction_id].next.expand();
+            current = self.layout.instructions[instruction_id].next.expand();
+        }
+    }
+
+    /// Builds (but does not insert) a `Jump` instruction to `destination`, passing `args`.
+    pub(crate) fn new_jump(&mut self, destination: BlockId, args: &[ValueId]) -> Instruction {
+        Instruction::Jump {
+            destination,
+            args: ValueList::from(&mut self.dfg.allocator, args),
+        }
+    }
+
+    /// Builds (but does not insert) a `Return` instruction, passing `args`.
+    pub(crate) fn new_return(&mut self, args: &[ValueId]) -> Instruction {
+        Instruction::Return {
+            args: ValueList::from(&mut self.dfg.allocator, args),
+        }
+    }
+
+    /// Builds (but does not insert) a `Call` instruction to `callee`, passing `args`.
+    pub(crate) fn new_call(
+        &mut self,
+        callee: FunctionReferenceId,
+        args: &[ValueId],
+    ) -> Instruction {
+        Instruction::Call {
+            callee,
+            args: ValueList::from(&mut self.dfg.allocator, args),
+        }
+    }
+
+    /// Builds (but does not insert) a `BranchIf` instruction, passing `then_args`/`else_args`
+    /// to whichever of `then_destination`/`else_destination` is taken.
+    pub(crate) fn new_branch_if(
+        &mut self,
+        arg: ValueId,
+        then_destination: BlockId,
+        then_args: &[ValueId],
+        else_destination: BlockId,
+        else_args: &[ValueId],
+    ) -> Instruction {
+        Instruction::BranchIf {
+            arg,
+            then_destination,
+            then_args: ValueList::from(&mut self.dfg.allocator, then_args),
+            else_destination,
+            else_args: ValueList::from(&mut self.dfg.allocator, else_args),
         }
     }
 
     /// Returns a reference to `value_id`'s data.
-    pub(crate) fn get_value(&self, value_id: ValueId) -> &Value {
-        &self.dfg.values[value_id]
+    pub(crate) fn get_value(&self, value_id: ValueId) -> ValueView<'_> {
+        ValueView {
+            value_id,
+            cfg: self,
+        }
     }
 
-    /// Returns `value_id`'s definition, resolving through any alias chain first.
-    pub(crate) fn value_definition(&self, value_id: ValueId) -> ValueDefinition {
-        // This never returns `ValueDefinition::Alias`. Prefer this over
-        // `get_value(value_id).definition()` unless you specifically need to know whether
-        // `value_id` is currently an alias.
-        self.dfg.values[self.resolve_aliases(value_id)].def
-    }
-
-    /// Returns whether `value_id` is currently attached as an instruction result or block parameter.
+    /// Returns whether `value_id` is currently attached (i.e., still reachable by walking from its definition site back to it) as an instruction result or block parameter.
+    // NOTE: Aliases are never attached.
     fn value_is_attached(&self, value_id: ValueId) -> bool {
-        // "Attached" means still reachable by walking from its definition site back to it.
-        // A value that has been detached (e.g. via `remove_parameter`) but not yet turned
-        // into an alias is not attached. Aliases are never attached.
         match self.dfg.values[value_id].def {
-            ValueDefinition::Result(instruction_id, num) => {
-                self.dfg.instruction_results[instruction_id].get(num as usize, &self.dfg.allocator)
+            ValueDefinition::Result(instruction_id, index) => {
+                self.dfg.instruction_results[instruction_id]
+                    .get(index as usize, &self.dfg.allocator)
                     == Some(value_id)
             }
-            ValueDefinition::Parameter(block_id, num) => {
+            ValueDefinition::Parameter(block_id, index) => {
                 self.dfg.blocks[block_id]
                     .parameters
-                    .get(num as usize, &self.dfg.allocator)
+                    .get(index as usize, &self.dfg.allocator)
                     == Some(value_id)
             }
             ValueDefinition::Alias(_) => false,
@@ -624,11 +677,11 @@ impl Cfg {
 
     /// Follows `value_id`'s alias chain (if any) to the value it ultimately stands for.
     pub(crate) fn resolve_aliases(&self, value_id: ValueId) -> ValueId {
-        let mut v = value_id;
+        let mut current_value = value_id;
         for _ in 0..=self.dfg.values.count() {
-            match self.dfg.values[v].def {
-                ValueDefinition::Alias(original) => v = original,
-                _ => return v,
+            match self.dfg.values[current_value].def {
+                ValueDefinition::Alias(original) => current_value = original,
+                _ => return current_value,
             }
         }
         panic!("value alias loop detected");
@@ -636,52 +689,44 @@ impl Cfg {
 
     /// Turns `dest` into an alias of `src`.
     pub(crate) fn change_to_alias(&mut self, dest: ValueId, src: ValueId) {
-        // Every future read of `dest`'s definition transparently resolves to whatever `src`
-        // itself ultimately resolves to. `dest` must not currently be attached to an
-        // instruction or block — detach it first (e.g. via `remove_parameter`).
-        //
-        // This is how a pass merges two values in O(1) — e.g. trivial block-parameter
-        // elimination during SSA construction — instead of eagerly rewriting every existing
-        // use. Existing uses keep referring to `dest` until `resolve_all_aliases` performs
-        // that rewrite in one batched pass; until then, anything reading a value's
-        // definition must go through `value_definition`/`resolve_aliases` rather than
-        // `get_value(..).definition()` directly.
         assert!(
             !self.value_is_attached(dest),
             "cannot alias a value that is still attached to an instruction or block"
         );
+
         let original = self.resolve_aliases(src);
+
         assert!(
             dest != original,
             "aliasing a value to itself would create a loop"
         );
+
         assert!(
             self.dfg.values[dest].ty == self.dfg.values[original].ty,
             "aliasing values of different types"
         );
+
         self.dfg.values[dest].def = ValueDefinition::Alias(original);
     }
 
     /// Replaces every use of a value alias throughout the CFG with its final resolved value.
+    /// Tip: Call this once after a batch of `change_to_alias` calls (e.g. at the end of SSA
+    /// construction, or after a copy-propagation pass) rather than eagerly rewriting on
+    /// every single alias creation.
     pub(crate) fn resolve_all_aliases(&mut self) {
-        // Call this once after a batch of `change_to_alias` calls (e.g. at the end of SSA
-        // construction, or after a copy-propagation pass) rather than eagerly rewriting on
-        // every single alias creation.
-        // Compress every alias chain so each alias points directly at its final value, in a
-        // single linear pass: the first time we reach the head of an unresolved chain (in key
-        // order), walk the whole chain once and splat the fully-resolved target onto every
-        // node along it. Any other member of that same chain, when this loop later reaches it
-        // directly, is by then already a single hop, so reprocessing it costs O(1). Total cost
-        // is O(n) across all values, not O(n) per chain.
+        // step 1: compresses every alias chain so each aliased value points directly at its final target
         let value_ids: Vec<ValueId> = self.dfg.values.keys().collect();
-        for mut src in value_ids {
-            if let ValueDefinition::Alias(mut original) = self.dfg.values[src].def {
-                let resolved = ValueDefinition::Alias(self.resolve_aliases(original));
+        for mut value_id in value_ids {
+            if let ValueDefinition::Alias(original_pointee_id) = self.dfg.values[value_id].def {
+                let resolved = ValueDefinition::Alias(self.resolve_aliases(original_pointee_id));
+                let mut next_value_id = original_pointee_id;
                 loop {
-                    self.dfg.values[src].def = resolved;
-                    src = original;
-                    if let ValueDefinition::Alias(next) = self.dfg.values[src].def {
-                        original = next;
+                    self.dfg.values[value_id].def = resolved;
+
+                    value_id = next_value_id;
+
+                    if let ValueDefinition::Alias(next_pointee_id) = self.dfg.values[value_id].def {
+                        next_value_id = next_pointee_id;
                     } else {
                         break;
                     }
@@ -689,14 +734,13 @@ impl Cfg {
             }
         }
 
-        // Now every alias points directly at a non-alias value, so every use of an alias can
-        // be replaced with the final value in constant time.
-        let values = &self.dfg.values;
-        let allocator = &mut self.dfg.allocator;
+        // step 2: propagates that resolution out into every instruction's actual operand references.
         for instruction in self.dfg.instructions.values_mut() {
-            instruction.rewrite_values(allocator, |v| match values[v].def {
-                ValueDefinition::Alias(original) => original,
-                _ => v,
+            instruction.rewrite_operands(&mut self.dfg.allocator, |value_id| {
+                match self.dfg.values[value_id].def {
+                    ValueDefinition::Alias(original) => original,
+                    _ => value_id,
+                }
             });
         }
     }
@@ -732,27 +776,13 @@ impl Cfg {
     }
 }
 
-impl Value {
-    pub(crate) fn ty(&self) -> TypeId {
-        self.ty
-    }
-
-    pub(crate) fn definition(&self) -> ValueDefinition {
-        self.def
-    }
-}
-
 impl Instruction {
     /// Rewrites every `ValueId` this instruction references by applying `f` to each one.
-    fn rewrite_values(
+    fn rewrite_operands(
         &mut self,
         allocator: &mut ValueListAllocator,
         mut f: impl FnMut(ValueId) -> ValueId,
     ) {
-        // Includes `BranchIf`'s then/else block arguments. Shared by
-        // `InstructionViewMut::rewrite_values` and `Cfg::resolve_all_aliases`, which need the
-        // same traversal from opposite entry points (one instruction at a time vs. every
-        // instruction in the DFG).
         match self {
             Instruction::Binary { args, .. } => {
                 args[0] = f(args[0]);
@@ -869,7 +899,7 @@ impl<'a> BlockViewMut<'a> {
         instruction: Instruction,
         result_tys: &[TypeId],
     ) -> InstructionId {
-        let instruction_id = self.cfg.alloc_instruction(instruction, result_tys);
+        let instruction_id = self.cfg.create_instruction(instruction, result_tys);
         self.cfg
             .link_instruction_to_block(self.block_id, instruction_id);
         instruction_id
@@ -877,7 +907,7 @@ impl<'a> BlockViewMut<'a> {
 
     /// Appends a terminator (which produces no results) to the end of this block.
     pub(crate) fn set_terminator(&mut self, terminator: Instruction) {
-        let instruction_id = self.cfg.alloc_instruction(terminator, &[]);
+        let instruction_id = self.cfg.create_instruction(terminator, &[]);
         self.cfg
             .link_instruction_to_block(self.block_id, instruction_id);
     }
@@ -889,7 +919,7 @@ impl<'a> BlockViewMut<'a> {
             .to_mut_slice(&mut self.cfg.dfg.allocator);
         params.swap(index, params.len() - 1);
         // The value now sitting at `index` still thinks it's the parameter at its old
-        // (last) position; patch its definition to match its new slot.
+        // (last) position, so patch its definition to match its new slot.
         let moved_value = params[index];
         self.cfg.dfg.blocks[self.block_id]
             .parameters
@@ -901,10 +931,6 @@ impl<'a> BlockViewMut<'a> {
 
     /// Removes the block parameter at `index`, shifting later parameters down by one to preserve their relative order.
     pub(crate) fn remove_parameter(&mut self, index: usize) {
-        // Unlike `swap_remove_parameter` (O(1) but reorders), this is needed wherever later
-        // code relies on parameter order — e.g. SSA construction's trivial-block-parameter
-        // elimination, which walks the remaining parameters by position while resolving one
-        // variable at a time.
         self.cfg.dfg.blocks[self.block_id]
             .parameters
             .remove(index, &mut self.cfg.dfg.allocator);
@@ -954,9 +980,7 @@ impl<'a> InstructionView<'a> {
             Instruction::Unary { arg, .. } => slice::from_ref(arg),
             Instruction::Call { args, .. } => args.to_slice(allocator),
             Instruction::Jump { args, .. } => args.to_slice(allocator),
-            // Only the condition is an operand here — the then/else block arguments are
-            // not operands in the traditional sense. See `used_values` for those.
-            Instruction::BranchIf { arg, .. } => slice::from_ref(arg),
+            Instruction::BranchIf { arg, .. } => slice::from_ref(arg), // Only the condition is an operand here (the then/else block arguments are not operands in the traditional sense)
             Instruction::Return { args } => args.to_slice(allocator),
             Instruction::IntegerLiteral { .. }
             | Instruction::BooleanLiteral { .. }
@@ -984,11 +1008,6 @@ impl<'a> InstructionView<'a> {
 
     /// Returns an iterator over every value this instruction references.
     pub(crate) fn used_values(&self) -> UsedValuesIter<'a> {
-        // The superset of `arguments` that also includes `BranchIf`'s then/else block
-        // arguments — matches what `InstructionViewMut::rewrite_values` rewrites. Use this
-        // (not `arguments`) wherever "what values does this instruction use" matters, e.g.
-        // liveness or DCE.
-        let allocator = &self.cfg.dfg.allocator;
         match &self.cfg.dfg.instructions[self.instruction_id] {
             Instruction::BranchIf {
                 arg,
@@ -997,8 +1016,8 @@ impl<'a> InstructionView<'a> {
                 ..
             } => UsedValuesIter::Branch {
                 arg: Some(*arg),
-                then_args: then_args.to_slice(allocator).iter(),
-                else_args: else_args.to_slice(allocator).iter(),
+                then_args: then_args.to_slice(&self.cfg.dfg.allocator).iter(),
+                else_args: else_args.to_slice(&self.cfg.dfg.allocator).iter(),
             },
             _ => UsedValuesIter::Slice(self.arguments().iter()),
         }
@@ -1008,9 +1027,24 @@ impl<'a> InstructionView<'a> {
 impl<'a> InstructionViewMut<'a> {
     /// Rewrites every `ValueId` the instruction references by applying `f` to each one,
     /// including `BranchIf`'s then/else block arguments.
-    pub(crate) fn rewrite_values(&mut self, f: impl FnMut(ValueId) -> ValueId) {
+    pub(crate) fn rewrite_operands(&mut self, f: impl FnMut(ValueId) -> ValueId) {
         self.cfg.dfg.instructions[self.instruction_id]
-            .rewrite_values(&mut self.cfg.dfg.allocator, f);
+            .rewrite_operands(&mut self.cfg.dfg.allocator, f);
+    }
+}
+
+impl<'a> ValueView<'a> {
+    /// Returns this value's type.
+    pub(crate) fn ty(&self) -> TypeId {
+        self.cfg.dfg.values[self.value_id].ty
+    }
+
+    /// Returns this value's definition, resolving through any alias chain first.
+    pub(crate) fn definition(&self) -> ValueDefinition {
+        // This never returns `ValueDefinition::Alias` — unlike a hypothetical accessor
+        // that just read `.def` off the raw `Value`, this always follows the chain via
+        // `resolve_aliases`, so there's no discoverable-but-wrong way to ask this question.
+        self.cfg.dfg.values[self.cfg.resolve_aliases(self.value_id)].def
     }
 }
 
