@@ -52,7 +52,7 @@ export PATH=$PATH:<path to the crawfish compiler executable>
 ## Usage
 
 ```
-Crawfish compiler
+crawfish compiler
 
 Usage:
     crawfish [OPTIONS] <COMMAND> [ARGS...]

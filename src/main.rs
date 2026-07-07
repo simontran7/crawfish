@@ -19,7 +19,7 @@ fn main() {
             driver::compile(&filename, &source);
         }
         Ok(arg_parser::Command::Help) => {
-            let message = r#"Crawfish compiler
+            let message = r#"crawfish compiler
 
 Usage:
     crawfish <COMMAND> [OPTIONS] [ARGS]
