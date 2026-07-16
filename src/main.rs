@@ -21,15 +21,14 @@ fn main() {
         Ok(arg_parser::Command::Help) => {
             let message = r#"crawfish compiler
 
-Usage:
-    crawfish <COMMAND> [OPTIONS] [ARGS]
+Usage: crawfish [options] <arguments>
 
-Command:
-    compile <file>.crw            compile the current file
+Arguments:
+  compile <file>.crw            compile the current file
 
 Options:
-    -h, --help                    print possible commands
-    -v, --version                 print compiler version"#;
+  -h, --help                    print this message
+  -v, --version                 print version information"#;
             println!("{message}");
         }
         Ok(arg_parser::Command::Version) => {

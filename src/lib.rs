@@ -1,5 +1,3 @@
-#![doc = include_str!("../docs/ARCHITECTURE.md")]
-
 pub mod arg_parser;
 pub mod driver;
 

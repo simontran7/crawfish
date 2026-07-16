@@ -14,7 +14,7 @@ use crate::front_end::syntactic_analysis::parser::Parser;
 /// # Examples
 ///
 /// ```rust,ignore
-/// crawfish::driver::compile("example.crab", "func main() -> I32 { return 0; }");
+/// crawfish::driver::compile("example.crw", "func main() -> I32 { return 0; }");
 /// ```
 pub fn compile(filename: &str, source: &str) {
     let mut ctx = CompilerContext::new();
@@ -70,3 +70,5 @@ pub fn compile(filename: &str, source: &str) {
 pub fn check() {
     todo!()
 }
+
+
