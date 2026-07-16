@@ -1,6 +1,16 @@
 use std::collections::HashMap;
 
 /// String Interner which interns literals and identifiers.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut interner = StringInterner::new();
+/// let a = interner.intern("foo");
+/// let b = interner.intern("foo");
+/// assert_eq!(a, b);
+/// assert_eq!(interner.resolve(a), Some("foo"));
+/// ```
 pub(crate) struct StringInterner {
     strings: Vec<String>,
     symbols: HashMap<String, Symbol>,
@@ -18,6 +28,8 @@ pub(crate) struct StringInterner {
 pub(crate) struct Symbol(pub(crate) u32);
 
 impl StringInterner {
+    /// Creates and returns a `StringInterner` pre-populated with [`Symbol`]s
+    /// for the built-in type names, cached on the fields above.
     pub(crate) fn new() -> Self {
         let mut si = Self {
             strings: Vec::new(),

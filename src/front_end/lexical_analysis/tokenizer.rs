@@ -5,6 +5,14 @@ use crate::common::span::Span;
 use crate::front_end::lexical_analysis::token::{LitKind, Token, TokenKind};
 
 /// Controls the tokenization process.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut ctx = CompilerContext::new();
+/// let tokens = Tokenizer::new("let x = 1 + 2;", &mut ctx).tokenize();
+/// assert_eq!(tokens.last().unwrap().kind(), TokenKind::Eof);
+/// ```
 pub(crate) struct Tokenizer<'a> {
     /// User source code.
     source: &'a str,
@@ -189,6 +197,9 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// Same as [`Tokenizer::tokenize`], but pre-allocates the output `Vec` with
+    /// capacity `n` instead of estimating it from `source`'s length. Lets
+    /// benchmarks isolate tokenization time from allocation growth.
     #[cfg(feature = "bench-support")]
     pub(crate) fn tokenize_with_cap(&mut self, n: usize) -> Vec<Token> {
         let mut tokens = Vec::with_capacity(n);
@@ -204,6 +215,8 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
+/// Tokenizes `source` and returns the token count, for use by the `tokenizer` benchmark.
+/// `cap` is passed straight through to [`Tokenizer::tokenize_with_cap`].
 #[cfg(feature = "bench-support")]
 pub fn bench_tokenize(source: &str, ctx: &mut CompilerContext, cap: usize) -> usize {
     Tokenizer::new(source, ctx).tokenize_with_cap(cap).len()

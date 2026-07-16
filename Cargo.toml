@@ -1,6 +1,6 @@
 [package]
 name = "crawfish"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 
 [features]
@@ -9,7 +9,6 @@ bench-support = []
 [dependencies]
 ariadne = "0.4"
 divan = "0.1"
-ena = "0.14.4"
 inkwell = { version = "0.9.0", features = ["llvm22-1"] }
 soup = { git = "https://github.com/simontran7/soup" }
 

@@ -1,6 +1,8 @@
-use crate::common::span::Span;
 use ariadne::{Color, Label, Report, ReportKind, Source};
 
+use crate::common::span::Span;
+
+/// A syntax error raised while parsing tokens into an [`Ast`](crate::front_end::syntactic_analysis::ast::Ast).
 #[derive(Debug, Clone)]
 pub(crate) enum SyntacticDiagnostic {
     InvalidTopLevelItem {
@@ -26,6 +28,7 @@ pub(crate) enum SyntacticDiagnostic {
 }
 
 impl SyntacticDiagnostic {
+    /// Renders this diagnostic to stderr, pointing at the offending span in `source`.
     pub(crate) fn report(&self, filename: &str, source: &str) {
         let report = match self {
             Self::UnexpectedToken {

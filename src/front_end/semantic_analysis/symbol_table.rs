@@ -7,6 +7,21 @@ use crate::front_end::semantic_analysis::hir::{BindingId, BindingKind};
 /// lowering. Pushed on [`SymbolTable::enter_scope`] and popped on
 /// [`SymbolTable::exit_scope`], following the lexical structure of the
 /// program: one scope per block, function body, and the top-level module.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut table = SymbolTable::new();
+/// table.enter_scope(ScopeKind::Normal);
+/// table.add_binding(x_symbol, x_local_binding_id).unwrap();
+///
+/// table.enter_scope(ScopeKind::FunctionBoundary);
+/// // `x` is a local from across a function boundary, so it's not visible here.
+/// assert!(table.find_binding(x_symbol).is_err());
+/// table.exit_scope();
+///
+/// assert_eq!(table.find_binding(x_symbol).unwrap(), x_local_binding_id);
+/// ```
 pub(crate) struct SymbolTable {
     scopes: Vec<Scope>,
 }

@@ -1,5 +1,7 @@
 use crate::common::context::CompilerContext;
-use crate::common::types::{InferTy, Ty, TypeId, TypeInterner};
+#[allow(unused_imports)] // only used by intra-doc links below, not by any code
+use crate::common::types::TypeInterner;
+use crate::common::types::{InferTy, Ty, TypeId};
 use crate::diagnostics::semantic_diagnostics::SemanticDiagnostic;
 use crate::front_end::semantic_analysis::constraints::{Constraint, Provenance};
 use crate::front_end::semantic_analysis::hir::{
@@ -669,12 +671,12 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// gives more information than inferring would:
     ///
     /// - Case 1: an [`ast::handles::ExpressionKind::IntegerLiteral`] checked against a
-    /// concrete integer type is lowered with that exact type rather than a
-    /// fresh [`InferTy::IntVar`]
+    ///   concrete integer type is lowered with that exact type rather than a
+    ///   fresh [`InferTy::IntVar`]
     /// - Case 2: an [`ast::handles::ExpressionKind::BinaryOperation`] with an arithmetic operator
-    /// checks both operands against `ty` directly (e.g. `1 + 2` checked
-    /// against `u8` lowers both literals as `u8` rather than unifying two
-    /// separate [`InferTy::IntVar`]s)
+    ///   checks both operands against `ty` directly (e.g. `1 + 2` checked
+    ///   against `u8` lowers both literals as `u8` rather than unifying two
+    ///   separate [`InferTy::IntVar`]s)
     fn check(&mut self, id: ast::handles::ExpressionId, ty: TypeId) -> ExpressionId {
         match (id.kind(), self.ctx.type_interner.resolve(ty).unwrap()) {
             (ast::handles::ExpressionKind::IntegerLiteral, Ty::Signed(_) | Ty::Unsigned(_)) => {

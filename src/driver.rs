@@ -6,7 +6,16 @@ use crate::front_end::semantic_analysis::semantic_analyzer::SemanticAnalyzer;
 use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;
 use crate::front_end::syntactic_analysis::parser::Parser;
 
-/// Compiles `source` named `filename`.
+/// Compiles `source` named `filename`, printing any diagnostics to stderr.
+///
+/// Runs lexical, syntactic, and semantic analysis in sequence, stopping (and
+/// reporting) at the first stage that fails.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// crawfish::driver::compile("example.crab", "func main() -> I32 { return 0; }");
+/// ```
 pub fn compile(filename: &str, source: &str) {
     let mut ctx = CompilerContext::new();
 
@@ -56,6 +65,8 @@ pub fn compile(filename: &str, source: &str) {
     };
 }
 
+/// Type-checks a source file without generating code, reporting diagnostics
+/// but not compiling further. Unimplemented.
 pub fn check() {
     todo!()
 }

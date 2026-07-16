@@ -1,4 +1,4 @@
-use soup::handle_map::{Handle, ReservedValue};
+use soup::handle_map::Handle;
 
 soup::handle_impl!(pub(crate) ValueId);
 
@@ -23,6 +23,15 @@ soup::handle_impl!(pub(crate) ValueId);
 /// There is no generation counter or other mechanism to detect this. The caller is
 /// responsible for ensuring that at most one live handle refers to any given allocation
 /// at any time.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut allocator = ValueListAllocator::new();
+/// let mut list = ValueList::from(&mut allocator, &[ValueId::new(1), ValueId::new(2)]);
+/// list.add_last(&mut allocator, ValueId::new(3));
+/// assert_eq!(list.to_slice(&allocator), &[ValueId::new(1), ValueId::new(2), ValueId::new(3)]);
+/// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ValueList {
     pub(super) start: u32,
@@ -233,7 +242,7 @@ impl ValueListAllocator {
         } else {
             let header_idx = self.data.len();
             self.data
-                .resize(header_idx + size_class.capacity(), ValueId::reserved());
+                .resize(header_idx + size_class.capacity(), ValueId::new(0));
             header_idx
         }
     }

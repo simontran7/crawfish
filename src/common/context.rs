@@ -8,6 +8,7 @@ pub struct CompilerContext {
 }
 
 impl CompilerContext {
+    /// Creates and returns a new `CompilerContext` with fresh, empty interners.
     pub fn new() -> Self {
         Self {
             string_interner: StringInterner::new(),

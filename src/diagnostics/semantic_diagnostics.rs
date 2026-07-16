@@ -1,6 +1,8 @@
-use crate::common::span::Span;
 use ariadne::{Color, Label, Report, ReportKind, Source};
 
+use crate::common::span::Span;
+
+/// A type or name-resolution error raised during semantic analysis.
 #[derive(Debug, Clone)]
 pub(crate) enum SemanticDiagnostic {
     TypeMismatch {
@@ -87,6 +89,7 @@ pub(crate) enum SemanticDiagnostic {
 }
 
 impl SemanticDiagnostic {
+    /// Renders this diagnostic to stderr, pointing at the offending span(s) in `source`.
     pub(crate) fn report(&self, filename: &str, source: &str) {
         let report = match self {
             Self::TypeMismatch {

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::common::string_interner::{StringInterner, Symbol};
 use crate::front_end::semantic_analysis::unification_table::{IntVarId, TypeVarId};
+
 /// A type, interned as a [`TypeId`] by [`TypeInterner`].
 ///
 /// `Infer` variants are placeholders used during type inference, before
@@ -35,12 +36,14 @@ pub(crate) enum Ty {
     Error,
 }
 
+/// A fixed-width signed integer type.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug)]
 pub(crate) enum SignedIntTy {
     I32,
     I64,
 }
 
+/// A fixed-width unsigned integer type.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug)]
 pub(crate) enum UnsignedIntTy {
     U32,

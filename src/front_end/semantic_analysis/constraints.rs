@@ -41,7 +41,7 @@ pub(crate) enum Provenance {
 /// [`UnificationTable`] before comparing them, and unifies them if exactly
 /// one side is still an unresolved variable.
 ///
-/// [`InferTy`]: crate::front_end::semantic_analysis::types::InferTy
+/// [`InferTy`]: crate::common::types::InferTy
 /// [`UnificationTable`]: crate::front_end::semantic_analysis::unification_table::UnificationTable
 pub(crate) enum Constraint {
     Equality {

@@ -74,6 +74,7 @@ pub(crate) struct Ast {
 }
 
 impl Ast {
+    /// Creates a new, empty `Ast` for a source file of `source_size` bytes.
     pub(crate) fn new(source_size: usize) -> Self {
         Self {
             source_file: SourceFileNode {
@@ -239,6 +240,7 @@ impl Ast {
         })
     }
 
+    /// Adds a [`ConstantDefinitionNode`] and returns a handle to it.
     pub(crate) fn add_constant_definition(
         &mut self,
         name: IdentifierId,
@@ -254,10 +256,12 @@ impl Ast {
         })
     }
 
+    /// Adds an [`ErrorItemNode`] and returns a handle to it.
     pub(crate) fn add_erroneous_item(&mut self, span: Span) -> ErrorItemId {
         self.erroneous_items.add(ErrorItemNode { span })
     }
 
+    /// Adds an [`ExpressionStatementNode`] and returns a handle to it.
     pub(crate) fn add_expression_statement(
         &mut self,
         expression: ExpressionId,
@@ -271,10 +275,12 @@ impl Ast {
         })
     }
 
+    /// Adds an [`ItemStatementNode`] and returns a handle to it.
     pub(crate) fn add_item_statement(&mut self, item: ItemId, span: Span) -> ItemStatementId {
         self.item_statements.add(ItemStatementNode { item, span })
     }
 
+    /// Adds a [`LetStatementNode`] and returns a handle to it.
     pub(crate) fn add_let_statement(
         &mut self,
         name: PatternId,
@@ -292,28 +298,34 @@ impl Ast {
         })
     }
 
+    /// Adds an [`ErrorStatementNode`] and returns a handle to it.
     pub(crate) fn add_erroneous_statement(&mut self, span: Span) -> ErrorStatementId {
         self.erroneous_statements.add(ErrorStatementNode { span })
     }
 
+    /// Adds a [`UnitLiteralNode`] and returns a handle to it.
     pub(crate) fn add_unit_literal(&mut self, span: Span) -> UnitLiteralId {
         self.unit_literals.add(UnitLiteralNode { span })
     }
 
+    /// Adds an [`IntegerLiteralNode`] and returns a handle to it.
     pub(crate) fn add_integer_literal(&mut self, value: u128, span: Span) -> IntegerLiteralId {
         self.integer_literals
             .add(IntegerLiteralNode { value, span })
     }
 
+    /// Adds a [`BooleanLiteralNode`] and returns a handle to it.
     pub(crate) fn add_boolean_literal(&mut self, value: bool, span: Span) -> BooleanLiteralId {
         self.boolean_literals
             .add(BooleanLiteralNode { value, span })
     }
 
+    /// Adds a [`VariableNode`] and returns a handle to it.
     pub(crate) fn add_variable(&mut self, symbol: Symbol, span: Span) -> VariableId {
         self.variables.add(VariableNode { symbol, span })
     }
 
+    /// Adds a [`UnaryOperationNode`] and returns a handle to it.
     pub(crate) fn add_unary_operation(
         &mut self,
         operator: UnOp,
@@ -327,6 +339,7 @@ impl Ast {
         })
     }
 
+    /// Adds a [`BinaryOperationNode`] and returns a handle to it.
     pub(crate) fn add_binary_operation(
         &mut self,
         operator: BinOp,
@@ -342,6 +355,7 @@ impl Ast {
         })
     }
 
+    /// Adds an [`IfExpressionNode`] and returns a handle to it.
     pub(crate) fn add_if_expression(
         &mut self,
         condition: ExpressionId,
@@ -397,6 +411,7 @@ impl Ast {
         })
     }
 
+    /// Adds an [`AssignNode`] and returns a handle to it.
     pub(crate) fn add_assign(
         &mut self,
         target: ExpressionId,
@@ -410,14 +425,17 @@ impl Ast {
         })
     }
 
+    /// Adds a [`ReturnNode`] and returns a handle to it.
     pub(crate) fn add_return(&mut self, value: Option<ExpressionId>, span: Span) -> ReturnId {
         self.returns.add(ReturnNode { value, span })
     }
 
+    /// Adds an [`ErrorExpressionNode`] and returns a handle to it.
     pub(crate) fn add_erroneous_expression(&mut self, span: Span) -> ErrorExpressionId {
         self.erroneous_expressions.add(ErrorExpressionNode { span })
     }
 
+    /// Adds a [`ValidParameterNode`] and returns a handle to it.
     pub(crate) fn add_valid_parameter(
         &mut self,
         name: IdentifierId,
@@ -433,19 +451,23 @@ impl Ast {
         })
     }
 
+    /// Adds an [`ErrorParameterNode`] and returns a handle to it.
     pub(crate) fn add_erroneous_parameter(&mut self, span: Span) -> ErrorParameterId {
         self.erroneous_parameters.add(ErrorParameterNode { span })
     }
 
+    /// Adds a [`ValidIdentifierNode`] and returns a handle to it.
     pub(crate) fn add_valid_identifier(&mut self, symbol: Symbol, span: Span) -> ValidIdentifierId {
         self.valid_identifiers
             .add(ValidIdentifierNode { symbol, span })
     }
 
+    /// Adds an [`ErrorIdentifierNode`] and returns a handle to it.
     pub(crate) fn add_erroneous_identifier(&mut self, span: Span) -> ErrorIdentifierId {
         self.erroneous_identifiers.add(ErrorIdentifierNode { span })
     }
 
+    /// Adds a [`NamedTypeAnnotationNode`] and returns a handle to it.
     pub(crate) fn add_named_type_annotation(
         &mut self,
         name: IdentifierId,
@@ -455,11 +477,13 @@ impl Ast {
             .add(NamedTypeAnnotationNode { name, span })
     }
 
+    /// Adds an [`ErrorTypeAnnotationNode`] and returns a handle to it.
     pub(crate) fn add_erroneous_type_annotation(&mut self, span: Span) -> ErrorTypeAnnotationId {
         self.erroneous_type_annotations
             .add(ErrorTypeAnnotationNode { span })
     }
 
+    /// Adds an [`IdentifierPatternNode`] and returns a handle to it.
     pub(crate) fn add_identifier_pattern(
         &mut self,
         name: IdentifierId,
@@ -469,6 +493,7 @@ impl Ast {
             .add(IdentifierPatternNode { name, span })
     }
 
+    /// Adds an [`ErrorPatternNode`] and returns a handle to it.
     pub(crate) fn add_erroneous_pattern(&mut self, span: Span) -> ErrorPatternId {
         self.erroneous_patterns.add(ErrorPatternNode { span })
     }

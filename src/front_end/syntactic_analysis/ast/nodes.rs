@@ -252,32 +252,6 @@ pub(crate) enum BinOp {
     Or,
 }
 
-impl fmt::Display for UnOp {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Self::Neg => write!(f, "-"),
-            Self::Not => write!(f, "not"),
-        }
-    }
-}
-
-impl fmt::Display for BinOp {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Self::Add => write!(f, "+"),
-            Self::Sub => write!(f, "-"),
-            Self::Mul => write!(f, "*"),
-            Self::Div => write!(f, "/"),
-            Self::Eq => write!(f, "=="),
-            Self::Ne => write!(f, "!="),
-            Self::Lt => write!(f, "<"),
-            Self::Gt => write!(f, ">"),
-            Self::And => write!(f, "and"),
-            Self::Or => write!(f, "or"),
-        }
-    }
-}
-
 impl UnOp {
     /// Converts a prefix operator token to a `UnOp`. Panics if `kind` is not
     /// `LogicalNot` or `Minus`; callers are expected to dispatch on
@@ -308,6 +282,32 @@ impl BinOp {
             TokenKind::LogicalAnd => Self::And,
             TokenKind::LogicalOr => Self::Or,
             _ => panic!("Token should be a binary operator"),
+        }
+    }
+}
+
+impl fmt::Display for UnOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Self::Neg => write!(f, "-"),
+            Self::Not => write!(f, "not"),
+        }
+    }
+}
+
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Self::Add => write!(f, "+"),
+            Self::Sub => write!(f, "-"),
+            Self::Mul => write!(f, "*"),
+            Self::Div => write!(f, "/"),
+            Self::Eq => write!(f, "=="),
+            Self::Ne => write!(f, "!="),
+            Self::Lt => write!(f, "<"),
+            Self::Gt => write!(f, ">"),
+            Self::And => write!(f, "and"),
+            Self::Or => write!(f, "or"),
         }
     }
 }

@@ -2,20 +2,38 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+/// A parsed CLI invocation, returned by [`parse_args`].
 pub enum Command {
+    /// Compile the source file at this path.
     Compile(PathBuf),
+    /// Print usage information (`-h`/`--help`).
     Help,
+    /// Print the compiler's version (`-v`/`--version`).
     Version,
 }
 
+/// An error encountered while parsing command-line arguments.
 #[derive(Debug)]
 pub enum CLIError {
+    /// The given path does not point to an existing file.
     InvalidFilePath(String),
+    /// The given file does not have a `.crw` extension.
     InvalidFileExtension,
+    /// The first argument isn't a recognized command or flag.
     InvalidCommand(String),
+    /// A required argument (e.g. the source path for `compile`) was not given.
     MissingArgument,
 }
 
+/// Parses `args` (as received from [`std::env::args`], including the
+/// program name at index 0) into a [`Command`].
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let args: Vec<String> = vec!["crawfish".into(), "compile".into(), "main.crw".into()];
+/// let command = parse_args(&args).unwrap();
+/// ```
 pub fn parse_args(args: &[String]) -> Result<Command, CLIError> {
     let mut args_iter = args.iter().skip(1);
     let command = args_iter.next().ok_or(CLIError::MissingArgument)?;

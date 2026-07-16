@@ -1,7 +1,6 @@
 use std::slice;
 
 use soup::handle_map::HandleMap;
-use soup::handle_map::PackedOption;
 use soup::handle_map::SideHandleMap;
 
 use crate::common::span::Span;
@@ -32,6 +31,25 @@ pub(crate) struct Function {
 ///
 /// Block1(v5: i32): ← v5 receives v4 from predecessor
 ///     Return v5
+/// ```
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut cfg = Cfg::new();
+/// let block = cfg.create_block();
+/// cfg.append_block(block);
+///
+/// let lhs = cfg.get_block_mut(block).append_parameter(i32_ty);
+/// let rhs = cfg.get_block_mut(block).append_parameter(i32_ty);
+/// let sum_instruction = cfg.get_block_mut(block).append_instruction(
+///     Instruction::Binary { operator: BinOp::Add, args: [lhs, rhs] },
+///     &[i32_ty],
+/// );
+///
+/// let sum = cfg.get_instruction(sum_instruction).first_result().unwrap();
+/// let ret = cfg.new_return(&[sum]);
+/// cfg.get_block_mut(block).set_terminator(ret);
 /// ```
 pub(crate) struct Cfg {
     dfg: DataFlowGraph,
@@ -142,26 +160,31 @@ soup::handle_impl!(pub(crate) InstructionId);
 soup::handle_impl!(pub(crate) FunctionReferenceId);
 soup::handle_impl!(pub(crate) SignatureId);
 
+/// A read-only view over a block, returned by [`Cfg::get_block`].
 pub(crate) struct BlockView<'a> {
     block_id: BlockId,
     cfg: &'a Cfg,
 }
 
+/// A mutable view over a block, returned by [`Cfg::get_block_mut`].
 pub(crate) struct BlockViewMut<'a> {
     block_id: BlockId,
     cfg: &'a mut Cfg,
 }
 
+/// A read-only view over an instruction, returned by [`Cfg::get_instruction`].
 pub(crate) struct InstructionView<'a> {
     instruction_id: InstructionId,
     cfg: &'a Cfg,
 }
 
+/// A mutable view over an instruction, returned by [`Cfg::get_instruction_mut`].
 pub(crate) struct InstructionViewMut<'a> {
     instruction_id: InstructionId,
     cfg: &'a mut Cfg,
 }
 
+/// A read-only view over a value, returned by [`Cfg::get_value`].
 pub(crate) struct ValueView<'a> {
     value_id: ValueId,
     cfg: &'a Cfg,
@@ -177,11 +200,13 @@ pub(crate) enum UsedValuesIter<'a> {
     },
 }
 
+/// Iterator over a `Cfg`'s blocks in layout order, returned by [`Cfg::blocks`].
 pub(crate) struct BlockIter<'a> {
     layout: &'a Layout,
     next: Option<BlockId>,
 }
 
+/// Iterator over a block's instructions in layout order, returned by [`BlockView::instructions`].
 pub(crate) struct InstructionIter<'a> {
     layout: &'a Layout,
     next: Option<InstructionId>,
@@ -229,21 +254,21 @@ struct Layout {
 // Clone: required by `SideHandleMap::add` for resize padding
 #[derive(Clone, Default)]
 struct BlockNode {
-    prev: PackedOption<BlockId>,
-    first_instruction: PackedOption<InstructionId>,
-    last_instruction: PackedOption<InstructionId>,
-    next: PackedOption<BlockId>,
+    prev: Option<BlockId>,
+    first_instruction: Option<InstructionId>,
+    last_instruction: Option<InstructionId>,
+    next: Option<BlockId>,
 }
 
 /// Linked-list node for [`Layout`]'s instruction ordering within a block.
 // Clone: required by `SideHandleMap::add` for resize padding
 #[derive(Clone, Default)]
 struct InstructionNode {
-    prev: PackedOption<InstructionId>,
+    prev: Option<InstructionId>,
     /// `None` if the instruction has been removed from the layout (its DFG data
     /// remains valid, but it is no longer reachable via layout traversal).
-    block: PackedOption<BlockId>,
-    next: PackedOption<InstructionId>,
+    block: Option<BlockId>,
+    next: Option<InstructionId>,
 }
 
 impl Function {
@@ -335,14 +360,14 @@ impl Cfg {
             "cannot append a block that is already in the cfg"
         );
         let node = BlockNode {
-            prev: self.layout.exit.into(),
-            next: None.into(),
-            first_instruction: None.into(),
-            last_instruction: None.into(),
+            prev: self.layout.exit,
+            next: None,
+            first_instruction: None,
+            last_instruction: None,
         };
         self.layout.blocks.add(block_id, node);
         if let Some(exit) = self.layout.exit {
-            self.layout.blocks[exit].next = block_id.into();
+            self.layout.blocks[exit].next = Some(block_id);
         } else {
             self.layout.entry = Some(block_id);
         }
@@ -359,18 +384,18 @@ impl Cfg {
             self.is_block_linked(before),
             "block insertion point is not in the cfg"
         );
+        let old_prev = self.layout.blocks[before].prev;
         let node = BlockNode {
-            prev: self.layout.blocks[before].prev,
-            next: before.into(),
-            first_instruction: None.into(),
-            last_instruction: None.into(),
+            prev: old_prev,
+            next: Some(before),
+            first_instruction: None,
+            last_instruction: None,
         };
         self.layout.blocks.add(block_id, node);
-        self.layout.blocks[before].prev = block_id.into();
-        if let Some(before_before_id) = self.layout.blocks[before].prev.expand() {
-            self.layout.blocks[before_before_id].next = block_id.into();
-        } else {
-            self.layout.entry = Some(block_id);
+        self.layout.blocks[before].prev = Some(block_id);
+        match old_prev {
+            Some(before_before_id) => self.layout.blocks[before_before_id].next = Some(block_id),
+            None => self.layout.entry = Some(block_id),
         }
     }
 
@@ -386,16 +411,16 @@ impl Cfg {
         );
         let before = self.layout.blocks[after].next;
         let node = BlockNode {
-            prev: after.into(),
+            prev: Some(after),
             next: before,
-            first_instruction: None.into(),
-            last_instruction: None.into(),
+            first_instruction: None,
+            last_instruction: None,
         };
         self.layout.blocks.add(block_id, node);
-        self.layout.blocks[after].next = block_id.into();
-        match before.expand() {
+        self.layout.blocks[after].next = Some(block_id);
+        match before {
             None => self.layout.exit = Some(block_id),
-            Some(b) => self.layout.blocks[b].prev = block_id.into(),
+            Some(b) => self.layout.blocks[b].prev = Some(block_id),
         }
     }
 
@@ -411,14 +436,14 @@ impl Cfg {
         );
         let prev = self.layout.blocks[block_id].prev;
         let next = self.layout.blocks[block_id].next;
-        self.layout.blocks[block_id].prev = None.into();
-        self.layout.blocks[block_id].next = None.into();
-        match prev.expand() {
-            None => self.layout.entry = next.expand(),
+        self.layout.blocks[block_id].prev = None;
+        self.layout.blocks[block_id].next = None;
+        match prev {
+            None => self.layout.entry = next,
             Some(p) => self.layout.blocks[p].next = next,
         }
-        match next.expand() {
-            None => self.layout.exit = prev.expand(),
+        match next {
+            None => self.layout.exit = prev,
             Some(n) => self.layout.blocks[n].prev = prev,
         }
     }
@@ -429,7 +454,7 @@ impl Cfg {
             self.is_block_linked(block_id),
             "block pointed by `block_id` is not in the cfg"
         );
-        while let Some(instruction_id) = self.layout.blocks[block_id].first_instruction.expand() {
+        while let Some(instruction_id) = self.layout.blocks[block_id].first_instruction {
             self.remove_instruction(instruction_id);
         }
     }
@@ -482,16 +507,16 @@ impl Cfg {
     fn link_instruction_to_block(&mut self, block_id: BlockId, instruction_id: InstructionId) {
         let prev = self.layout.blocks[block_id].last_instruction;
         let node = InstructionNode {
-            block: block_id.into(),
+            block: Some(block_id),
             prev,
-            next: None.into(),
+            next: None,
         };
         self.layout.instructions.add(instruction_id, node);
-        match prev.expand() {
-            Some(prev) => self.layout.instructions[prev].next = instruction_id.into(),
-            None => self.layout.blocks[block_id].first_instruction = instruction_id.into(),
+        match prev {
+            Some(prev) => self.layout.instructions[prev].next = Some(instruction_id),
+            None => self.layout.blocks[block_id].first_instruction = Some(instruction_id),
         }
-        self.layout.blocks[block_id].last_instruction = instruction_id.into();
+        self.layout.blocks[block_id].last_instruction = Some(instruction_id);
     }
 
     /// Inserts `instruction` immediately before `before` (in `before`'s block), allocating
@@ -506,24 +531,25 @@ impl Cfg {
 
         let block_id = self.layout.instructions[before]
             .block
-            .expand()
             .expect("instruction insertion point is not in the cfg");
+
+        let old_prev = self.layout.instructions[before].prev;
 
         self.layout.instructions.add(
             instruction_id,
             InstructionNode {
-                block: block_id.into(),
-                prev: self.layout.instructions[before].prev,
-                next: before.into(),
+                block: Some(block_id),
+                prev: old_prev,
+                next: Some(before),
             },
         );
 
-        self.layout.instructions[before].prev = instruction_id.into();
+        self.layout.instructions[before].prev = Some(instruction_id);
 
-        match self.layout.instructions[before].prev.expand() {
-            None => self.layout.blocks[block_id].first_instruction = instruction_id.into(),
+        match old_prev {
+            None => self.layout.blocks[block_id].first_instruction = Some(instruction_id),
             Some(before_prev_id) => {
-                self.layout.instructions[before_prev_id].next = instruction_id.into()
+                self.layout.instructions[before_prev_id].next = Some(instruction_id)
             }
         }
 
@@ -536,21 +562,20 @@ impl Cfg {
     pub(crate) fn remove_instruction(&mut self, instruction_id: InstructionId) {
         let block_id = self.layout.instructions[instruction_id]
             .block
-            .expand()
             .expect("instruction is not in the cfg");
 
         let old_prev = self.layout.instructions[instruction_id].prev;
         let old_next = self.layout.instructions[instruction_id].next;
 
-        self.layout.instructions[instruction_id].block = None.into();
-        self.layout.instructions[instruction_id].prev = None.into();
-        self.layout.instructions[instruction_id].next = None.into();
+        self.layout.instructions[instruction_id].block = None;
+        self.layout.instructions[instruction_id].prev = None;
+        self.layout.instructions[instruction_id].next = None;
 
-        match old_prev.expand() {
+        match old_prev {
             None => self.layout.blocks[block_id].first_instruction = old_next,
             Some(old_prev_id) => self.layout.instructions[old_prev_id].next = old_next,
         }
-        match old_next.expand() {
+        match old_next {
             None => self.layout.blocks[block_id].last_instruction = old_prev,
             Some(old_next_id) => self.layout.instructions[old_next_id].prev = old_prev,
         }
@@ -566,39 +591,38 @@ impl Cfg {
 
         let old_block_id = self.layout.instructions[partition_point]
             .block
-            .expand()
             .expect("split point instruction is not in the cfg");
 
         self.layout.blocks.add(
             new_block_id,
             BlockNode {
-                prev: old_block_id.into(),
+                prev: Some(old_block_id),
                 next: self.layout.blocks[old_block_id].next,
-                first_instruction: partition_point.into(),
+                first_instruction: Some(partition_point),
                 last_instruction: self.layout.blocks[old_block_id].last_instruction,
             },
         );
 
         let old_next = self.layout.blocks[old_block_id].next;
-        self.layout.blocks[old_block_id].next = new_block_id.into();
-        match old_next.expand() {
+        self.layout.blocks[old_block_id].next = Some(new_block_id);
+        match old_next {
             None => self.layout.exit = Some(new_block_id),
-            Some(old_next_id) => self.layout.blocks[old_next_id].prev = new_block_id.into(),
+            Some(old_next_id) => self.layout.blocks[old_next_id].prev = Some(new_block_id),
         }
 
         let before_partition_id = self.layout.instructions[partition_point].prev;
-        self.layout.instructions[partition_point].prev = None.into();
+        self.layout.instructions[partition_point].prev = None;
         self.layout.blocks[old_block_id].last_instruction = before_partition_id;
 
-        match before_partition_id.expand() {
-            None => self.layout.blocks[old_block_id].first_instruction = None.into(),
-            Some(instruction_id) => self.layout.instructions[instruction_id].next = None.into(),
+        match before_partition_id {
+            None => self.layout.blocks[old_block_id].first_instruction = None,
+            Some(instruction_id) => self.layout.instructions[instruction_id].next = None,
         }
 
         let mut current = Some(partition_point);
         while let Some(instruction_id) = current {
-            self.layout.instructions[instruction_id].block = new_block_id.into();
-            current = self.layout.instructions[instruction_id].next.expand();
+            self.layout.instructions[instruction_id].block = Some(new_block_id);
+            current = self.layout.instructions[instruction_id].next;
         }
     }
 
@@ -833,36 +857,30 @@ impl<'a> BlockView<'a> {
 
     /// Returns the block that follows this one in layout order, or `None` if this is the last block.
     pub(crate) fn next(&self) -> Option<BlockId> {
-        self.cfg.layout.blocks[self.block_id].next.expand()
+        self.cfg.layout.blocks[self.block_id].next
     }
 
     /// Returns the block that precedes this one in layout order, or `None` if this is the first block.
     pub(crate) fn prev(&self) -> Option<BlockId> {
-        self.cfg.layout.blocks[self.block_id].prev.expand()
+        self.cfg.layout.blocks[self.block_id].prev
     }
 
     /// Returns an iterator over all instructions in this block in layout order.
     pub(crate) fn instructions(&self) -> InstructionIter<'a> {
         InstructionIter {
             layout: &self.cfg.layout,
-            next: self.cfg.layout.blocks[self.block_id]
-                .first_instruction
-                .expand(),
+            next: self.cfg.layout.blocks[self.block_id].first_instruction,
         }
     }
 
     /// Returns the first instruction in this block, or `None` if the block is empty.
     pub(crate) fn first_instruction(&self) -> Option<InstructionId> {
-        self.cfg.layout.blocks[self.block_id]
-            .first_instruction
-            .expand()
+        self.cfg.layout.blocks[self.block_id].first_instruction
     }
 
     /// Returns the last instruction in this block, or `None` if the block is empty.
     pub(crate) fn last_instruction(&self) -> Option<InstructionId> {
-        self.cfg.layout.blocks[self.block_id]
-            .last_instruction
-            .expand()
+        self.cfg.layout.blocks[self.block_id].last_instruction
     }
 
     /// Returns the block's parameters as a slice.
@@ -960,16 +978,12 @@ impl<'a> InstructionView<'a> {
 
     /// Returns the instruction that follows this one in its block, or `None` if this is the block's last instruction.
     pub(crate) fn next(&self) -> Option<InstructionId> {
-        self.cfg.layout.instructions[self.instruction_id]
-            .next
-            .expand()
+        self.cfg.layout.instructions[self.instruction_id].next
     }
 
     /// Returns the instruction that precedes this one in its block, or `None` if this is the block's first instruction.
     pub(crate) fn prev(&self) -> Option<InstructionId> {
-        self.cfg.layout.instructions[self.instruction_id]
-            .prev
-            .expand()
+        self.cfg.layout.instructions[self.instruction_id].prev
     }
 
     /// Returns the instruction's value operands as a slice.
@@ -1001,9 +1015,7 @@ impl<'a> InstructionView<'a> {
     /// Returns the block that contains this instruction, or `None` if it has been
     /// removed from the layout.
     pub(crate) fn containing_block(&self) -> Option<BlockId> {
-        self.cfg.layout.instructions[self.instruction_id]
-            .block
-            .expand()
+        self.cfg.layout.instructions[self.instruction_id].block
     }
 
     /// Returns an iterator over every value this instruction references.
@@ -1087,7 +1099,7 @@ impl Iterator for BlockIter<'_> {
     type Item = BlockId;
     fn next(&mut self) -> Option<BlockId> {
         let block = self.next?;
-        self.next = self.layout.blocks[block].next.expand();
+        self.next = self.layout.blocks[block].next;
         Some(block)
     }
 }
@@ -1096,7 +1108,7 @@ impl Iterator for InstructionIter<'_> {
     type Item = InstructionId;
     fn next(&mut self) -> Option<InstructionId> {
         let inst = self.next?;
-        self.next = self.layout.instructions[inst].next.expand();
+        self.next = self.layout.instructions[inst].next;
         Some(inst)
     }
 }
@@ -1125,5 +1137,79 @@ impl Layout {
             blocks: SideHandleMap::new(),
             instructions: SideHandleMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_block_before_entry_updates_entry() {
+        let mut cfg = Cfg::new();
+        let a = cfg.create_block();
+        cfg.append_block(a);
+
+        let b = cfg.create_block();
+        cfg.add_block_before(b, a);
+
+        // `b` is now the entry, and `a`'s prev is `b`.
+        assert_eq!(cfg.entry().unwrap().id(), b);
+        assert_eq!(cfg.get_block(a).prev(), Some(b));
+        assert_eq!(cfg.get_block(b).next(), Some(a));
+        assert_eq!(cfg.get_block(b).prev(), None);
+    }
+
+    #[test]
+    fn add_block_before_middle_updates_middle_predecessor() {
+        let mut cfg = Cfg::new();
+        let a = cfg.create_block();
+        cfg.append_block(a);
+        let c = cfg.create_block();
+        cfg.append_block(c);
+
+        let b = cfg.create_block();
+        cfg.add_block_before(b, c);
+
+        // entry is unchanged; `a`'s next must now point at `b`, not `c`.
+        assert_eq!(cfg.entry().unwrap().id(), a);
+        assert_eq!(cfg.get_block(a).next(), Some(b));
+        assert_eq!(cfg.get_block(b).prev(), Some(a));
+        assert_eq!(cfg.get_block(b).next(), Some(c));
+        assert_eq!(cfg.get_block(c).prev(), Some(b));
+    }
+
+    #[test]
+    fn add_instruction_before_first_updates_block_head() {
+        let mut cfg = Cfg::new();
+        let block = cfg.create_block();
+        cfg.append_block(block);
+        let first = cfg
+            .get_block_mut(block)
+            .append_instruction(Instruction::Unreachable, &[]);
+
+        let new_first = cfg.add_instruction_before(Instruction::Unreachable, &[], first);
+
+        assert_eq!(cfg.get_block(block).first_instruction(), Some(new_first));
+        assert_eq!(cfg.get_instruction(first).prev(), Some(new_first));
+        assert_eq!(cfg.get_instruction(new_first).next(), Some(first));
+    }
+
+    #[test]
+    fn add_instruction_before_middle_updates_middle_predecessor() {
+        let mut cfg = Cfg::new();
+        let block = cfg.create_block();
+        cfg.append_block(block);
+        let mut view = cfg.get_block_mut(block);
+        let first = view.append_instruction(Instruction::Unreachable, &[]);
+        let third = view.append_instruction(Instruction::Unreachable, &[]);
+
+        let second = cfg.add_instruction_before(Instruction::Unreachable, &[], third);
+
+        assert_eq!(cfg.get_block(block).first_instruction(), Some(first));
+        assert_eq!(cfg.get_instruction(first).next(), Some(second));
+        assert_eq!(cfg.get_instruction(second).prev(), Some(first));
+        assert_eq!(cfg.get_instruction(second).next(), Some(third));
+        assert_eq!(cfg.get_instruction(third).prev(), Some(second));
     }
 }

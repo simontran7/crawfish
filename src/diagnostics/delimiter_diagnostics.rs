@@ -1,6 +1,6 @@
-use crate::{common::span::Span, front_end::lexical_analysis::token::TokenKind};
-
 use ariadne::{Color, Label, Report, ReportKind, Source};
+
+use crate::{common::span::Span, front_end::lexical_analysis::token::TokenKind};
 
 /// Possible delimiter errors encountered during token tree construction.
 #[derive(Debug, Clone)]
@@ -19,6 +19,7 @@ pub(crate) enum DelimiterDiagnostic {
 }
 
 impl DelimiterDiagnostic {
+    /// Renders this diagnostic to stderr, pointing at the offending span(s) in `source`.
     pub(crate) fn report(&self, filename: &str, source: &str) {
         let report = match self {
             Self::Unclosed { span, expected } => {

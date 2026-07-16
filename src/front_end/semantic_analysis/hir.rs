@@ -442,6 +442,11 @@ impl BindingId {
         self.0 == u32::MAX
     }
 
+    /// Returns which table this handle indexes into.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this is [`BindingId::ERROR`].
     pub(crate) fn kind(self) -> BindingKind {
         assert!(!self.is_error(), "called `kind()` on an error BindingId");
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
@@ -450,11 +455,18 @@ impl BindingId {
         }
     }
 
+    /// Returns the index of the referenced binding within its table.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this is [`BindingId::ERROR`].
     pub(crate) fn index(self) -> usize {
         assert!(!self.is_error(), "called `index()` on an error BindingId");
         (self.0 & Self::INDEX_MASK) as usize
     }
 
+    /// Returns this handle as a [`LocalBindingId`], or `None` if it doesn't
+    /// refer to a local binding.
     pub(crate) fn as_local(self) -> Option<LocalBindingId> {
         if !self.is_error() && self.kind() == BindingKind::Local {
             Some(LocalBindingId::new(self.index()))
@@ -463,6 +475,8 @@ impl BindingId {
         }
     }
 
+    /// Returns this handle as an [`ItemBindingId`], or `None` if it doesn't
+    /// refer to an item binding.
     pub(crate) fn as_item(self) -> Option<ItemBindingId> {
         if !self.is_error() && self.kind() == BindingKind::Item {
             Some(ItemBindingId::new(self.index()))

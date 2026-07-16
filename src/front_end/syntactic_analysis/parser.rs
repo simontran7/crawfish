@@ -23,6 +23,15 @@ use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 /// the rest of the source file. [`Parser::parse`] only returns `Err` (the
 /// full diagnostic list, discarding the partial [`Ast`]) if at least one
 /// such error was recorded.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let ctx = CompilerContext::new();
+/// let tokens = Tokenizer::new(source, &mut ctx).tokenize();
+/// let token_trees = TokenTreeParser::new(tokens).parse().unwrap();
+/// let ast = Parser::new(source, &token_trees, &ctx).parse().unwrap();
+/// ```
 pub(crate) struct Parser<'a> {
     cursor: Cursor<'a>,
     errors: Vec<SyntacticDiagnostic>,
@@ -478,7 +487,7 @@ impl<'a> Parser<'a> {
     ///
     /// After parsing all statements via [`Parser::parse_block_statements`],
     /// the last statement is reinterpreted as the block's tail expression
-    /// if it's an [`crate::front_end::syntactic_analysis::ast::ExpressionStatementNode`]
+    /// if it's an [`crate::front_end::syntactic_analysis::ast::nodes::ExpressionStatementNode`]
     /// without a trailing `;`: it's popped off `statements` and its
     /// expression becomes `tail`. A block with no tail expression evaluates
     /// to `()`.

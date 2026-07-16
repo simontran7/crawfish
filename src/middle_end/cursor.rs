@@ -7,15 +7,12 @@
 //! position-dependent dispatch to `Cfg`'s own insert/remove/split operations — the cursor
 //! adds no new capability, just position tracking on top of what `Cfg` already exposes.
 
-use crate::common::string_interner::Symbol;
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::mir::{
-    BlockId, BlockIter, BlockView, BlockViewMut, Cfg, FunctionReference, FunctionReferenceId,
-    Instruction, InstructionId, InstructionView, InstructionViewMut, Signature, SignatureId,
-    ValueView,
+    BlockId, BlockIter, BlockView, Cfg, FunctionReferenceId, Instruction, InstructionId,
 };
-use crate::middle_end::value_list::{ValueId, ValueList};
+use crate::middle_end::value_list::ValueId;
 
 /// The possible positions of a [`CfgCursor`] within a `Cfg`'s layout.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -33,6 +30,20 @@ pub(crate) enum CursorPosition {
 
 /// A cursor over a `Cfg`, tracking a position within its layout as instructions and blocks
 /// are inserted, removed, and navigated.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut cfg = Cfg::new();
+/// let mut cursor = CfgCursor::new(&mut cfg);
+/// let block = cursor.create_block();
+/// cursor.add_block(block);
+///
+/// let lhs = cursor.add_integer_literal(i32_ty, 1);
+/// let rhs = cursor.add_integer_literal(i32_ty, 2);
+/// let sum = cursor.add_binary(BinOp::Add, lhs, rhs, i32_ty);
+/// cursor.add_return(&[sum]);
+/// ```
 pub(crate) struct CfgCursor<'a> {
     position: CursorPosition,
     cfg: &'a mut Cfg,
@@ -393,182 +404,5 @@ impl<'a> CfgCursor<'a> {
     /// Builds and inserts an `Unreachable` instruction at the current position.
     pub(crate) fn add_unreachable(&mut self) -> InstructionId {
         self.add_instruction(Instruction::Unreachable, &[])
-    }
-
-    // Pass-throughs to `Cfg` for whatever isn't inherently position-relative — mirrors
-    // `CursorMut` re-exposing
-    // all of `LinkedList`'s own methods (`push_front`, `front`, ...) alongside its
-    // cursor-relative ones.
-
-    /// Creates and returns a handle to a basic block. See [`Cfg::create_block`].
-    pub(crate) fn create_block(&mut self) -> BlockId {
-        self.cfg.create_block()
-    }
-
-    /// Returns whether `block_id` is currently part of the layout. See [`Cfg::is_block_linked`].
-    pub(crate) fn is_block_linked(&self, block_id: BlockId) -> bool {
-        self.cfg.is_block_linked(block_id)
-    }
-
-    /// Appends `block_id` to the end of the layout. See [`Cfg::append_block`].
-    pub(crate) fn append_block(&mut self, block_id: BlockId) {
-        self.cfg.append_block(block_id);
-    }
-
-    /// Adds `block_id` immediately before `before`. See [`Cfg::add_block_before`].
-    pub(crate) fn add_block_before(&mut self, block_id: BlockId, before: BlockId) {
-        self.cfg.add_block_before(block_id, before);
-    }
-
-    /// Adds `block_id` immediately after `after`. See [`Cfg::add_block_after`].
-    pub(crate) fn add_block_after(&mut self, block_id: BlockId, after: BlockId) {
-        self.cfg.add_block_after(block_id, after);
-    }
-
-    /// Removes `block_id` from the layout. See [`Cfg::remove_block`].
-    pub(crate) fn remove_block(&mut self, block_id: BlockId) {
-        self.cfg.remove_block(block_id);
-    }
-
-    /// Removes every instruction from `block_id`, leaving it empty but still in the layout.
-    /// See [`Cfg::clear_block`].
-    pub(crate) fn clear_block(&mut self, block_id: BlockId) {
-        self.cfg.clear_block(block_id);
-    }
-
-    /// Returns a view over `block_id`. See [`Cfg::get_block`].
-    pub(crate) fn get_block(&self, block_id: BlockId) -> BlockView<'_> {
-        self.cfg.get_block(block_id)
-    }
-
-    /// Returns a mutable view over `block_id`. See [`Cfg::get_block_mut`].
-    pub(crate) fn get_block_mut(&mut self, block_id: BlockId) -> BlockViewMut<'_> {
-        self.cfg.get_block_mut(block_id)
-    }
-
-    /// Returns a view over `instruction_id`. See [`Cfg::get_instruction`].
-    pub(crate) fn get_instruction(&self, instruction_id: InstructionId) -> InstructionView<'_> {
-        self.cfg.get_instruction(instruction_id)
-    }
-
-    /// Returns a mutable view over `instruction_id`. See [`Cfg::get_instruction_mut`].
-    pub(crate) fn get_instruction_mut(
-        &mut self,
-        instruction_id: InstructionId,
-    ) -> InstructionViewMut<'_> {
-        self.cfg.get_instruction_mut(instruction_id)
-    }
-
-    /// Inserts `instruction` immediately before `before`. See [`Cfg::add_instruction_before`].
-    pub(crate) fn add_instruction_before(
-        &mut self,
-        instruction: Instruction,
-        result_tys: &[TypeId],
-        before: InstructionId,
-    ) -> InstructionId {
-        self.cfg
-            .add_instruction_before(instruction, result_tys, before)
-    }
-
-    /// Removes `instruction_id`, regardless of the cursor's current position.
-    /// See [`Cfg::remove_instruction`]. Named `_at` (rather than `remove_instruction`,
-    /// which already exists as the cursor-relative removal) since Rust can't
-    /// distinguish two methods by parameter list alone.
-    pub(crate) fn remove_instruction_at(&mut self, instruction_id: InstructionId) {
-        self.cfg.remove_instruction(instruction_id);
-    }
-
-    /// Appends `instruction` to `block_id`. See [`BlockViewMut::append_instruction`].
-    pub(crate) fn append_instruction(
-        &mut self,
-        block_id: BlockId,
-        instruction: Instruction,
-        result_tys: &[TypeId],
-    ) -> InstructionId {
-        self.cfg
-            .get_block_mut(block_id)
-            .append_instruction(instruction, result_tys)
-    }
-
-    /// Sets `block_id`'s terminator. See [`BlockViewMut::set_terminator`].
-    pub(crate) fn set_terminator(&mut self, block_id: BlockId, terminator: Instruction) {
-        self.cfg.get_block_mut(block_id).set_terminator(terminator);
-    }
-
-    /// Splits `before`'s block in two at `before`. See [`Cfg::split_block`].
-    pub(crate) fn split_block(&mut self, new_block_id: BlockId, before: InstructionId) {
-        self.cfg.split_block(new_block_id, before);
-    }
-
-    /// Appends a new parameter of type `ty` to `block_id`. See [`BlockViewMut::append_parameter`].
-    pub(crate) fn append_parameter(&mut self, block_id: BlockId, ty: TypeId) -> ValueId {
-        self.cfg.get_block_mut(block_id).append_parameter(ty)
-    }
-
-    /// Removes `block_id`'s parameter at `index` by swapping in the last one.
-    /// See [`BlockViewMut::swap_remove_parameter`].
-    pub(crate) fn swap_remove_parameter(&mut self, block_id: BlockId, index: usize) {
-        self.cfg
-            .get_block_mut(block_id)
-            .swap_remove_parameter(index);
-    }
-
-    /// Removes `block_id`'s parameter at `index`, preserving order.
-    /// See [`BlockViewMut::remove_parameter`].
-    pub(crate) fn remove_parameter(&mut self, block_id: BlockId, index: usize) {
-        self.cfg.get_block_mut(block_id).remove_parameter(index);
-    }
-
-    /// Detaches and returns all of `block_id`'s parameters. See [`BlockViewMut::detach_parameters`].
-    pub(crate) fn detach_parameters(&mut self, block_id: BlockId) -> ValueList {
-        self.cfg.get_block_mut(block_id).detach_parameters()
-    }
-
-    /// Returns a view over `value_id`. See [`Cfg::get_value`].
-    pub(crate) fn get_value(&self, value_id: ValueId) -> ValueView<'_> {
-        self.cfg.get_value(value_id)
-    }
-
-    /// Resolves `value_id` through any chain of aliases. See [`Cfg::resolve_aliases`].
-    pub(crate) fn resolve_aliases(&self, value_id: ValueId) -> ValueId {
-        self.cfg.resolve_aliases(value_id)
-    }
-
-    /// Redirects `dest` to behave as `src`. See [`Cfg::change_to_alias`].
-    pub(crate) fn change_to_alias(&mut self, dest: ValueId, src: ValueId) {
-        self.cfg.change_to_alias(dest, src);
-    }
-
-    /// Rewrites every use in the function to skip resolved alias chains. See [`Cfg::resolve_all_aliases`].
-    pub(crate) fn resolve_all_aliases(&mut self) {
-        self.cfg.resolve_all_aliases();
-    }
-
-    /// Registers `signature` and returns a handle to it. See [`Cfg::add_signature`].
-    pub(crate) fn add_signature(&mut self, signature: Signature) -> SignatureId {
-        self.cfg.add_signature(signature)
-    }
-
-    /// Returns `signature_id`'s data. See [`Cfg::get_signature`].
-    pub(crate) fn get_signature(&self, signature_id: SignatureId) -> &Signature {
-        self.cfg.get_signature(signature_id)
-    }
-
-    /// Registers a reference to a function named `name` with signature `signature`.
-    /// See [`Cfg::add_function_reference`].
-    pub(crate) fn add_function_reference(
-        &mut self,
-        name: Symbol,
-        signature: SignatureId,
-    ) -> FunctionReferenceId {
-        self.cfg.add_function_reference(name, signature)
-    }
-
-    /// Returns `function_reference_id`'s data. See [`Cfg::get_function_reference`].
-    pub(crate) fn get_function_reference(
-        &self,
-        function_reference_id: FunctionReferenceId,
-    ) -> &FunctionReference {
-        self.cfg.get_function_reference(function_reference_id)
     }
 }

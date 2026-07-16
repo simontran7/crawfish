@@ -18,7 +18,21 @@ soup::handle_impl!(pub(crate) IntVarId);
 /// integer types.
 ///
 /// [`Constraint`]: crate::front_end::semantic_analysis::constraints::Constraint
-/// [`Ty`]: crate::front_end::semantic_analysis::types::Ty
+/// [`Ty`]: crate::common::types::Ty
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut table = UnificationTable::new();
+/// let a = table.make_type_var_set();
+/// let b = table.make_type_var_set();
+/// table.union_type_vars(a, b);
+/// assert_eq!(table.find_type_var(a), table.find_type_var(b));
+///
+/// let root = table.find_type_var(a);
+/// table.set_concrete_type_var(root, i32_ty);
+/// assert_eq!(table.get_concrete_type_var(table.find_type_var(b)), Some(i32_ty));
+/// ```
 pub(crate) struct UnificationTable {
     type_var_parent: HandleMap<TypeVarId, TypeVarId>,
     type_var_rank: HandleMap<TypeVarId, u8>,

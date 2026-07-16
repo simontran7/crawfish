@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="170px" src="logo.png">
+  <img width="170px" src="docs/logo.png">
   <h1>crawfish</h1>
   <p>simple programming language for the layman</p>
 </div>

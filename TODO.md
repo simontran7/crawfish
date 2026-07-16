@@ -84,7 +84,7 @@ for block in function.cfg.blocks() {
 
 - [ ] switch away from explicit binding powers (https://www.scattered-thoughts.net/writing/better-operator-precedence/)
 - [ ] switch lossless syntax trees (https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html) and benchmark the AST (https://jhwlr.io/super-flat-ast/)
-- [ ] improve dumper's algorithm (https://blog.wybxc.cc/blog/pretty-printer-rustc/)
+- [ ] improve dumper's algorithm (https://giacomocavalieri.me/writing/gleam-rust-arenas#what-s-the-problem)
 
 ### Semantic Analysis
 
@@ -189,3 +189,4 @@ When the first `Ty` variant is defined with a `TypeId` field — most likely whe
 
 - [ ] user website
 - [ ] web playground
+- [ ] Add release binaries (https://github.com/andrewrk/poop/blob/main/.github/workflows/ci.yml)
