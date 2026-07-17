@@ -17,7 +17,7 @@ pub(crate) struct Function {
     pub(crate) source_locations: SideHandleMap<InstructionId, Span>,
 }
 
-/// The body of a single function: an SSA control-flow graph.
+/// The body of a single function.
 ///
 /// Internally split into a def-use graph ([`DataFlowGraph`]) that captures
 /// data dependencies, and a [`Layout`] that orders blocks and instructions.
