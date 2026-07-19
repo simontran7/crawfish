@@ -52,16 +52,6 @@ export PATH=$PATH:<path to the crawfish compiler executable>
 ## Usage
 
 ```
-crawfish compiler
-
-Usage:
-    crawfish [OPTIONS] <COMMAND> [ARGS...]
-
-Command:
-    compile <file>.crw            compile the current file
-
-Options:
-    -h, --help                    print possible commands
-    -v, --version                 print compiler version
+crawfish compile <file.crw 
 ```
 
