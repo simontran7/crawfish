@@ -265,6 +265,15 @@ impl UnOp {
     }
 }
 
+impl fmt::Display for UnOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Self::Neg => write!(f, "-"),
+            Self::Not => write!(f, "not"),
+        }
+    }
+}
+
 impl BinOp {
     /// Converts an infix operator token to a `BinOp`. Panics if `kind` is
     /// not one of the binary operator tokens; callers are expected to
@@ -282,15 +291,6 @@ impl BinOp {
             TokenKind::LogicalAnd => Self::And,
             TokenKind::LogicalOr => Self::Or,
             _ => panic!("Token should be a binary operator"),
-        }
-    }
-}
-
-impl fmt::Display for UnOp {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Self::Neg => write!(f, "-"),
-            Self::Not => write!(f, "not"),
         }
     }
 }

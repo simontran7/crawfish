@@ -3,11 +3,11 @@ use soup::handle_map::Handle;
 soup::handle_impl!(pub(crate) ValueId);
 
 /// A 4-byte handle to a growable, mutable list of `ValueId`s living
-/// in a [`ValueListAllocator`]. Used wherever MIR needs a variable-length run of
+/// in a [`ValueListSubAllocator`]. Used wherever MIR needs a variable-length run of
 /// values (e.g., block parameters, call/branch arguments, return values, and
 /// instruction results).
 ///
-/// `start` is the index in the allocator's backing storage `ValueListAllocator::data` where this list's
+/// `start` is the index in the allocator's backing storage `ValueListSubAllocator::data` where this list's
 /// elements begin. The live element count lives in the header, at index `start - 1`. This common trick keeps the
 /// handle 4 bytes large and `Copy` (unlike a `Vec`, which would
 /// be 24 bytes and owned).
@@ -27,7 +27,7 @@ soup::handle_impl!(pub(crate) ValueId);
 /// # Examples
 ///
 /// ```rust,ignore
-/// let mut allocator = ValueListAllocator::new();
+/// let mut allocator = ValueListSubAllocator::new();
 /// let mut list = ValueList::from(&mut allocator, &[ValueId::new(1), ValueId::new(2)]);
 /// list.add_last(&mut allocator, ValueId::new(3));
 /// assert_eq!(list.to_slice(&allocator), &[ValueId::new(1), ValueId::new(2), ValueId::new(3)]);
@@ -37,7 +37,7 @@ pub(crate) struct ValueList {
     pub(super) start: u32,
 }
 
-/// A Segregated Free List allocator storing every [`ValueList`]'s content.
+/// A Segregated Free List suballocator storing every [`ValueList`]'s content.
 ///
 /// # Layout
 ///
@@ -75,7 +75,7 @@ pub(crate) struct ValueList {
 /// NOTE: No coalescing is needed because freed blocks are reused within their size
 /// class as-is. Additionally, no pointer patching is needed on realloc because [`ValueList`]
 /// handles are movable indices, not raw pointers.
-pub(crate) struct ValueListAllocator {
+pub(crate) struct ValueListSubAllocator {
     pub(super) data: Vec<ValueId>,
     free: Vec<usize>,
 }
@@ -99,7 +99,7 @@ impl ValueList {
     }
 
     /// Allocates a new list in `allocator` and copies `slice`'s elements into it.
-    pub(crate) fn from(allocator: &mut ValueListAllocator, slice: &[ValueId]) -> Self {
+    pub(crate) fn from(allocator: &mut ValueListSubAllocator, slice: &[ValueId]) -> Self {
         // No allocation if `slice` is empty.
         if slice.is_empty() {
             return Self::new();
@@ -114,7 +114,7 @@ impl ValueList {
     }
 
     /// Returns the number of elements in the list.
-    pub(crate) fn count(self, allocator: &ValueListAllocator) -> usize {
+    pub(crate) fn count(self, allocator: &ValueListSubAllocator) -> usize {
         // wrapping_sub so that start == 0 (empty) maps to usize::MAX, which is
         // guaranteed out of bounds for any Vec. This makes `.get()` return `None`,
         // collapsing the emptiness check and bounds check into one.
@@ -125,12 +125,12 @@ impl ValueList {
     }
 
     /// Returns whether the list has no elements.
-    pub(crate) fn is_empty(self, allocator: &ValueListAllocator) -> bool {
+    pub(crate) fn is_empty(self, allocator: &ValueListSubAllocator) -> bool {
         self.count(allocator) == 0
     }
 
     /// Returns the list's elements as a slice, or an empty slice if empty.
-    pub(crate) fn to_slice(self, allocator: &ValueListAllocator) -> &[ValueId] {
+    pub(crate) fn to_slice(self, allocator: &ValueListSubAllocator) -> &[ValueId] {
         if self.is_empty(allocator) {
             &[]
         } else {
@@ -139,7 +139,7 @@ impl ValueList {
     }
 
     /// Returns the list's elements as a mutable slice, or an empty slice if empty.
-    pub(crate) fn to_mut_slice(self, allocator: &mut ValueListAllocator) -> &mut [ValueId] {
+    pub(crate) fn to_mut_slice(self, allocator: &mut ValueListSubAllocator) -> &mut [ValueId] {
         if self.is_empty(allocator) {
             &mut []
         } else {
@@ -150,12 +150,12 @@ impl ValueList {
     }
 
     /// Returns the element at `index`, or `None` if out of bounds.
-    pub(crate) fn get(&self, index: usize, allocator: &ValueListAllocator) -> Option<ValueId> {
+    pub(crate) fn get(&self, index: usize, allocator: &ValueListSubAllocator) -> Option<ValueId> {
         self.to_slice(allocator).get(index).copied()
     }
 
     /// Adds `value` to the end of the list.
-    pub(crate) fn add_last(&mut self, allocator: &mut ValueListAllocator, value: ValueId) {
+    pub(crate) fn add_last(&mut self, allocator: &mut ValueListSubAllocator, value: ValueId) {
         let start = self.start as usize;
         if self.is_empty(allocator) {
             let block = allocator.alloc(1);
@@ -184,7 +184,7 @@ impl ValueList {
     }
 
     /// Removes the element at `index`, shifting later elements down by one to preserve their relative order.
-    pub(crate) fn remove(&mut self, index: usize, allocator: &mut ValueListAllocator) {
+    pub(crate) fn remove(&mut self, index: usize, allocator: &mut ValueListSubAllocator) {
         let count = self.count(allocator);
         assert!(index < count, "index out of bounds");
         // The backing block is not freed or reallocated, just shrunk in place.
@@ -196,7 +196,7 @@ impl ValueList {
     }
 
     /// Removes the last element, decrementing the header count in place.
-    pub(crate) fn clear_last(&mut self, allocator: &mut ValueListAllocator) {
+    pub(crate) fn clear_last(&mut self, allocator: &mut ValueListSubAllocator) {
         // The backing block is not freed or reallocated — the slot is simply abandoned.
         let count = self.count(allocator);
         assert!(count > 0, "called `.clear_last()` on an empty value list");
@@ -204,7 +204,7 @@ impl ValueList {
     }
 
     /// Frees the list's backing storage and resets it to empty.
-    pub(crate) fn clear(&mut self, allocator: &mut ValueListAllocator) {
+    pub(crate) fn clear(&mut self, allocator: &mut ValueListSubAllocator) {
         // Any other `Copy` of this handle still has the old `start` and is left dangling,
         // so it may point at a block the allocator later hands out to a different list.
         if !self.is_empty(allocator) {
@@ -214,7 +214,7 @@ impl ValueList {
     }
 }
 
-impl ValueListAllocator {
+impl ValueListSubAllocator {
     /// Creates and returns an allocator for value lists.
     pub(crate) const fn new() -> Self {
         Self {
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn new_list_is_empty() {
-        let allocator = ValueListAllocator::new();
+        let allocator = ValueListSubAllocator::new();
         let list = ValueList::new();
         assert!(list.is_empty(&allocator));
         assert_eq!(list.count(&allocator), 0);
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn from_empty_slice_is_empty_without_allocating() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let list = ValueList::from(&mut allocator, &[]);
         assert!(list.is_empty(&allocator));
         assert!(allocator.data.is_empty());
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn from_slice_copies_elements() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let values = ids(&[10, 20, 30]);
         let list = ValueList::from(&mut allocator, &values);
         assert_eq!(list.count(&allocator), 3);
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn add_last_grows_across_size_class_boundaries() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let mut list = ValueList::new();
         let values = ids(&[0, 1, 2, 3, 4, 5, 6, 7]);
         // Size class 0 holds 3 elements and class 1 holds 7, so this push sequence crosses
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn get_returns_none_out_of_bounds() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let list = ValueList::from(&mut allocator, &ids(&[10, 20]));
         assert_eq!(list.get(1, &allocator), Some(ValueId::new(20)));
         assert_eq!(list.get(2, &allocator), None);
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn to_mut_slice_allows_in_place_mutation() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let list = ValueList::from(&mut allocator, &ids(&[10, 20, 30]));
         list.to_mut_slice(&mut allocator)[1] = ValueId::new(99);
         assert_eq!(list.to_slice(&allocator), ids(&[10, 99, 30]).as_slice());
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn remove_shifts_later_elements_and_preserves_order() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let mut list = ValueList::from(&mut allocator, &ids(&[0, 1, 2, 3]));
 
         list.remove(1, &mut allocator);
@@ -387,14 +387,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "index out of bounds")]
     fn remove_panics_out_of_bounds() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let mut list = ValueList::from(&mut allocator, &ids(&[0, 1]));
         list.remove(2, &mut allocator);
     }
 
     #[test]
     fn clear_last_shrinks_from_the_end() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let mut list = ValueList::from(&mut allocator, &ids(&[0, 1, 2]));
 
         list.clear_last(&mut allocator);
@@ -408,14 +408,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "empty value list")]
     fn clear_last_panics_on_empty_list() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let mut list = ValueList::new();
         list.clear_last(&mut allocator);
     }
 
     #[test]
     fn clear_frees_the_block_for_reuse() {
-        let mut allocator = ValueListAllocator::new();
+        let mut allocator = ValueListSubAllocator::new();
         let mut a = ValueList::from(&mut allocator, &ids(&[0, 1, 2]));
         let original_start = a.start;
 

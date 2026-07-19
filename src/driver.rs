@@ -65,10 +65,7 @@ pub fn compile(filename: &str, source: &str) {
     };
 }
 
-/// Type-checks a source file without generating code, reporting diagnostics
-/// but not compiling further. Unimplemented.
+/// Checks a source file without generating code. 
 pub fn check() {
     todo!()
 }
-
-

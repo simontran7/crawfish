@@ -415,6 +415,11 @@ impl<T, const KIND: u8> PartialEq for TypedBindingId<T, KIND> {
     }
 }
 impl<T, const KIND: u8> Eq for TypedBindingId<T, KIND> {}
+impl<T, const KIND: u8> std::hash::Hash for TypedBindingId<T, KIND> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 impl<T, const KIND: u8> From<usize> for TypedBindingId<T, KIND> {
     fn from(index: usize) -> Self {
         Self::new(index)

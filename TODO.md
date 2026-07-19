@@ -1,8 +1,6 @@
 # TODO
 
-## Now
-
-### High-Level
+## Currently
 
 ```text
 for each function in Hir:
@@ -60,8 +58,6 @@ for block in function.cfg.blocks() {
 }
 ```
 
-### Concrete Steps
-
 - [ ] MIR construction ([frontend builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs), [ssa builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/ssa.rs), and [paper](https://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf))
   - [ ] Builder with typestate: enforce block sealing at the API level so construction-order bugs (e.g. reading a block's parameters before all predecessors are known) are unrepresentable. Reference: Cranelift's [FunctionBuilder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs).
 
@@ -70,8 +66,22 @@ for block in function.cfg.blocks() {
 - [ ] Alias resolution ([resolve_all_aliases()](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/ir/dfg.rs))
 
 - [ ] MIR verification ([verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs))
+  - [ ] `CfgIndex`: predecessor/successor index over `Cfg`, computed on demand (mirrors Cranelift's [`ControlFlowGraph`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/flowgraph.rs)). Not needed by `FunctionBuilder` — it tracks its own predecessors transiently during construction, before the CFG is complete. Used two ways here: (1) as input to the `DominatorTree` below, and (2) on its own, rebuilt from scratch and diffed against whatever predecessor/successor data a pass is carrying, to catch it having gone stale — mirrors the verifier's `cfg_integrity` check.
+  - [ ] `DominatorTree`, built from `CfgIndex` (mirrors [`dominator_tree.rs`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/dominator_tree.rs)): required to check SSA's core invariant, every use of a value is dominated by its definition (and every use of a block parameter is in a block dominated by the block that defines it) — the actual check the verifier exists to perform.
+  - Checks below are Cranelift's [verifier categories](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs), filtered to what applies to crawfish's simpler IR (no VMContext, exception handling, SIMD, or multiple calling conventions).
+  - [ ] `verify_entity_references`: every `BlockId`/`InstructionId`/`FunctionReferenceId`/`SignatureId`/`ValueId` referenced anywhere actually exists in its table — no dangling handles.
+  - [ ] `block_integrity`: a terminator (`Jump`/`BranchIf`/`Return`/`Unreachable`) appears exactly once per block, only as the last instruction.
+  - [ ] `typecheck_variable_args`: `Jump`/`BranchIf` args match the destination block's `parameters` in count and type — the most direct test of `FunctionBuilder`'s phi-placement logic; prioritize this one over the type-checking items below.
+  - [ ] `instruction_integrity`: each instruction's result count matches what `DataFlowGraph::instruction_results` expects for it. (Opcode-doesn't-match-format is already unrepresentable, since `Instruction` is a plain Rust enum.)
+  - [ ] `typecheck` / `typecheck_results` / `typecheck_fixed_args`: each instruction's operand and result types match what its variant expects (e.g. `Binary`'s two args are compatible types). Mostly re-checks what sema already validated before lowering — a lowering-bug check, not a construction-bug check.
+  - [ ] `typecheck_entry_block_params`: entry block's parameters match the function's `Signature::parameters`.
+  - [ ] `typecheck_return`: `Return`'s args match `Signature::return_type`, in count and type.
+  - [ ] `typecheck_function_signature`: the `Signature` itself is well-formed, independent of any instruction.
+  - [ ] `iconst_bounds`: `IntegerLiteral { ty, value }`'s value fits within `ty`'s bit width.
 
 - [ ] Const checking: prevents non-const functions as values of a constant definition ([mir_const_qualif](https://github.com/rust-lang/rust/blob/master/compiler/rustc_mir_transform/src/lib.rs), [check.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/check.rs), [ops.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/ops.rs), [ConstContext](https://github.com/rust-lang/rust/blob/master/compiler/rustc_hir/src/hir.rs))
+
+- [ ] Const evaluation (CTFE): lower each `const` item's initializer to its own MIR Function (zero params), evaluate it with a small compile-time interpreter to produce a literal value. Referenced by other consts/functions via a lazy handle, resolved on demand (rustc's `eval_to_const_value_raw` model).
 
 ## Later
 

@@ -41,6 +41,157 @@ pub(crate) struct TypedTypeAnnotationId<T, const KIND: u8>(u32, PhantomData<T>);
 #[derive(Debug)]
 pub(crate) struct TypedPatternId<T, const KIND: u8>(u32, PhantomData<T>);
 
+// ----------------------------------
+// Untyped tagged handles
+// Each: struct + kind enum → inherent impl → trait impls
+//
+// These pack a [`TypedItemId`]/[`TypedStatementId`]/etc. and its `KIND`
+// discriminant into a single `u32`: the high bits store the kind enum
+// (which `Typed*Id<NodeType, KIND>` this handle came from), and the low
+// bits store the index within that node type's table. This lets code that
+// doesn't care which concrete node type it has (e.g. a list of a block's
+// statements) store one handle per element instead of an enum plus index.
+// ----------------------------------
+
+/// An opaque, tagged handle to one of the `*ItemNode` types: dispatch on
+/// [`ItemId::kind`] to recover the concrete node type and its
+/// `TypedItemId<NodeType, KIND>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ItemId(u32);
+
+/// Which `*ItemNode` type an [`ItemId`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum ItemKind {
+    FunctionDefinition = 0,
+    ConstantDefinition,
+    Error,
+}
+
+/// An opaque, tagged handle to one of the `*StatementNode` types: dispatch
+/// on [`StatementId::kind`] to recover the concrete node type and its
+/// `TypedStatementId<NodeType, KIND>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StatementId(u32);
+
+/// Which `*StatementNode` type a [`StatementId`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum StatementKind {
+    ExpressionStatement = 0,
+    ItemStatement,
+    LetStatement,
+    Error,
+}
+
+/// An opaque, tagged handle to one of the `*ExpressionNode` types: dispatch
+/// on [`ExpressionId::kind`] to recover the concrete node type and its
+/// `TypedExpressionId<NodeType, KIND>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ExpressionId(u32);
+
+/// Which `*ExpressionNode` type an [`ExpressionId`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum ExpressionKind {
+    UnitLiteral = 0,
+    IntegerLiteral,
+    BooleanLiteral,
+    Variable,
+    UnaryOperation,
+    BinaryOperation,
+    IfExpression,
+    BlockExpression,
+    FunctionCall,
+    Assign,
+    Return,
+    Error,
+}
+
+/// An opaque, tagged handle to a `ValidParameterNode` or
+/// `ErrorParameterNode`: dispatch on [`ParameterId::kind`] to recover the
+/// concrete node type and its `TypedParameterId<NodeType, KIND>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ParameterId(u32);
+
+/// Which parameter node type a [`ParameterId`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum ParameterKind {
+    Valid = 0,
+    Error,
+}
+
+/// An opaque, tagged handle to a `ValidIdentifierNode` or
+/// `ErrorIdentifierNode`: dispatch on [`IdentifierId::kind`] to recover the
+/// concrete node type and its `TypedIdentifierId<NodeType, KIND>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IdentifierId(u32);
+
+/// Which identifier node type an [`IdentifierId`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum IdentifierKind {
+    Valid = 0,
+    Error,
+}
+
+/// An opaque, tagged handle to a `NamedTypeAnnotationNode` or
+/// `ErrorTypeAnnotationNode`: dispatch on [`TypeAnnotationId::kind`] to
+/// recover the concrete node type and its `TypedTypeAnnotationId<NodeType, KIND>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TypeAnnotationId(u32);
+
+/// Which type annotation node type a [`TypeAnnotationId`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum TypeAnnotationKind {
+    Named = 0,
+    Error,
+}
+
+/// An opaque, tagged handle to an `IdentifierPatternNode` or
+/// `ErrorPatternNode`: dispatch on [`PatternId::kind`] to recover the
+/// concrete node type and its `TypedPatternId<NodeType, KIND>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PatternId(u32);
+
+/// Which pattern node type a [`PatternId`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum PatternKind {
+    Identifier = 0,
+    Error,
+}
+
+/// A run of [`ItemId`]s, used by `SourceFileNode::items`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) struct ItemSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+}
+
+/// A run of [`StatementId`]s, used by `BlockExpressionNode::statements`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) struct StatementSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+}
+
+/// A run of [`ExpressionId`]s, used by `FunctionCallNode::arguments`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) struct ExpressionSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+}
+
+/// A run of [`ParameterId`]s, used by `FunctionDefinitionNode::parameters`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) struct ParameterSlice {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+}
+
 // NOTE:
 // Clone/Copy/PartialEq/Eq/Handle are all manual (no derive) because derive
 // adds unwanted bounds like `T: Clone`, but T is purely a phantom marker
@@ -267,129 +418,6 @@ impl<T, const KIND: u8> From<TypedPatternId<T, KIND>> for usize {
     fn from(id: TypedPatternId<T, KIND>) -> Self {
         id.0 as Self
     }
-}
-
-// ----------------------------------
-// Untyped tagged handles
-// Each: struct + kind enum → inherent impl → trait impls
-//
-// These pack a [`TypedItemId`]/[`TypedStatementId`]/etc. and its `KIND`
-// discriminant into a single `u32`: the high bits store the kind enum
-// (which `Typed*Id<NodeType, KIND>` this handle came from), and the low
-// bits store the index within that node type's table. This lets code that
-// doesn't care which concrete node type it has (e.g. a list of a block's
-// statements) store one handle per element instead of an enum plus index.
-// ----------------------------------
-
-/// An opaque, tagged handle to one of the `*ItemNode` types: dispatch on
-/// [`ItemId::kind`] to recover the concrete node type and its
-/// `TypedItemId<NodeType, KIND>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ItemId(u32);
-
-/// Which `*ItemNode` type an [`ItemId`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum ItemKind {
-    FunctionDefinition = 0,
-    ConstantDefinition,
-    Error,
-}
-
-/// An opaque, tagged handle to one of the `*StatementNode` types: dispatch
-/// on [`StatementId::kind`] to recover the concrete node type and its
-/// `TypedStatementId<NodeType, KIND>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StatementId(u32);
-
-/// Which `*StatementNode` type a [`StatementId`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum StatementKind {
-    ExpressionStatement = 0,
-    ItemStatement,
-    LetStatement,
-    Error,
-}
-
-/// An opaque, tagged handle to one of the `*ExpressionNode` types: dispatch
-/// on [`ExpressionId::kind`] to recover the concrete node type and its
-/// `TypedExpressionId<NodeType, KIND>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ExpressionId(u32);
-
-/// Which `*ExpressionNode` type an [`ExpressionId`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum ExpressionKind {
-    UnitLiteral = 0,
-    IntegerLiteral,
-    BooleanLiteral,
-    Variable,
-    UnaryOperation,
-    BinaryOperation,
-    IfExpression,
-    BlockExpression,
-    FunctionCall,
-    Assign,
-    Return,
-    Error,
-}
-
-/// An opaque, tagged handle to a `ValidParameterNode` or
-/// `ErrorParameterNode`: dispatch on [`ParameterId::kind`] to recover the
-/// concrete node type and its `TypedParameterId<NodeType, KIND>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ParameterId(u32);
-
-/// Which parameter node type a [`ParameterId`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum ParameterKind {
-    Valid = 0,
-    Error,
-}
-
-/// An opaque, tagged handle to a `ValidIdentifierNode` or
-/// `ErrorIdentifierNode`: dispatch on [`IdentifierId::kind`] to recover the
-/// concrete node type and its `TypedIdentifierId<NodeType, KIND>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IdentifierId(u32);
-
-/// Which identifier node type an [`IdentifierId`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum IdentifierKind {
-    Valid = 0,
-    Error,
-}
-
-/// An opaque, tagged handle to a `NamedTypeAnnotationNode` or
-/// `ErrorTypeAnnotationNode`: dispatch on [`TypeAnnotationId::kind`] to
-/// recover the concrete node type and its `TypedTypeAnnotationId<NodeType, KIND>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TypeAnnotationId(u32);
-
-/// Which type annotation node type a [`TypeAnnotationId`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum TypeAnnotationKind {
-    Named = 0,
-    Error,
-}
-
-/// An opaque, tagged handle to an `IdentifierPatternNode` or
-/// `ErrorPatternNode`: dispatch on [`PatternId::kind`] to recover the
-/// concrete node type and its `TypedPatternId<NodeType, KIND>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PatternId(u32);
-
-/// Which pattern node type a [`PatternId`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum PatternKind {
-    Identifier = 0,
-    Error,
 }
 
 impl ItemId {
@@ -746,34 +774,6 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for PatternId {
             Err(e) => e.into(),
         }
     }
-}
-
-/// A run of [`ItemId`]s, used by `SourceFileNode::items`.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) struct ItemSlice {
-    pub(crate) start: u32,
-    pub(crate) len: u32,
-}
-
-/// A run of [`StatementId`]s, used by `BlockExpressionNode::statements`.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) struct StatementSlice {
-    pub(crate) start: u32,
-    pub(crate) len: u32,
-}
-
-/// A run of [`ExpressionId`]s, used by `FunctionCallNode::arguments`.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) struct ExpressionSlice {
-    pub(crate) start: u32,
-    pub(crate) len: u32,
-}
-
-/// A run of [`ParameterId`]s, used by `FunctionDefinitionNode::parameters`.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) struct ParameterSlice {
-    pub(crate) start: u32,
-    pub(crate) len: u32,
 }
 
 pub(crate) type FunctionDefinitionId =

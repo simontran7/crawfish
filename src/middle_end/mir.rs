@@ -7,7 +7,7 @@ use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
-use crate::middle_end::value_list::{ValueId, ValueList, ValueListAllocator};
+use crate::middle_end::value_list::{ValueId, ValueList, ValueListSubAllocator};
 
 /// A single function's MIR.
 pub(crate) struct Function {
@@ -230,7 +230,7 @@ struct DataFlowGraph {
     blocks: HandleMap<BlockId, Block>,
     function_references: HandleMap<FunctionReferenceId, FunctionReference>,
     signatures: HandleMap<SignatureId, Signature>,
-    allocator: ValueListAllocator,
+    suballocator: ValueListSubAllocator,
 }
 
 /// An ordered view of the control flow graph (the sequence of blocks and
@@ -497,7 +497,7 @@ impl Cfg {
             .collect();
         self.dfg.instruction_results.add(
             instruction_id,
-            ValueList::from(&mut self.dfg.allocator, &results),
+            ValueList::from(&mut self.dfg.suballocator, &results),
         );
         instruction_id
     }
@@ -630,14 +630,14 @@ impl Cfg {
     pub(crate) fn new_jump(&mut self, destination: BlockId, args: &[ValueId]) -> Instruction {
         Instruction::Jump {
             destination,
-            args: ValueList::from(&mut self.dfg.allocator, args),
+            args: ValueList::from(&mut self.dfg.suballocator, args),
         }
     }
 
     /// Builds (but does not insert) a `Return` instruction, passing `args`.
     pub(crate) fn new_return(&mut self, args: &[ValueId]) -> Instruction {
         Instruction::Return {
-            args: ValueList::from(&mut self.dfg.allocator, args),
+            args: ValueList::from(&mut self.dfg.suballocator, args),
         }
     }
 
@@ -649,7 +649,7 @@ impl Cfg {
     ) -> Instruction {
         Instruction::Call {
             callee,
-            args: ValueList::from(&mut self.dfg.allocator, args),
+            args: ValueList::from(&mut self.dfg.suballocator, args),
         }
     }
 
@@ -666,9 +666,9 @@ impl Cfg {
         Instruction::BranchIf {
             arg,
             then_destination,
-            then_args: ValueList::from(&mut self.dfg.allocator, then_args),
+            then_args: ValueList::from(&mut self.dfg.suballocator, then_args),
             else_destination,
-            else_args: ValueList::from(&mut self.dfg.allocator, else_args),
+            else_args: ValueList::from(&mut self.dfg.suballocator, else_args),
         }
     }
 
@@ -686,13 +686,13 @@ impl Cfg {
         match self.dfg.values[value_id].def {
             ValueDefinition::Result(instruction_id, index) => {
                 self.dfg.instruction_results[instruction_id]
-                    .get(index as usize, &self.dfg.allocator)
+                    .get(index as usize, &self.dfg.suballocator)
                     == Some(value_id)
             }
             ValueDefinition::Parameter(block_id, index) => {
                 self.dfg.blocks[block_id]
                     .parameters
-                    .get(index as usize, &self.dfg.allocator)
+                    .get(index as usize, &self.dfg.suballocator)
                     == Some(value_id)
             }
             ValueDefinition::Alias(_) => false,
@@ -760,7 +760,7 @@ impl Cfg {
 
         // step 2: propagates that resolution out into every instruction's actual operand references.
         for instruction in self.dfg.instructions.values_mut() {
-            instruction.rewrite_operands(&mut self.dfg.allocator, |value_id| {
+            instruction.rewrite_operands(&mut self.dfg.suballocator, |value_id| {
                 match self.dfg.values[value_id].def {
                     ValueDefinition::Alias(original) => original,
                     _ => value_id,
@@ -804,7 +804,7 @@ impl Instruction {
     /// Rewrites every `ValueId` this instruction references by applying `f` to each one.
     fn rewrite_operands(
         &mut self,
-        allocator: &mut ValueListAllocator,
+        suballocator: &mut ValueListSubAllocator,
         mut f: impl FnMut(ValueId) -> ValueId,
     ) {
         match self {
@@ -814,12 +814,12 @@ impl Instruction {
             }
             Instruction::Unary { arg, .. } => *arg = f(*arg),
             Instruction::Call { args, .. } => {
-                for v in args.to_mut_slice(allocator) {
+                for v in args.to_mut_slice(suballocator) {
                     *v = f(*v);
                 }
             }
             Instruction::Jump { args, .. } => {
-                for v in args.to_mut_slice(allocator) {
+                for v in args.to_mut_slice(suballocator) {
                     *v = f(*v);
                 }
             }
@@ -830,15 +830,15 @@ impl Instruction {
                 ..
             } => {
                 *arg = f(*arg);
-                for v in then_args.to_mut_slice(allocator) {
+                for v in then_args.to_mut_slice(suballocator) {
                     *v = f(*v);
                 }
-                for v in else_args.to_mut_slice(allocator) {
+                for v in else_args.to_mut_slice(suballocator) {
                     *v = f(*v);
                 }
             }
             Instruction::Return { args } => {
-                for v in args.to_mut_slice(allocator) {
+                for v in args.to_mut_slice(suballocator) {
                     *v = f(*v);
                 }
             }
@@ -887,7 +887,7 @@ impl<'a> BlockView<'a> {
     pub(crate) fn parameters(&self) -> &[ValueId] {
         self.cfg.dfg.blocks[self.block_id]
             .parameters
-            .to_slice(&self.cfg.dfg.allocator)
+            .to_slice(&self.cfg.dfg.suballocator)
     }
 }
 
@@ -897,10 +897,10 @@ impl<'a> BlockViewMut<'a> {
         let parameter = self.cfg.dfg.values.next_key();
         self.cfg.dfg.blocks[self.block_id]
             .parameters
-            .add_last(&mut self.cfg.dfg.allocator, parameter);
+            .add_last(&mut self.cfg.dfg.suballocator, parameter);
         let count = self.cfg.dfg.blocks[self.block_id]
             .parameters
-            .count(&self.cfg.dfg.allocator);
+            .count(&self.cfg.dfg.suballocator);
         assert!(
             count <= u16::MAX as usize,
             "the block has too many parameters"
@@ -934,14 +934,14 @@ impl<'a> BlockViewMut<'a> {
     pub(crate) fn swap_remove_parameter(&mut self, index: usize) {
         let params = self.cfg.dfg.blocks[self.block_id]
             .parameters
-            .to_mut_slice(&mut self.cfg.dfg.allocator);
+            .to_mut_slice(&mut self.cfg.dfg.suballocator);
         params.swap(index, params.len() - 1);
         // The value now sitting at `index` still thinks it's the parameter at its old
         // (last) position, so patch its definition to match its new slot.
         let moved_value = params[index];
         self.cfg.dfg.blocks[self.block_id]
             .parameters
-            .clear_last(&mut self.cfg.dfg.allocator);
+            .clear_last(&mut self.cfg.dfg.suballocator);
         if let ValueDefinition::Parameter(_, num) = &mut self.cfg.dfg.values[moved_value].def {
             *num = index as u16;
         }
@@ -951,11 +951,11 @@ impl<'a> BlockViewMut<'a> {
     pub(crate) fn remove_parameter(&mut self, index: usize) {
         self.cfg.dfg.blocks[self.block_id]
             .parameters
-            .remove(index, &mut self.cfg.dfg.allocator);
+            .remove(index, &mut self.cfg.dfg.suballocator);
         let parameters = self.cfg.dfg.blocks[self.block_id].parameters;
-        let count = parameters.count(&self.cfg.dfg.allocator);
+        let count = parameters.count(&self.cfg.dfg.suballocator);
         for i in index..count {
-            let value_id = parameters.get(i, &self.cfg.dfg.allocator).unwrap();
+            let value_id = parameters.get(i, &self.cfg.dfg.suballocator).unwrap();
             if let ValueDefinition::Parameter(_, num) = &mut self.cfg.dfg.values[value_id].def {
                 *num = i as u16;
             }
@@ -988,14 +988,14 @@ impl<'a> InstructionView<'a> {
 
     /// Returns the instruction's value operands as a slice.
     pub(crate) fn arguments(&self) -> &'a [ValueId] {
-        let allocator = &self.cfg.dfg.allocator;
+        let suballocator = &self.cfg.dfg.suballocator;
         match &self.cfg.dfg.instructions[self.instruction_id] {
             Instruction::Binary { args, .. } => args,
             Instruction::Unary { arg, .. } => slice::from_ref(arg),
-            Instruction::Call { args, .. } => args.to_slice(allocator),
-            Instruction::Jump { args, .. } => args.to_slice(allocator),
+            Instruction::Call { args, .. } => args.to_slice(suballocator),
+            Instruction::Jump { args, .. } => args.to_slice(suballocator),
             Instruction::BranchIf { arg, .. } => slice::from_ref(arg), // Only the condition is an operand here (the then/else block arguments are not operands in the traditional sense)
-            Instruction::Return { args } => args.to_slice(allocator),
+            Instruction::Return { args } => args.to_slice(suballocator),
             Instruction::IntegerLiteral { .. }
             | Instruction::BooleanLiteral { .. }
             | Instruction::Unreachable => &[],
@@ -1004,12 +1004,12 @@ impl<'a> InstructionView<'a> {
 
     /// Returns the instruction's result values as a slice.
     pub(crate) fn results(&self) -> &[ValueId] {
-        self.cfg.dfg.instruction_results[self.instruction_id].to_slice(&self.cfg.dfg.allocator)
+        self.cfg.dfg.instruction_results[self.instruction_id].to_slice(&self.cfg.dfg.suballocator)
     }
 
     /// Returns the first result, or `None` if this instruction produces no results.
     pub(crate) fn first_result(&self) -> Option<ValueId> {
-        self.cfg.dfg.instruction_results[self.instruction_id].get(0, &self.cfg.dfg.allocator)
+        self.cfg.dfg.instruction_results[self.instruction_id].get(0, &self.cfg.dfg.suballocator)
     }
 
     /// Returns the block that contains this instruction, or `None` if it has been
@@ -1028,8 +1028,8 @@ impl<'a> InstructionView<'a> {
                 ..
             } => UsedValuesIter::Branch {
                 arg: Some(*arg),
-                then_args: then_args.to_slice(&self.cfg.dfg.allocator).iter(),
-                else_args: else_args.to_slice(&self.cfg.dfg.allocator).iter(),
+                then_args: then_args.to_slice(&self.cfg.dfg.suballocator).iter(),
+                else_args: else_args.to_slice(&self.cfg.dfg.suballocator).iter(),
             },
             _ => UsedValuesIter::Slice(self.arguments().iter()),
         }
@@ -1041,7 +1041,51 @@ impl<'a> InstructionViewMut<'a> {
     /// including `BranchIf`'s then/else block arguments.
     pub(crate) fn rewrite_operands(&mut self, f: impl FnMut(ValueId) -> ValueId) {
         self.cfg.dfg.instructions[self.instruction_id]
-            .rewrite_operands(&mut self.cfg.dfg.allocator, f);
+            .rewrite_operands(&mut self.cfg.dfg.suballocator, f);
+    }
+
+    /// Appends `value` to whichever of this instruction's argument list(s) target
+    /// `destination` (`Jump::args`, or `BranchIf::then_args`/`else_args`).
+    ///
+    /// Used when SSA construction resolves a block parameter (phi): the agreed-upon value
+    /// has to be fed back into every predecessor edge that targets the block. Appends to
+    /// *both* `then_args` and `else_args` if a `BranchIf`'s two arms happen to target the
+    /// same block — a single instruction can be a predecessor via more than one edge.
+    ///
+    /// Panics if this instruction doesn't branch to `destination` at all.
+    pub(crate) fn append_branch_argument(&mut self, destination: BlockId, value: ValueId) {
+        let suballocator = &mut self.cfg.dfg.suballocator;
+        match &mut self.cfg.dfg.instructions[self.instruction_id] {
+            Instruction::Jump {
+                destination: dest,
+                args,
+            } => {
+                assert_eq!(
+                    *dest, destination,
+                    "instruction does not jump to destination"
+                );
+                args.add_last(suballocator, value);
+            }
+            Instruction::BranchIf {
+                then_destination,
+                then_args,
+                else_destination,
+                else_args,
+                ..
+            } => {
+                let mut branched = false;
+                if *then_destination == destination {
+                    then_args.add_last(suballocator, value);
+                    branched = true;
+                }
+                if *else_destination == destination {
+                    else_args.add_last(suballocator, value);
+                    branched = true;
+                }
+                assert!(branched, "instruction does not branch to destination");
+            }
+            _ => panic!("instruction is not a branch"),
+        }
     }
 }
 
@@ -1123,7 +1167,7 @@ impl DataFlowGraph {
             blocks: HandleMap::new(),
             function_references: HandleMap::new(),
             signatures: HandleMap::new(),
-            allocator: ValueListAllocator::new(),
+            suballocator: ValueListSubAllocator::new(),
         }
     }
 }
