@@ -65,7 +65,7 @@ pub fn compile(filename: &str, source: &str) {
     };
 }
 
-/// Checks a source file without generating code. 
+/// Checks a source file without generating code.
 pub fn check() {
     todo!()
 }

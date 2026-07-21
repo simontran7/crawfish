@@ -44,4 +44,3 @@ impl FunctionBuilder {
         todo!("Cranelift: SSABuilder::try_remove_trivial_phi (ssa.rs)")
     }
 }
-
