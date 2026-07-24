@@ -7,7 +7,7 @@ use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
-use crate::middle_end::value_list::{ValueId, ValueList, ValueListSubAllocator};
+use crate::middle_end::handle_list::{HandleList, HandleListSubAllocator};
 
 /// A single function's MIR.
 pub(crate) struct Function {
@@ -42,47 +42,56 @@ pub(crate) struct Function {
 ///
 /// let lhs = cfg.get_block_mut(block).append_parameter(i32_ty);
 /// let rhs = cfg.get_block_mut(block).append_parameter(i32_ty);
-/// let sum_instruction = cfg.get_block_mut(block).append_instruction(
+/// let sum_instruction = cfg.append_instruction(
+///     block,
 ///     Instruction::Binary { operator: BinOp::Add, args: [lhs, rhs] },
 ///     &[i32_ty],
 /// );
 ///
 /// let sum = cfg.get_instruction(sum_instruction).first_result().unwrap();
 /// let ret = cfg.new_return(&[sum]);
-/// cfg.get_block_mut(block).set_terminator(ret);
+/// cfg.set_terminator(block, ret);
 /// ```
 pub(crate) struct Cfg {
     dfg: DataFlowGraph,
     layout: Layout,
 }
 
-/// A single SSA value, with its type and the [`ValueDefinition`] that produces it.
+/// A single SSA value, with its type, its permanent [`ValueOrigin`], and — if it has been
+/// aliased — a pointer to the value it now stands in for.
+///
+/// `origin` and `alias` are deliberately separate fields rather than one combined enum:
+/// `origin` is set once at creation and never changes, while `alias` is a later, optional
+/// redirect layered on top (via [`Cfg::mark_as_alias`]). Keeping them apart means aliasing
+/// a value never destroys the record of where it was originally defined, and it means code
+/// that only cares "is this a `Parameter`, give me the block" never has to route through an
+/// irrelevant third `Alias` case.
 pub(crate) struct Value {
     ty: TypeId,
-    def: ValueDefinition,
+    /// `Some(x)` means this value has been redirected to behave as `x` instead. See
+    /// [`Cfg::mark_as_alias`], [`Cfg::resolve_aliases`], and [`Cfg::flush_aliases`].
+    /// This lets a pass merge two values in O(1) (e.g. trivial block-parameter elimination
+    /// during SSA construction) without eagerly rewriting every existing use.
+    alias: Option<ValueId>,
+    origin: ValueOrigin,
 }
 
-/// The unique definition site of an SSA value, or, if the value has been aliased,
-/// a pointer to the value it now stands in for.
+/// The unique, permanent definition site of an SSA value. In SSA form, every value is
+/// defined exactly once, at one of three sites:
 ///
-/// In SSA form, every value is defined exactly once, at one of two sites:
-///
-/// - [`ValueDefinition::Result`]: an output of an instruction. The `u16` is the index of
+/// - [`ValueOrigin::InstructionResult`]: an output of an instruction. The `u16` is the index of
 ///   the instruction's result in [`DataFlowGraph::instruction_results`].
 ///
-/// - [`ValueDefinition::Parameter`]: an incoming parameter of a block. The `u16` is the
+/// - [`ValueOrigin::Parameter`]: an incoming parameter of a block. The `u16` is the
 ///   index of this parameter in [`Block::parameters`].
 ///
-/// A third state, [`ValueDefinition::Alias`], isn't a definition site at all, but rather, it indicates
-/// that the value has been redirected to behave as some other (already-defined) value, via
-/// [`Cfg::change_to_alias`]. This lets a pass merge two values in O(1) (e.g. trivial
-/// block-parameter elimination during SSA construction without eagerly rewriting every
-/// existing use). See [`Cfg::resolve_aliases`] and [`Cfg::resolve_all_aliases`].
+/// - [`ValueOrigin::Undefined`]: a placeholder with no instruction or block backing it, created
+///   when trivial block-parameter elimination has no real value to fall back on.
 #[derive(Clone, Copy)]
-pub(crate) enum ValueDefinition {
-    Result(InstructionId, u16),
+pub(crate) enum ValueOrigin {
+    InstructionResult(InstructionId, u16),
     Parameter(BlockId, u16),
-    Alias(ValueId),
+    Undefined(TypeId),
 }
 
 /// A basic block.
@@ -90,7 +99,7 @@ pub(crate) struct Block {
     /// The SSA equivalent of φ-nodes (i.e., they
     /// unify values from different predecessor
     /// edges at a control-flow join).
-    parameters: ValueList,
+    parameters: HandleList<ValueId>,
 }
 
 /// A single MIR instruction.
@@ -120,23 +129,23 @@ pub(crate) enum Instruction {
     // Calls
     Call {
         callee: FunctionReferenceId,
-        args: ValueList,
+        args: HandleList<ValueId>,
     },
 
     // Terminators (i.e., they end a block and determine which block, if any, runs next)
     Jump {
         destination: BlockId,
-        args: ValueList,
+        args: HandleList<ValueId>,
     },
     BranchIf {
         arg: ValueId,
         then_destination: BlockId,
-        then_args: ValueList,
+        then_args: HandleList<ValueId>,
         else_destination: BlockId,
-        else_args: ValueList,
+        else_args: HandleList<ValueId>,
     },
     Return {
-        args: ValueList,
+        args: HandleList<ValueId>,
     },
     Unreachable,
 }
@@ -159,6 +168,7 @@ soup::handle_impl!(pub(crate) BlockId);
 soup::handle_impl!(pub(crate) InstructionId);
 soup::handle_impl!(pub(crate) FunctionReferenceId);
 soup::handle_impl!(pub(crate) SignatureId);
+soup::handle_impl!(pub(crate) ValueId);
 
 /// A read-only view over a block, returned by [`Cfg::get_block`].
 pub(crate) struct BlockView<'a> {
@@ -218,7 +228,7 @@ pub(crate) struct InstructionIter<'a> {
 /// There are three kinds of nodes:
 /// - Instruction nodes: consume values (operands) and produce values (results)
 /// - Value nodes: defined exactly once, either as an instruction result or a block parameter
-/// - Block nodes: group instructions and carry parameters (the SSA replacement for phi nodes)
+/// - Block nodes: group instructions and carry block parameters (SSA's mechanism for merging values at control-flow joins)
 ///
 /// And two kinds of edges:
 /// - Def edges: connect a definer (instruction or block) to the value it produces
@@ -226,11 +236,11 @@ pub(crate) struct InstructionIter<'a> {
 struct DataFlowGraph {
     values: HandleMap<ValueId, Value>,
     instructions: HandleMap<InstructionId, Instruction>,
-    instruction_results: SideHandleMap<InstructionId, ValueList>,
+    instruction_results: SideHandleMap<InstructionId, HandleList<ValueId>>,
     blocks: HandleMap<BlockId, Block>,
     function_references: HandleMap<FunctionReferenceId, FunctionReference>,
     signatures: HandleMap<SignatureId, Signature>,
-    suballocator: ValueListSubAllocator,
+    suballocator: HandleListSubAllocator<ValueId>,
 }
 
 /// An ordered view of the control flow graph (the sequence of blocks and
@@ -295,7 +305,7 @@ impl Cfg {
     /// Creates and returns a handle to a basic block.
     pub(crate) fn create_block(&mut self) -> BlockId {
         self.dfg.blocks.add(Block {
-            parameters: ValueList::new(),
+            parameters: HandleList::<ValueId>::new(),
         })
     }
 
@@ -491,13 +501,14 @@ impl Cfg {
             .map(|(i, &ty)| {
                 self.dfg.values.add(Value {
                     ty,
-                    def: ValueDefinition::Result(instruction_id, i as u16),
+                    alias: None,
+                    origin: ValueOrigin::InstructionResult(instruction_id, i as u16),
                 })
             })
             .collect();
         self.dfg.instruction_results.add(
             instruction_id,
-            ValueList::from(&mut self.dfg.suballocator, &results),
+            HandleList::<ValueId>::from(&mut self.dfg.suballocator, &results),
         );
         instruction_id
     }
@@ -554,6 +565,25 @@ impl Cfg {
         }
 
         instruction_id
+    }
+
+    /// Appends `instruction` to the end of `block_id`, allocating result values with types
+    /// `result_tys`.
+    pub(crate) fn append_instruction(
+        &mut self,
+        block_id: BlockId,
+        instruction: Instruction,
+        result_tys: &[TypeId],
+    ) -> InstructionId {
+        let instruction_id = self.create_instruction(instruction, result_tys);
+        self.link_instruction_to_block(block_id, instruction_id);
+        instruction_id
+    }
+
+    /// Appends a terminator (which produces no results) to the end of `block_id`.
+    pub(crate) fn set_terminator(&mut self, block_id: BlockId, terminator: Instruction) {
+        let instruction_id = self.create_instruction(terminator, &[]);
+        self.link_instruction_to_block(block_id, instruction_id);
     }
 
     /// Removes `instruction_id` from the layout.
@@ -630,14 +660,14 @@ impl Cfg {
     pub(crate) fn new_jump(&mut self, destination: BlockId, args: &[ValueId]) -> Instruction {
         Instruction::Jump {
             destination,
-            args: ValueList::from(&mut self.dfg.suballocator, args),
+            args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, args),
         }
     }
 
     /// Builds (but does not insert) a `Return` instruction, passing `args`.
     pub(crate) fn new_return(&mut self, args: &[ValueId]) -> Instruction {
         Instruction::Return {
-            args: ValueList::from(&mut self.dfg.suballocator, args),
+            args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, args),
         }
     }
 
@@ -649,7 +679,7 @@ impl Cfg {
     ) -> Instruction {
         Instruction::Call {
             callee,
-            args: ValueList::from(&mut self.dfg.suballocator, args),
+            args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, args),
         }
     }
 
@@ -666,9 +696,9 @@ impl Cfg {
         Instruction::BranchIf {
             arg,
             then_destination,
-            then_args: ValueList::from(&mut self.dfg.suballocator, then_args),
+            then_args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, then_args),
             else_destination,
-            else_args: ValueList::from(&mut self.dfg.suballocator, else_args),
+            else_args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, else_args),
         }
     }
 
@@ -680,22 +710,35 @@ impl Cfg {
         }
     }
 
+    /// Creates and returns a standalone "undefined" placeholder value of type `ty`.
+    /// See [`ValueOrigin::Undefined`].
+    pub(crate) fn add_undefined(&mut self, ty: TypeId) -> ValueId {
+        self.dfg.values.add(Value {
+            ty,
+            alias: None,
+            origin: ValueOrigin::Undefined(ty),
+        })
+    }
+
     /// Returns whether `value_id` is currently attached (i.e., still reachable by walking from its definition site back to it) as an instruction result or block parameter.
     // NOTE: Aliases are never attached.
     fn value_is_attached(&self, value_id: ValueId) -> bool {
-        match self.dfg.values[value_id].def {
-            ValueDefinition::Result(instruction_id, index) => {
+        if self.dfg.values[value_id].alias.is_some() {
+            return false;
+        }
+        match self.dfg.values[value_id].origin {
+            ValueOrigin::InstructionResult(instruction_id, index) => {
                 self.dfg.instruction_results[instruction_id]
-                    .get(index as usize, &self.dfg.suballocator)
+                    .get(&self.dfg.suballocator, index as usize)
                     == Some(value_id)
             }
-            ValueDefinition::Parameter(block_id, index) => {
+            ValueOrigin::Parameter(block_id, index) => {
                 self.dfg.blocks[block_id]
                     .parameters
-                    .get(index as usize, &self.dfg.suballocator)
+                    .get(&self.dfg.suballocator, index as usize)
                     == Some(value_id)
             }
-            ValueDefinition::Alias(_) => false,
+            ValueOrigin::Undefined(_) => false,
         }
     }
 
@@ -703,16 +746,16 @@ impl Cfg {
     pub(crate) fn resolve_aliases(&self, value_id: ValueId) -> ValueId {
         let mut current_value = value_id;
         for _ in 0..=self.dfg.values.count() {
-            match self.dfg.values[current_value].def {
-                ValueDefinition::Alias(original) => current_value = original,
-                _ => return current_value,
+            match self.dfg.values[current_value].alias {
+                Some(original) => current_value = original,
+                None => return current_value,
             }
         }
         panic!("value alias loop detected");
     }
 
     /// Turns `dest` into an alias of `src`.
-    pub(crate) fn change_to_alias(&mut self, dest: ValueId, src: ValueId) {
+    pub(crate) fn mark_as_alias(&mut self, dest: ValueId, src: ValueId) {
         assert!(
             !self.value_is_attached(dest),
             "cannot alias a value that is still attached to an instruction or block"
@@ -730,26 +773,26 @@ impl Cfg {
             "aliasing values of different types"
         );
 
-        self.dfg.values[dest].def = ValueDefinition::Alias(original);
+        self.dfg.values[dest].alias = Some(original);
     }
 
     /// Replaces every use of a value alias throughout the CFG with its final resolved value.
-    /// Tip: Call this once after a batch of `change_to_alias` calls (e.g. at the end of SSA
+    /// Tip: Call this once after a batch of `mark_as_alias` calls (e.g. at the end of SSA
     /// construction, or after a copy-propagation pass) rather than eagerly rewriting on
     /// every single alias creation.
-    pub(crate) fn resolve_all_aliases(&mut self) {
+    pub(crate) fn flush_aliases(&mut self) {
         // step 1: compresses every alias chain so each aliased value points directly at its final target
         let value_ids: Vec<ValueId> = self.dfg.values.keys().collect();
         for mut value_id in value_ids {
-            if let ValueDefinition::Alias(original_pointee_id) = self.dfg.values[value_id].def {
-                let resolved = ValueDefinition::Alias(self.resolve_aliases(original_pointee_id));
+            if let Some(original_pointee_id) = self.dfg.values[value_id].alias {
+                let resolved = Some(self.resolve_aliases(original_pointee_id));
                 let mut next_value_id = original_pointee_id;
                 loop {
-                    self.dfg.values[value_id].def = resolved;
+                    self.dfg.values[value_id].alias = resolved;
 
                     value_id = next_value_id;
 
-                    if let ValueDefinition::Alias(next_pointee_id) = self.dfg.values[value_id].def {
+                    if let Some(next_pointee_id) = self.dfg.values[value_id].alias {
                         next_value_id = next_pointee_id;
                     } else {
                         break;
@@ -761,9 +804,9 @@ impl Cfg {
         // step 2: propagates that resolution out into every instruction's actual operand references.
         for instruction in self.dfg.instructions.values_mut() {
             instruction.rewrite_operands(&mut self.dfg.suballocator, |value_id| {
-                match self.dfg.values[value_id].def {
-                    ValueDefinition::Alias(original) => original,
-                    _ => value_id,
+                match self.dfg.values[value_id].alias {
+                    Some(original) => original,
+                    None => value_id,
                 }
             });
         }
@@ -804,7 +847,7 @@ impl Instruction {
     /// Rewrites every `ValueId` this instruction references by applying `f` to each one.
     fn rewrite_operands(
         &mut self,
-        suballocator: &mut ValueListSubAllocator,
+        suballocator: &mut HandleListSubAllocator<ValueId>,
         mut f: impl FnMut(ValueId) -> ValueId,
     ) {
         match self {
@@ -907,27 +950,9 @@ impl<'a> BlockViewMut<'a> {
         );
         self.cfg.dfg.values.add(Value {
             ty,
-            def: ValueDefinition::Parameter(self.block_id, count as u16),
+            alias: None,
+            origin: ValueOrigin::Parameter(self.block_id, count as u16),
         })
-    }
-
-    /// Appends `instruction` to the end of this block, allocating result values with types `result_tys`.
-    pub(crate) fn append_instruction(
-        &mut self,
-        instruction: Instruction,
-        result_tys: &[TypeId],
-    ) -> InstructionId {
-        let instruction_id = self.cfg.create_instruction(instruction, result_tys);
-        self.cfg
-            .link_instruction_to_block(self.block_id, instruction_id);
-        instruction_id
-    }
-
-    /// Appends a terminator (which produces no results) to the end of this block.
-    pub(crate) fn set_terminator(&mut self, terminator: Instruction) {
-        let instruction_id = self.cfg.create_instruction(terminator, &[]);
-        self.cfg
-            .link_instruction_to_block(self.block_id, instruction_id);
     }
 
     /// Removes the block parameter at `index` by swapping it with the last and decrementing the count.
@@ -942,7 +967,7 @@ impl<'a> BlockViewMut<'a> {
         self.cfg.dfg.blocks[self.block_id]
             .parameters
             .clear_last(&mut self.cfg.dfg.suballocator);
-        if let ValueDefinition::Parameter(_, num) = &mut self.cfg.dfg.values[moved_value].def {
+        if let ValueOrigin::Parameter(_, num) = &mut self.cfg.dfg.values[moved_value].origin {
             *num = index as u16;
         }
     }
@@ -955,17 +980,17 @@ impl<'a> BlockViewMut<'a> {
         let parameters = self.cfg.dfg.blocks[self.block_id].parameters;
         let count = parameters.count(&self.cfg.dfg.suballocator);
         for i in index..count {
-            let value_id = parameters.get(i, &self.cfg.dfg.suballocator).unwrap();
-            if let ValueDefinition::Parameter(_, num) = &mut self.cfg.dfg.values[value_id].def {
+            let value_id = parameters.get(&self.cfg.dfg.suballocator, i).unwrap();
+            if let ValueOrigin::Parameter(_, num) = &mut self.cfg.dfg.values[value_id].origin {
                 *num = i as u16;
             }
         }
     }
 
     /// Detaches and returns the block's parameter list, leaving the block with no parameters.
-    pub(crate) fn detach_parameters(&mut self) -> ValueList {
+    pub(crate) fn detach_parameters(&mut self) -> HandleList<ValueId> {
         let params = self.cfg.dfg.blocks[self.block_id].parameters;
-        self.cfg.dfg.blocks[self.block_id].parameters = ValueList::new();
+        self.cfg.dfg.blocks[self.block_id].parameters = HandleList::<ValueId>::new();
         params
     }
 }
@@ -1009,7 +1034,7 @@ impl<'a> InstructionView<'a> {
 
     /// Returns the first result, or `None` if this instruction produces no results.
     pub(crate) fn first_result(&self) -> Option<ValueId> {
-        self.cfg.dfg.instruction_results[self.instruction_id].get(0, &self.cfg.dfg.suballocator)
+        self.cfg.dfg.instruction_results[self.instruction_id].get(&self.cfg.dfg.suballocator, 0)
     }
 
     /// Returns the block that contains this instruction, or `None` if it has been
@@ -1034,6 +1059,51 @@ impl<'a> InstructionView<'a> {
             _ => UsedValuesIter::Slice(self.arguments().iter()),
         }
     }
+
+    /// Returns the value this instruction passes to `destination`'s `index`-th parameter
+    /// (i.e., the counterpart read to [`InstructionViewMut::append_block_argument`]).
+    ///
+    /// If a `BranchIf`'s two arms both target `destination`, `then_args` and `else_args`
+    /// always agree at every index (both were pushed the same value by
+    /// `append_block_argument`), so either can be read.
+    ///
+    /// Panics if this instruction doesn't branch to `destination`, or if `index` is out of bounds.
+    pub(crate) fn block_argument(&self, destination: BlockId, index: usize) -> ValueId {
+        let suballocator = &self.cfg.dfg.suballocator;
+        match &self.cfg.dfg.instructions[self.instruction_id] {
+            Instruction::Jump {
+                destination: dest,
+                args,
+            } => {
+                assert_eq!(
+                    *dest, destination,
+                    "instruction does not jump to destination"
+                );
+                args.get(suballocator, index)
+                    .expect("branch argument index out of bounds")
+            }
+            Instruction::BranchIf {
+                then_destination,
+                then_args,
+                else_destination,
+                else_args,
+                ..
+            } => {
+                if *then_destination == destination {
+                    then_args
+                        .get(suballocator, index)
+                        .expect("branch argument index out of bounds")
+                } else if *else_destination == destination {
+                    else_args
+                        .get(suballocator, index)
+                        .expect("branch argument index out of bounds")
+                } else {
+                    panic!("instruction does not branch to destination")
+                }
+            }
+            _ => panic!("instruction is not a branch"),
+        }
+    }
 }
 
 impl<'a> InstructionViewMut<'a> {
@@ -1047,13 +1117,13 @@ impl<'a> InstructionViewMut<'a> {
     /// Appends `value` to whichever of this instruction's argument list(s) target
     /// `destination` (`Jump::args`, or `BranchIf::then_args`/`else_args`).
     ///
-    /// Used when SSA construction resolves a block parameter (phi): the agreed-upon value
+    /// Used when SSA construction resolves a block parameter: the agreed-upon value
     /// has to be fed back into every predecessor edge that targets the block. Appends to
     /// *both* `then_args` and `else_args` if a `BranchIf`'s two arms happen to target the
     /// same block — a single instruction can be a predecessor via more than one edge.
     ///
     /// Panics if this instruction doesn't branch to `destination` at all.
-    pub(crate) fn append_branch_argument(&mut self, destination: BlockId, value: ValueId) {
+    pub(crate) fn append_block_argument(&mut self, destination: BlockId, value: ValueId) {
         let suballocator = &mut self.cfg.dfg.suballocator;
         match &mut self.cfg.dfg.instructions[self.instruction_id] {
             Instruction::Jump {
@@ -1095,12 +1165,9 @@ impl<'a> ValueView<'a> {
         self.cfg.dfg.values[self.value_id].ty
     }
 
-    /// Returns this value's definition, resolving through any alias chain first.
-    pub(crate) fn definition(&self) -> ValueDefinition {
-        // This never returns `ValueDefinition::Alias` — unlike a hypothetical accessor
-        // that just read `.def` off the raw `Value`, this always follows the chain via
-        // `resolve_aliases`, so there's no discoverable-but-wrong way to ask this question.
-        self.cfg.dfg.values[self.cfg.resolve_aliases(self.value_id)].def
+    /// Returns this value's origin, resolving through any alias chain first.
+    pub(crate) fn origin(&self) -> ValueOrigin {
+        self.cfg.dfg.values[self.cfg.resolve_aliases(self.value_id)].origin
     }
 }
 
@@ -1167,7 +1234,7 @@ impl DataFlowGraph {
             blocks: HandleMap::new(),
             function_references: HandleMap::new(),
             signatures: HandleMap::new(),
-            suballocator: ValueListSubAllocator::new(),
+            suballocator: HandleListSubAllocator::<ValueId>::new(),
         }
     }
 }
@@ -1228,9 +1295,7 @@ mod tests {
         let mut cfg = Cfg::new();
         let block = cfg.create_block();
         cfg.append_block(block);
-        let first = cfg
-            .get_block_mut(block)
-            .append_instruction(Instruction::Unreachable, &[]);
+        let first = cfg.append_instruction(block, Instruction::Unreachable, &[]);
 
         let new_first = cfg.add_instruction_before(Instruction::Unreachable, &[], first);
 
@@ -1244,9 +1309,8 @@ mod tests {
         let mut cfg = Cfg::new();
         let block = cfg.create_block();
         cfg.append_block(block);
-        let mut view = cfg.get_block_mut(block);
-        let first = view.append_instruction(Instruction::Unreachable, &[]);
-        let third = view.append_instruction(Instruction::Unreachable, &[]);
+        let first = cfg.append_instruction(block, Instruction::Unreachable, &[]);
+        let third = cfg.append_instruction(block, Instruction::Unreachable, &[]);
 
         let second = cfg.add_instruction_before(Instruction::Unreachable, &[], third);
 

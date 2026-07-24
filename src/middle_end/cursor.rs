@@ -2,17 +2,15 @@
 //!
 //! Mirrors `std::collections::linked_list::CursorMut`: a plain struct wrapping a `&mut Cfg`
 //! plus a tracked position, with its navigation and editing methods as ordinary inherent
-//! methods — no trait, since (like `CursorMut`) there's only ever one concrete cursor type
-//! here, and nothing is generic over "any cursor." Every mutating method is a thin,
-//! position-dependent dispatch to `Cfg`'s own insert/remove/split operations — the cursor
-//! adds no new capability, just position tracking on top of what `Cfg` already exposes.
+//! methods.
 
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::mir::{
-    BlockId, BlockIter, BlockView, Cfg, FunctionReferenceId, Instruction, InstructionId,
+    BlockId, BlockIter, BlockView, BlockViewMut, Cfg, FunctionReference, FunctionReferenceId,
+    Instruction, InstructionId, InstructionView, InstructionViewMut, Signature, SignatureId,
+    ValueId, ValueOrigin, ValueView,
 };
-use crate::middle_end::value_list::ValueId;
 
 /// The possible positions of a [`CfgCursor`] within a `Cfg`'s layout.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -80,6 +78,88 @@ impl<'a> CfgCursor<'a> {
         self.cfg.blocks()
     }
 
+    /// Returns a view over `block_id`'s data. See [`Cfg::get_block`].
+    pub(crate) fn get_block(&self, block_id: BlockId) -> BlockView<'_> {
+        self.cfg.get_block(block_id)
+    }
+
+    /// Returns a view over `instruction_id`'s data. See [`Cfg::get_instruction`].
+    pub(crate) fn get_instruction(&self, instruction_id: InstructionId) -> InstructionView<'_> {
+        self.cfg.get_instruction(instruction_id)
+    }
+
+    /// Returns a mutable view over `instruction_id`'s own operands/arguments — not the layout
+    /// (there's nothing here that inserts or removes instructions, so this can't create a
+    /// second path to anything `add_instruction`/`remove_instruction` already own). See
+    /// [`Cfg::get_instruction_mut`].
+    pub(crate) fn get_instruction_mut(
+        &mut self,
+        instruction_id: InstructionId,
+    ) -> InstructionViewMut<'_> {
+        self.cfg.get_instruction_mut(instruction_id)
+    }
+
+    /// Returns a view over `value_id`'s data. See [`Cfg::get_value`].
+    pub(crate) fn get_value(&self, value_id: ValueId) -> ValueView<'_> {
+        self.cfg.get_value(value_id)
+    }
+
+    /// Follows `value_id`'s alias chain (if any) to the value it ultimately stands for.
+    /// See [`Cfg::resolve_aliases`].
+    pub(crate) fn resolve_aliases(&self, value_id: ValueId) -> ValueId {
+        self.cfg.resolve_aliases(value_id)
+    }
+
+    /// Turns `dest` into an alias of `src`. See [`Cfg::mark_as_alias`].
+    pub(crate) fn mark_as_alias(&mut self, dest: ValueId, src: ValueId) {
+        self.cfg.mark_as_alias(dest, src);
+    }
+
+    /// Creates a standalone "undefined" placeholder value of type `ty`. See [`Cfg::add_undefined`].
+    pub(crate) fn add_undefined(&mut self, ty: TypeId) -> ValueId {
+        self.cfg.add_undefined(ty)
+    }
+
+    /// Returns the block arguments stemming from `predecessor_edge` for `block_parameter`.
+    ///
+    /// Panics if `block_parameter` isn't actually a block parameter, or if `predecessor_edge`
+    /// doesn't point there.
+    pub(crate) fn block_argument(
+        &self,
+        block_parameter: ValueId,
+        predecessor_edge: InstructionId,
+    ) -> ValueId {
+        let (block_id, index) = match self.get_value(block_parameter).origin() {
+            ValueOrigin::Parameter(block_id, index) => (block_id, index as usize),
+            ValueOrigin::InstructionResult(..) | ValueOrigin::Undefined(_) => {
+                panic!("value is not a block parameter")
+            }
+        };
+        self.get_instruction(predecessor_edge)
+            .block_argument(block_id, index)
+    }
+
+    /// Returns a reference to `signature_id`'s data. See [`Cfg::get_signature`].
+    pub(crate) fn get_signature(&self, signature_id: SignatureId) -> &Signature {
+        self.cfg.get_signature(signature_id)
+    }
+
+    /// Returns a reference to `function_reference_id`'s data. See [`Cfg::get_function_reference`].
+    pub(crate) fn get_function_reference(
+        &self,
+        function_reference_id: FunctionReferenceId,
+    ) -> &FunctionReference {
+        self.cfg.get_function_reference(function_reference_id)
+    }
+
+    /// Returns a mutable view over `block_id`'s parameters. `append_instruction`/
+    /// `set_terminator` live directly on [`Cfg`] instead, so `BlockViewMut` itself only ever
+    /// exposes parameter operations — nothing here can create a second, untracked path to
+    /// editing the instruction sequence alongside `add_instruction`. See [`Cfg::get_block_mut`].
+    pub(crate) fn get_block_mut(&mut self, block_id: BlockId) -> BlockViewMut<'_> {
+        self.cfg.get_block_mut(block_id)
+    }
+
     /// Returns the block corresponding to the current position.
     pub(crate) fn current_block(&self) -> Option<BlockId> {
         match self.position {
@@ -101,7 +181,7 @@ impl<'a> CfgCursor<'a> {
 
     /// Moves to `instruction_id`, which must already be in the layout. New instructions
     /// will be inserted before it.
-    pub(crate) fn goto_instruction(&mut self, instruction_id: InstructionId) {
+    pub(crate) fn seek_instruction(&mut self, instruction_id: InstructionId) {
         assert!(
             self.cfg
                 .get_instruction(instruction_id)
@@ -113,7 +193,7 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Moves to the position immediately after `instruction_id`, which must already be in the layout.
-    pub(crate) fn goto_after_instruction(&mut self, instruction_id: InstructionId) {
+    pub(crate) fn seek_after_instruction(&mut self, instruction_id: InstructionId) {
         let view = self.cfg.get_instruction(instruction_id);
         let block_id = view
             .containing_block()
@@ -126,44 +206,44 @@ impl<'a> CfgCursor<'a> {
 
     /// Moves to the position for inserting instructions at the beginning of `block_id`,
     /// without assuming any instructions have been inserted into it yet.
-    pub(crate) fn goto_first_insertion_point(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_first_insertion_point(&mut self, block_id: BlockId) {
         match self.cfg.get_block(block_id).first_instruction() {
-            Some(instruction_id) => self.goto_instruction(instruction_id),
-            None => self.goto_bottom(block_id),
+            Some(instruction_id) => self.seek_instruction(instruction_id),
+            None => self.seek_bottom(block_id),
         }
     }
 
     /// Moves to the first instruction in `block_id`. Panics if the block is empty.
-    pub(crate) fn goto_first_instruction(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_first_instruction(&mut self, block_id: BlockId) {
         let instruction_id = self
             .cfg
             .get_block(block_id)
             .first_instruction()
             .expect("empty block");
-        self.goto_instruction(instruction_id);
+        self.seek_instruction(instruction_id);
     }
 
     /// Moves to the last instruction in `block_id`. Panics if the block is empty.
-    pub(crate) fn goto_last_instruction(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_last_instruction(&mut self, block_id: BlockId) {
         let instruction_id = self
             .cfg
             .get_block(block_id)
             .last_instruction()
             .expect("empty block");
-        self.goto_instruction(instruction_id);
+        self.seek_instruction(instruction_id);
     }
 
     /// Moves to the top of `block_id`, which must already be in the layout. At this
     /// position, instructions cannot be inserted, but `next_instruction` moves to the
     /// block's first instruction.
-    pub(crate) fn goto_top(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_top(&mut self, block_id: BlockId) {
         assert!(self.cfg.is_block_linked(block_id));
         self.position = CursorPosition::Before(block_id);
     }
 
     /// Moves to the bottom of `block_id`, which must already be in the layout. Inserted
     /// instructions are appended to it.
-    pub(crate) fn goto_bottom(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_bottom(&mut self, block_id: BlockId) {
         assert!(self.cfg.is_block_linked(block_id));
         self.position = CursorPosition::After(block_id);
     }
@@ -264,10 +344,10 @@ impl<'a> CfgCursor<'a> {
                 self.cfg
                     .add_instruction_before(instruction, result_tys, before)
             }
-            CursorPosition::After(block_id) => self
-                .cfg
-                .get_block_mut(block_id)
-                .append_instruction(instruction, result_tys),
+            CursorPosition::After(block_id) => {
+                self.cfg
+                    .append_instruction(block_id, instruction, result_tys)
+            }
             CursorPosition::Nowhere | CursorPosition::Before(_) => {
                 panic!("invalid cursor position for add_instruction")
             }

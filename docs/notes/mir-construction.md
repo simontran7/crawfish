@@ -62,11 +62,11 @@ x2 = phi(x0, x1)
 println(x2)
 ```
 
-Then, a **phi node** picks the value from whichever predecessor was taken. This simplifies most optimization passes, since merging values at control-flow join points becomes a single lookup. 
+Then, a **phi node** picks the values called **phi operands** from whichever predecessor was taken. This simplifies most optimization passes, since merging values at control-flow join points becomes a single lookup. 
 
 However, phi nodes break the instruction model, as every other instruction produces its output from a local computation, but a phi node's output depends on which block jumped here, thereby forcing phi nodes to the top of the block and creates a special case every pass must handle.
 
-Instead, we can use **block parameters**: predecessor blocks pass values as arguments when they jump.
+Instead of the traditional phi nodes, we can use **block parameters**. Blocks have parameters so that predecessors can pass values as arguments (the equivalent of a phi operands) when they jump. 
 
 ```text
 block_A:
@@ -99,6 +99,7 @@ The [initial SSA construction algorithm](https://dl.acm.org/doi/pdf/10.1145/7527
 1. Computes for every block $X$ in the CFG its **dominance frontier** $DF$. A dominance frontier is the set of all blocks $Y$ where $X$ dominates one of its predecessors, *but* $X$ does *not* dominate $Y$. 
 
 For instance: in the following CFG, $DF(B) = {D}$ (i.e., the dominance frontier of block $B$ is only $D$) since $D$'s predecessor $E$ is dominated by $B$, yet $B$ does not dominate $D$ since there's a path to $D$ from $C$.
+
 ```text
    / \
   B   C
@@ -122,18 +123,29 @@ This indicates where to create and insert phi nodes.
 However, Cytron et al.'s algorithm pays two costs before a single phi node is placed: the AST must already be lowered to a CFG, and the dominance frontier (typically alongside the dominator tree) must be computed for the *entire* CFG upfront, regardless of how many variables actually need phi nodes. 
 
 This is where [Braun et al.'s algorithm](https://link.springer.com/chapter/10.1007/978-3-642-37051-9_6) comes in. It lowers straight from the typed IR to SSA (skipping the dominance frontier analysis entirely from Cytron et al.'s algorithm), by placing phi nodes lazily via recursion instead of computing them all upfront:
-1. Base Case (**Local value numbering**): check if the variable was already assigned earlier in the same block, and if so, just reuse that value directly (since there's only ever one possible path that led to that assignment executing: the one you're already on)
-2. Recursive Step (**Global value numbering**): if a block currently contains no definition for a variable, we recursively look for a definition in its predecessors. Which of three cases applies depends on the block's sealed status and predecessor count:
+- Base Case (**Local value numbering**): check if the variable was already assigned earlier in the same block, and if so, just reuse that value directly (since there's only ever one possible path that led to that assignment executing: the one you're already on)
+- Recursive Step (**Global value numbering**): if a block currently contains no definition for a variable, we recursively look for a definition in its predecessors. Which of three cases applies depends on the block's sealed status and predecessor count:
     - **Unsealed** (not all predecessors known yet): create an empty phi node for this block as a placeholder, and stop here as it will get resolved later once the block is sealed.
     - **Sealed, single predecessor**: skip creating a phi node entirely, and just query that one predecessor recursively for a definition instead since there's only one possible path into this block, and so there's nothing to merge.
+
         > [!NOTE]
         > This shortcut is only safe once the block is sealed. An unsealed block might still gain a second predecessor later, which would retroactively make "just recurse into the one predecessor" the wrong answer.
+
     - **Sealed, multiple predecessors**: create an empty phi node for this block first to prevent infinite recursion (the placeholder is what a reentrant lookup for the same block finds instead of recursing forever, breaking the cycle), record it as the current definition for the variable in the block, then recurse into every predecessor and ask each for their value.
         - If all predecessors give the same value: no phi node is needed at all. That single value is the answer, and just hand it back up.
         - If the predecessors give different values: that disagreement means this block is a genuine merge point, so the placeholder phi node's operands get filled in, one operand per predecessor, matching each predecessor's value to its corresponding edge. The phi node's result value becomes the answer.
-        - Then, check whether that phi node is *trivial* i.e., if its operands, once filled in, all turn out to be the same value (ignoring any operand that just points back to the phi node itself), and thus, not merging anything. This phi node is therefore removed, and every use of it is replaced with that shared value directly.
-            > [!NOTE]
-            > As a special case, the phi node might use no other value besides itself. This means that it is either unreachable or in the start block. We replace it by an undefined value.
+        - Then, check whether that phi node is *trivial* i.e., if its operands, once filled in, all turn out to be the same value (ignoring any operand that just points back to the phi node itself), and thus, not merging anything. This phi node is therefore removed, and every use of it is replaced with that shared value directly. Additionally, a phi node is considered trivial if the phi node has no operands besides itself, it means that it can't actually be reached with from any predecessor (i.e., it's either dead/unreachable code, or it's the function's entry block, as the entry block has no predecessors at all) either unreachable or in the start block. Since there's nothing sensible to substitute, we plug in an explicit **undefined** placeholder value as the phi node's replacement, so it takes the phi node's place wherever the phi was already being used. 
+
+        > [!NOTE]
+        > This fill-then-check order only stays cheap for classical phi nodes whose operands live on the phi node itself. For **block parameters**, operands instead live on each predecessor's jump or branch instruction as block arguments, so filling them in *before* checking triviality means a trivial result leaves the block's parameter count out of sync with its predecessors' argument count, forcing the one argument added to be stripped back out of every predecessor. Cranelift avoids this by checking triviality first, before writing any arguments, and only committing them once a parameter is known to survive (i.e., there's no process of removing block arguments).
+
+        > [!NOTE]
+        > It is necessary to *recursively* remove trivial phi nodes as other phi nodes elsewhere may hold the now-deleted trivial phi node as one of their operands. Once that operand is rewritten to the common value $v$, those phis' operand lists change too, which can newly make *them* trivial so the check has to cascade to every user of the removed phi, and not *just* the phi itself. However, this code doesn't do that, but only **aliases** trivial block parameters, then rewrites them once, in a single batch at the end of construction (`flush_aliases()`). 
+
+**The acyclic/ordering argument.**
+   This whole simple version of the algorithm — just filling in φ operands as you go — only works cleanly if you can guarantee every predecessor of a block is fully processed before you process that block. For straight-line/branching code (if/else) that's easy: fill the condition block, then each branch, then the join block last, so by the time you read a variable in the join block, both branches already have complete definitions to offer.
+
+   That guarantee breaks for loops: when you're generating code inside a loop body and need to read a variable, the loop header's back-edge (the jump from the bottom of the loop back to the top) doesn't exist yet — you haven't gotten there yet. So the header is missing a predecessor at the time you need to query it. That's precisely the case the `Sealed::No { incomplete_phis }` branch exists for — this is the motivation for needing "unsealed" blocks and incomplete φ tracking at all, which is what `seal_block`/`read_variable_recursive` need to handle.
 
 Let's go through an example. Consider the following crawfish source program:
 
