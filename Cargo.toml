@@ -20,3 +20,6 @@ divan = "0.1"
 name = "tokenizer"
 harness = false
 required-features = ["bench-support"]
+
+[patch."https://github.com/simontran7/soup"]
+soup = { path = "../soup" }

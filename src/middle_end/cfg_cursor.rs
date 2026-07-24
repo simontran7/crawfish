@@ -1,8 +1,4 @@
 //! A cursor for navigating and editing a `Cfg`'s layout.
-//!
-//! Mirrors `std::collections::linked_list::CursorMut`: a plain struct wrapping a `&mut Cfg`
-//! plus a tracked position, with its navigation and editing methods as ordinary inherent
-//! methods.
 
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};

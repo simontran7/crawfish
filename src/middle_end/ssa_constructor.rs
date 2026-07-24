@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use soup::handle_map::SideHandleMap;
+use soup::handle_map::{Handle, SideHandleMap};
 
 use crate::common::types::TypeId;
 use crate::front_end::semantic_analysis::hir::LocalBindingId;
@@ -31,14 +31,24 @@ enum Sealed {
 }
 
 impl<'a> SsaConstructor<'a> {
-    pub(crate) fn new() -> Self {
-        todo!()
+    pub(crate) fn new(
+        predecessor_edge_suballocator: &'a mut HandleListSubAllocator<InstructionId>,
+        incomplete_block_parameter_suballocator: &'a mut HandleListSubAllocator<LocalBindingId>,
+    ) -> Self {
+        Self {
+            predecessor_edge_suballocator,
+            incomplete_block_parameter_suballocator,
+            current_defs: HashMap::new(),
+            block_states: SideHandleMap::new(),
+        }
     }
 
-    /// Registers `block_id` so it's safe to index into `block_states`. Must be called
-    /// before any other method touches `block_id` — `SideHandleMap` panics on an
-    /// unregistered key rather than auto-creating one (unlike Cranelift's `SecondaryMap`).
     pub(crate) fn declare_block(&mut self, block_id: BlockId) {
+        assert_eq!(
+            block_id.index(),
+            self.block_states.count(),
+            "blocks must be declared in the order they're created"
+        );
         self.block_states.add(block_id, BlockState::default());
     }
 

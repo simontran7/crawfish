@@ -350,10 +350,10 @@ impl Cfg {
     }
 
     /// Returns whether `block_id` is currently part of the layout.
-    /// Can't simply check `self.layout.blocks.get(block_id).is_some()` since for `SideHandleMap`,
-    /// appending some higher-indexed block pads intermediate never-inserted slots
-    /// with a default `BlockNode`, which would make `.get()` spuriously return `Some`
-    /// for a block that was never appended.
+    /// Can't simply check `self.layout.blocks.get(block_id).is_some()`: `remove_block` only
+    /// clears `prev`/`next`, it doesn't delete the entry, so a removed block is still present.
+    /// `prev.is_some()` tells a linked block from a removed one, except the entry block also
+    /// has `prev: None` legitimately, hence the separate `self.layout.entry` check.
     pub(crate) fn is_block_linked(&self, block_id: BlockId) -> bool {
         Some(block_id) == self.layout.entry
             || self
