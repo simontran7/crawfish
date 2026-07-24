@@ -127,10 +127,6 @@ This is where [Braun et al.'s algorithm](https://link.springer.com/chapter/10.10
 - Recursive Step (**Global value numbering**): if a block currently contains no definition for a variable, we recursively look for a definition in its predecessors. Which of three cases applies depends on the block's sealed status and predecessor count:
     - **Unsealed** (not all predecessors known yet): create an empty phi node for this block as a placeholder, and stop here as it will get resolved later once the block is sealed.
     - **Sealed, single predecessor**: skip creating a phi node entirely, and just query that one predecessor recursively for a definition instead since there's only one possible path into this block, and so there's nothing to merge.
-
-        > [!NOTE]
-        > This shortcut is only safe once the block is sealed. An unsealed block might still gain a second predecessor later, which would retroactively make "just recurse into the one predecessor" the wrong answer.
-
     - **Sealed, multiple predecessors**: create an empty phi node for this block first to prevent infinite recursion (the placeholder is what a reentrant lookup for the same block finds instead of recursing forever, breaking the cycle), record it as the current definition for the variable in the block, then recurse into every predecessor and ask each for their value.
         - If all predecessors give the same value: no phi node is needed at all. That single value is the answer, and just hand it back up.
         - If the predecessors give different values: that disagreement means this block is a genuine merge point, so the placeholder phi node's operands get filled in, one operand per predecessor, matching each predecessor's value to its corresponding edge. The phi node's result value becomes the answer.
@@ -141,11 +137,6 @@ This is where [Braun et al.'s algorithm](https://link.springer.com/chapter/10.10
 
         > [!NOTE]
         > It is necessary to *recursively* remove trivial phi nodes as other phi nodes elsewhere may hold the now-deleted trivial phi node as one of their operands. Once that operand is rewritten to the common value $v$, those phis' operand lists change too, which can newly make *them* trivial so the check has to cascade to every user of the removed phi, and not *just* the phi itself. However, this code doesn't do that, but only **aliases** trivial block parameters, then rewrites them once, in a single batch at the end of construction (`flush_aliases()`). 
-
-**The acyclic/ordering argument.**
-   This whole simple version of the algorithm — just filling in φ operands as you go — only works cleanly if you can guarantee every predecessor of a block is fully processed before you process that block. For straight-line/branching code (if/else) that's easy: fill the condition block, then each branch, then the join block last, so by the time you read a variable in the join block, both branches already have complete definitions to offer.
-
-   That guarantee breaks for loops: when you're generating code inside a loop body and need to read a variable, the loop header's back-edge (the jump from the bottom of the loop back to the top) doesn't exist yet — you haven't gotten there yet. So the header is missing a predecessor at the time you need to query it. That's precisely the case the `Sealed::No { incomplete_phis }` branch exists for — this is the motivation for needing "unsealed" blocks and incomplete φ tracking at all, which is what `seal_block`/`read_variable_recursive` need to handle.
 
 Let's go through an example. Consider the following crawfish source program:
 

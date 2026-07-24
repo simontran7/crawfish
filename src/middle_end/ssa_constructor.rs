@@ -4,30 +4,44 @@ use soup::handle_map::SideHandleMap;
 
 use crate::common::types::TypeId;
 use crate::front_end::semantic_analysis::hir::LocalBindingId;
-use crate::middle_end::cursor::CfgCursor;
+use crate::middle_end::cfg_cursor::CfgCursor;
 use crate::middle_end::handle_list::{HandleList, HandleListSubAllocator};
-use crate::middle_end::mir::{BlockId, Function, InstructionId, ValueId, ValueOrigin};
+use crate::middle_end::mir::{BlockId, InstructionId, ValueId, ValueOrigin};
 
-pub(crate) struct FunctionBuilder<'a> {
-    suballocator: &'a mut HandleListSubAllocator<InstructionId>,
-    function: Function,
+pub(crate) struct SsaConstructor<'a> {
+    predecessor_edge_suballocator: &'a mut HandleListSubAllocator<InstructionId>,
+    incomplete_block_parameter_suballocator: &'a mut HandleListSubAllocator<LocalBindingId>,
     current_defs: HashMap<(LocalBindingId, BlockId), ValueId>,
     block_states: SideHandleMap<BlockId, BlockState>,
 }
 
+#[derive(Clone, Default)]
 struct BlockState {
     predecessors: HandleList<InstructionId>,
     sealed: Sealed,
 }
 
+#[derive(Clone)]
 enum Sealed {
     Yes,
     No {
-        incomplete_block_parameters: HandleList<LocalBindingId>,
+        /// variables that have a placeholder (i.e., unfinalized) block parameter
+        incomplete_variables: HandleList<LocalBindingId>,
     },
 }
 
-impl<'a> FunctionBuilder<'a> {
+impl<'a> SsaConstructor<'a> {
+    pub(crate) fn new() -> Self {
+        todo!()
+    }
+
+    /// Registers `block_id` so it's safe to index into `block_states`. Must be called
+    /// before any other method touches `block_id` — `SideHandleMap` panics on an
+    /// unregistered key rather than auto-creating one (unlike Cranelift's `SecondaryMap`).
+    pub(crate) fn declare_block(&mut self, block_id: BlockId) {
+        self.block_states.add(block_id, BlockState::default());
+    }
+
     pub(crate) fn write_variable(
         &mut self,
         variable: LocalBindingId,
@@ -39,6 +53,7 @@ impl<'a> FunctionBuilder<'a> {
 
     pub(crate) fn read_variable(
         &mut self,
+        cursor: &mut CfgCursor,
         variable_id: LocalBindingId,
         ty: TypeId,
         block_id: BlockId,
@@ -46,49 +61,75 @@ impl<'a> FunctionBuilder<'a> {
         if let Some(&value_id) = self.current_defs.get(&(variable_id, block_id)) {
             return value_id;
         }
-        self.read_variable_recursive(variable_id, ty, block_id)
+        self.read_variable_recursive(cursor, variable_id, ty, block_id)
     }
 
-    pub(crate) fn seal_block(&mut self, block: BlockId) {
-        todo!()
+    pub(crate) fn seal_block(&mut self, cursor: &mut CfgCursor, block_id: BlockId) {
+        if let Sealed::No {
+            incomplete_variables,
+        } = self.block_states[block_id].sealed
+        {
+            let variables = incomplete_variables
+                .to_slice(self.incomplete_block_parameter_suballocator)
+                .to_vec();
+            for variable_id in variables {
+                let block_parameter = self.current_defs[&(variable_id, block_id)];
+                let ty = cursor.get_value(block_parameter).ty();
+                let block_args = self.collect_block_arguments(cursor, variable_id, ty, block_id);
+                self.finalize_block_parameter(cursor, block_parameter, ty, block_id, &block_args);
+            }
+            self.block_states[block_id].sealed = Sealed::Yes;
+        } else {
+            panic!("block pointed by {block_id:?} is already sealed")
+        }
     }
 
     fn read_variable_recursive(
         &mut self,
+        cursor: &mut CfgCursor,
         variable_id: LocalBindingId,
         ty: TypeId,
         block_id: BlockId,
     ) -> ValueId {
-        let mut cursor = CfgCursor::new(&mut self.function.body);
         let value_id = match &mut self.block_states[block_id].sealed {
             // case 1: incomplete CFG
             Sealed::No {
-                incomplete_block_parameters,
+                incomplete_variables,
             } => {
-                todo!()
+                let block_parameter = cursor.get_block_mut(block_id).append_parameter(ty);
+                incomplete_variables
+                    .add_last(self.incomplete_block_parameter_suballocator, variable_id);
+                block_parameter
             }
             Sealed::Yes => {
                 // case 2: common case of one predecessor (no block parameter needed)
                 if self.block_states[block_id]
                     .predecessors
-                    .count(self.suballocator)
+                    .count(self.predecessor_edge_suballocator)
                     == 1
                 {
                     let instruction_id = self.block_states[block_id]
                         .predecessors
-                        .get(self.suballocator, 0)
+                        .get(self.predecessor_edge_suballocator, 0)
                         .unwrap();
                     let predecessor_id = cursor
                         .get_instruction(instruction_id)
                         .containing_block()
                         .unwrap();
-                    self.read_variable(variable_id, ty, predecessor_id)
+                    self.read_variable(cursor, variable_id, ty, predecessor_id)
                 } else {
                     // case 3: general case with predecessors
                     let block_parameter = cursor.get_block_mut(block_id).append_parameter(ty);
                     self.write_variable(variable_id, block_id, block_parameter);
-                    let block_args = self.collect_block_arguments(variable_id, ty, block_id);
-                    self.finalize_block_parameter(block_parameter, ty, block_id, &block_args)
+                    let block_args =
+                        self.collect_block_arguments(cursor, variable_id, ty, block_id);
+                    self.finalize_block_parameter(
+                        cursor,
+                        block_parameter,
+                        ty,
+                        block_id,
+                        &block_args,
+                    )
                 }
             }
         };
@@ -98,23 +139,23 @@ impl<'a> FunctionBuilder<'a> {
 
     fn collect_block_arguments(
         &mut self,
+        cursor: &mut CfgCursor,
         variable: LocalBindingId,
         ty: TypeId,
         block_id: BlockId,
     ) -> Vec<(InstructionId, ValueId)> {
         let mut block_args = Vec::new();
-        let predecessor_edges: HandleList<InstructionId> = self.block_states[block_id].predecessors;
+        let predecessor_edges = self.block_states[block_id]
+            .predecessors
+            .to_slice(self.predecessor_edge_suballocator)
+            .to_vec();
 
-        for i in 0..predecessor_edges.count(self.suballocator) {
-            let instruction_id = predecessor_edges.get(self.suballocator, i).unwrap();
-            let predecessor = {
-                let cursor = CfgCursor::new(&mut self.function.body);
-                cursor
-                    .get_instruction(instruction_id)
-                    .containing_block()
-                    .unwrap()
-            };
-            let value = self.read_variable(variable, ty, predecessor);
+        for instruction_id in predecessor_edges {
+            let predecessor = cursor
+                .get_instruction(instruction_id)
+                .containing_block()
+                .unwrap();
+            let value = self.read_variable(cursor, variable, ty, predecessor);
             block_args.push((instruction_id, value));
         }
 
@@ -123,12 +164,12 @@ impl<'a> FunctionBuilder<'a> {
 
     fn finalize_block_parameter(
         &mut self,
+        cursor: &mut CfgCursor,
         block_parameter: ValueId,
         ty: TypeId,
         block_id: BlockId,
         block_args: &[(InstructionId, ValueId)],
     ) -> ValueId {
-        let mut cursor = CfgCursor::new(&mut self.function.body);
         let mut common_value: Option<ValueId> = None;
 
         for &(_, block_arg) in block_args {
@@ -177,7 +218,7 @@ impl<'a> FunctionBuilder<'a> {
 impl Default for Sealed {
     fn default() -> Self {
         Sealed::No {
-            incomplete_block_parameters: HandleList::new(),
+            incomplete_variables: HandleList::new(),
         }
     }
 }

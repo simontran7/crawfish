@@ -365,6 +365,12 @@ impl<'a> CfgCursor<'a> {
         instruction_id
     }
 
+    /// Allocates and returns a handle to a new block, without inserting it into the layout.
+    /// See [`Cfg::create_block`].
+    pub(crate) fn create_block(&mut self) -> BlockId {
+        self.cfg.create_block()
+    }
+
     /// Inserts `block_id` at the current position and moves to it.
     ///
     /// - If pointing at an existing instruction, the current block is split in two, and

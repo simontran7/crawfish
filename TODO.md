@@ -31,7 +31,7 @@ for block in func.layout.blocks() {
 **Pass 2:** Emit instructions; on every branch, patch the phi nodes.
 
 ```rust
-for block in function.cfg.blocks() {
+for block in function.body.blocks() {
     builder.position_at_end(bb_map[block]);
 
     for instruction in func.cfg.block_insts(block) {
@@ -58,12 +58,7 @@ for block in function.cfg.blocks() {
 }
 ```
 
-- [ ] MIR construction ([frontend builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs), [ssa builder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/ssa.rs), and [paper](https://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf))
-  - [ ] Builder with typestate: enforce block sealing at the API level so construction-order bugs (e.g. reading a block's parameters before all predecessors are known) are unrepresentable. Reference: Cranelift's [FunctionBuilder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs).
-
-- [ ] Visitor/Fold trait split for MIR passes: separate read-only traversal (Visitor) from transforming traversal (Fold), each with default no-op/identity methods per instruction kind. Factor out once verification, const evaluation, and codegen all walk the CFG the same way. Reference: rustc's [MIR visitors](https://github.com/rust-lang/rust/blob/master/compiler/rustc_middle/src/mir/visit.rs).
-
-- [ ] Alias resolution ([resolve_all_aliases()](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/ir/dfg.rs))
+- [ ] Visitor/Fold trait split for MIR passes: separate read-only traversal (Visitor) from transforming traversal (Fold), each with default no-op/identity methods per instruction kind. Factor out once verification, const evaluation, and codegen all walk the CFG the same way. Reference: rustc's [MIR visitors](https://github.com/rust-lang/rust/blob/master/compiler/rustc_middle/src/mir/visit.rs).s
 
 - [ ] MIR verification ([verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs))
   - [ ] `CfgIndex`: predecessor/successor index over `Cfg`, computed on demand (mirrors Cranelift's [`ControlFlowGraph`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/flowgraph.rs)). Not needed by `FunctionBuilder` — it tracks its own predecessors transiently during construction, before the CFG is complete. Used two ways here: (1) as input to the `DominatorTree` below, and (2) on its own, rebuilt from scratch and diffed against whatever predecessor/successor data a pass is carrying, to catch it having gone stale — mirrors the verifier's `cfg_integrity` check.
@@ -185,6 +180,10 @@ Without the occurs check, infinite types would cause infinite loops during
 
 When the first `Ty` variant is defined with a `TypeId` field — most likely when generic functions or closures land. The occurs check and structural recursion arms in `unify` should land in the same commit.
 ```
+
+### MIR Construction
+
+- [ ] Builder with typestate i.e., enforce block sealing at the API level so construction-order bugs (e.g. reading a block's parameters before all predecessors are known) are unrepresentable. Reference: Cranelift's [FunctionBuilder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs).
 
 ### MIR Transformation Passes
 
