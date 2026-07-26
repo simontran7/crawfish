@@ -951,7 +951,7 @@ impl<'a> BlockViewMut<'a> {
         self.cfg.dfg.values.add(Value {
             ty,
             alias: None,
-            origin: ValueOrigin::Parameter(self.block_id, count as u16),
+            origin: ValueOrigin::Parameter(self.block_id, (count - 1) as u16),
         })
     }
 
@@ -1009,6 +1009,20 @@ impl<'a> InstructionView<'a> {
     /// Returns the instruction that precedes this one in its block, or `None` if this is the block's first instruction.
     pub(crate) fn prev(&self) -> Option<InstructionId> {
         self.cfg.layout.instructions[self.instruction_id].prev
+    }
+
+    /// Returns whether this instruction ends a block, transferring control elsewhere.
+    ///
+    /// A block holds at most one terminator, always as its last instruction — see the
+    /// verifier's `block_integrity` check.
+    pub(crate) fn is_terminator(&self) -> bool {
+        matches!(
+            self.cfg.dfg.instructions[self.instruction_id],
+            Instruction::Jump { .. }
+                | Instruction::BranchIf { .. }
+                | Instruction::Return { .. }
+                | Instruction::Unreachable
+        )
     }
 
     /// Returns the instruction's value operands as a slice.

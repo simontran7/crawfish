@@ -1,8 +1,8 @@
 # MIR Construction
 
-The **mid-level intermediate representation construction** stage is the stage where the HIR is lowered to an MIR.
+The **mid-level intermediate representation construction** stage is the stage where a single HIR function is lowered to an MIR function.
 
-## MIR
+## Mid-level Intermediate Representation (MIR)
 
 A **mid-level intermediate representation (MIR)** is an IR that retains the source language's high-level information (generics, custom attributes, direct type references) which disappears at the LLVM IR level. It is possible to convert the semantic IR (annotated AST, or HIR) to LLVM directly, but you have to do the CFG conversion anyway, and without your own IR, generic code must be checked per-instantiation rather than once, and high-level information either has no LLVM representation or must be recovered awkwardly (e.g., parsing a type's name out of the LLVM IR and looking it back up in the type interner, parsing debug info, etc.) ([source](https://www.reddit.com/r/ProgrammingLanguages/comments/1boul8y/comment/kwtxulc/?utm*source=share&utm*medium=web3x&utm*name=web3xcss&utm*term=1&utm*content=share*button)).
 
@@ -91,9 +91,7 @@ Every SSA value has a type and a `ValueDefinition` recording where it was define
 
 Wherever the MIR needs a variable-length run of `ValueId`s (block parameters, call arguments, branch arguments, instruction results), it uses a `ValueList`: a 4-byte `Copy` handle into a `ValueListSubAllocator`.
 
-## Function Builder
-
-### SSA Construction Algorithm
+## SSA Constructor
 
 The [initial SSA construction algorithm](https://dl.acm.org/doi/pdf/10.1145/75277.75280) accepts a CFG as input, and works as follows:
 1. Computes for every block $X$ in the CFG its **dominance frontier** $DF$. A dominance frontier is the set of all blocks $Y$ where $X$ dominates one of its predecessors, *but* $X$ does *not* dominate $Y$. 
@@ -142,48 +140,6 @@ This is where [Braun et al.'s algorithm](https://link.springer.com/chapter/10.10
         > [!NOTE]
         > It is necessary to *recursively* remove trivial phi nodes as other phi nodes elsewhere may hold the now-deleted trivial phi node as one of their operands. Once that operand is rewritten to the common value $v$, those phis' operand lists change too, which can newly make *them* trivial so the check has to cascade to every user of the removed phi, and not *just* the phi itself. However, this code doesn't do that, but only **aliases** trivial block parameters, then rewrites them once, in a single batch at the end of construction (`flush_aliases()`). 
 
-Let's go through an example. Consider the following crawfish source program:
-
-```
-let x = ...;
-while ... {
-    if ... {    
-        x = ...;
-    }   
-}
-println(x);
-```
-
-Braun's algorithm would tackle the SSA construction as follows (assuming the loop is constructed before `x` is read):
-
-1. `let x = ...;` and `x = ...;` are both simple assignments. We record for `let x = ...;` as `v0`, and `x = ...;` inside the if expression as `v1`.
-
-<img src="step-1-state.png" width="350">
-
-2. For `println(x);`, it does not contain a local definition of `x`, so we recurse upwards to its single predecessor block $B$ (this is example of the fast path executing), requesting for the definition of `x`.
-3. Now at block $B$, we check if it has a local definition of `x`. It does not. But block $B$ has two predecessors: block $A$ (entering the loop the first time) and block $F$ (coming back around after one iteration). With no location definition in the current block $B$, but two predecessors, it is a merge point, so we create an empty phi node labeled $v2$ for the block $B$, and immediately register $v2$ as block $B$'s current definition of `x`. Then, we recurse into block $B$'s two predecessors to fill in `v2`'s operands.
-
-<img src="step-3-state.png" width="350">
-
-4. In block $A$, there exists a local definition of `x` labeled $v0$ (created in step 1) and return $v0$ so that it may become $v2$'s first operand. In block $F$, there are no local definitions of `x`, but block $F$ has two predecessors: block $D$ and block $E$. This signals that it also a merge point, and so, we create an empty phi node $v3$, and register it as block $F$'s local definition of `x`. We now recurse into block $F$'s predecessors (block $D$ and block $E$).
-
-<img src="step-4-state.png" width="350">
-
-5. In block $D$, there is a local definition of `x` labeled $v1$ (created in step 1), so we return $v1$ so that it may become $v3$'s first operand. In block $E$, there are unfortunately no local definitions of `x`. It does have one predecessor: block $C$, so we don't need to create a phi node, and we recurse into block $C$.
-
-<img src="step-5-state.png" width="350">
-
-6. In block $C$, it also has no local definitions of `x`, but it has one predecessor: block $B$, so we recurse once more without having to create a phi node.
-7. In block $B$, we finally see a local definition of `x` labeled $v2$, which was created in step 3. Had we not created that empty phi node, we would have done recurse down the same path, on and on, recursing infinitely! We return $v2$ thrice back down to the stack frame created in step 4 so that it may become $v3$'s second operand.
-
-<img src="step-7-state.png" width="350">
-
-8. In the current stack frame for step 4, we perform another return to pass down $v3$ — a filled phi node with operands $v1$ and $v2$ — as a second operand of the phi node $v2$ created in step 3.
-
-<img src="step-8-state.png" width="350">
-
-9. We now have completed block B's $v2$ phi node. It has as first operand $v0$, and as second operand $v3$.               
-
 > [!NOTE]
 > Since this Braun et al's algorithm doesn't build a dominance frontier, any later pass that may require one (e.g. loop-invariant code motion, contification) must compute it separately, which isn't much different than the upfront dominance frontier compute cost of Cytron et al. algorithm.
 
@@ -191,4 +147,71 @@ Braun's algorithm would tackle the SSA construction as follows (assuming the loo
 > Braun et al.'s algorithm also enables on-the-fly local optimizations (constant folding, copy propagation, common subexpression elimination) during construction, since values are built incrementally anyway.
 
 [source](https://www.cs.cornell.edu/courses/cs6120/2025sp/blog/efficient-ssa/) 
+
+## Lowerer
+
+The Lowerer is responsible for walking the HIR, taking every HIR function, and producing an MIR function. While lowering the HIR function to a CFG, it calls the  `SsaConstructor` to enforce the SSA form. Once an HIR function is fully lowered, the Lowerer calls `flush_aliases()` on the finished `Cfg` to resolve anything `SsaConstructor` deferred during trivial block-parameter elimination.
+
+### Example
+
+Consider the following crawfish program, which reads `x` in the loop condition itself so the walkthrough actually exercises the unsealed/deferred case, not just the sealed one:
+
+```
+func example(flag: bool) {
+    let x = 0;
+    while x < 10 {
+        if flag {
+            x = x + 1;
+        }
+    }
+    println(x);
+}
+```
+
+```mermaid
+flowchart TD
+    A["<b>A</b><br/>v0 = 0<br/>jump B()"]
+    B["<b>B</b>(v2)<br/>brif v2 &lt; 10, C, G"]
+    C["<b>C</b><br/>brif flag, D, E"]
+    D["<b>D</b><br/>v1 = v2 + 1<br/>jump F(v1)"]
+    E["<b>E</b><br/>jump F(v2)"]
+    F["<b>F</b>(v3)<br/>jump B(v3)"]
+    G["<b>G</b><br/>println(v2)<br/>return"]
+
+    A --> B
+    B -->|true| C
+    B -->|false| G
+    C -->|true| D
+    C -->|false| E
+    D --> F
+    E --> F
+    F -.->|back-edge| B
+```
+
+This lowers to seven blocks: $A$ (before the loop), $B$ (the while header, evaluating `x < 10`), $C$ (the loop body's entry, evaluating `flag`), $D$ (the `if`'s true branch, `x = x + 1`), $E$ (the `if`'s false/skip path), $F$ (the `if`'s merge point, which is also the loop body's tail), and $G$ (after the loop, `println(x)`).
+
+1. In block $A$, `let x = 0;` is a simple assignment, recorded as `v0`. Create block $B$, jump $A \to B$, and register that jump as $B$'s first predecessor. $B$ cannot be sealed yet, its second predecessor (the back-edge from $F$) doesn't exist.
+2. Lowering $B$'s own condition (`x < 10`) requires reading `x` in $B$. $B$ is unsealed, so this is the **Unsealed** case: create an empty, placeholder block parameter for $B$, labeled $v2$, record it as $B$'s local definition of `x`, and hand it back as the answer *without* filling in any operands yet.
+3. Build the branch `brif (v2 < 10), C, G`. Create and seal $C$ and $G$ immediately, each has exactly one, already-known predecessor (this branch).
+4. In $C$, lower `flag` (unrelated to `x`), then branch to $D$ or $E$. Create and seal both immediately, same reasoning as step 3.
+5. In $D$, `x = x + 1;` is recorded as `v1`. Jump $D \to F$. In $E$, nothing happens; jump $E \to F$.
+
+<img src="step-3-state.png" width="350">
+
+6. Create $F$. Register both $D$'s and $E$'s jumps as its two predecessors, this is $F$'s complete predecessor set (nothing else in the program can ever add a third), so seal $F$ immediately.
+7. To build $F$'s own back-edge (`jump B(..)`), we first need `x`'s value in $F$: read `x` in $F$. $F$ is sealed with two predecessors, so this is the **cycle-breaking** case (not the Unsealed one, $F$ is already sealed): create an empty placeholder $v3$, register it as $F$'s local definition, then recurse into $D$ and $E$.
+8. In $D$, the local definition $v1$ (from step 5) is returned directly, becoming $v3$'s first operand. In $E$, there's no local definition, but exactly one predecessor ($C$), so we recurse into $C$ without creating a phi node; $C$ has no local definition either, with exactly one predecessor ($B$), so we recurse once more into $B$.
+9. In $B$, we find the local definition $v2$, created back in step 2. Had that placeholder not already existed, this would recurse infinitely ($B \to F \to E \to C \to B \to \ldots$). $v2$ is returned back up through $C$ and $E$, becoming $v3$'s second operand: $v3 = \varphi(v1, v2)$.
+
+<img src="step-7-state.png" width="350">
+
+10. $F$'s back-edge is now built as `jump B(v3)`, passing $v3$ as $B$'s block argument. Register this jump as $B$'s second predecessor. $B$'s predecessor set is finally complete, **seal $B$**, this is the moment $v2$'s placeholder from step 2 actually gets resolved: `collect_block_arguments` reads `x` from each of $B$'s predecessors, `v0` from $A$'s edge and `v3` from $F$'s edge, giving $v2 = \varphi(v0, v3)$.
+
+<img src="step-8-state.png" width="350">
+
+11. In $G$, `println(x)` reads `x`. $G$ is sealed with exactly one predecessor ($B$), so we recurse into $B$ without creating a phi node, finding the now-resolved $v2$ directly: `println(v2)`.
+
+> [!NOTE]
+> `step-1-state.png`, `step-4-state.png`, and `step-5-state.png` from the previous revision of this example no longer apply here — they showed `v2`/`v3` being filled in one operand at a time, matching the classical paper's incremental resolution, not our actual `collect_block_arguments`-then-`finalize_block_parameter` atomic resolution. New diagrams for steps 1–2 (just `v0` and `v2`'s empty placeholder) and step 6–7 (just `v3`'s empty placeholder) would need to be drawn to fully illustrate this version.
+
 

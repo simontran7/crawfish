@@ -82,7 +82,7 @@ Each equivalence class has an optional `TypeId` concrete slot. When a `var = Con
 
 The alternative (a flat `HashMap<TypeVarId, TypeId>`) has a chain-chasing problem: `?a = ?b` then `?b = I32` requires following `?a -> ?b -> I32`. With many constraints, chains grow arbitrarily deep and lookups become $O(n)$. Union-find avoids this.
 
-## HIR
+## High-level Intermediate Representation (HIR)
 
 The **high-level intermediate representation** is close to the AST, and should be able to support high-level optimizations such as inlining and constant folding ([source](https://www.cs.cornell.edu/courses/cs4120/2026sp/notes.html?id=ir)).
 

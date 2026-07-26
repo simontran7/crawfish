@@ -8,7 +8,6 @@ bench-support = []
 
 [dependencies]
 ariadne = "0.4"
-divan = "0.1"
 inkwell = { version = "0.9.0", features = ["llvm22-1"] }
 soup = { git = "https://github.com/simontran7/soup" }
 
@@ -20,6 +19,3 @@ divan = "0.1"
 name = "tokenizer"
 harness = false
 required-features = ["bench-support"]
-
-[patch."https://github.com/simontran7/soup"]
-soup = { path = "../soup" }

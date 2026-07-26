@@ -275,6 +275,20 @@ impl Hir {
         &self.parameter_children[s.start as usize..(s.start + s.len) as usize]
     }
 
+    /// Returns every `func` in the program, in declaration order.
+    ///
+    /// Reads [`Hir::items`] directly rather than walking down from
+    /// [`SourceFileNode::items`], because that table is flat: a `func` nested inside another
+    /// function's body is added to it just like a top-level one, and is only *reachable* from
+    /// the tree via a [`StatementKind::Item`]. Iterating the table therefore finds nested
+    /// functions for free, and keeps finding them if new places to declare one are added later.
+    pub(crate) fn functions(&self) -> impl Iterator<Item = ItemId> + '_ {
+        self.items
+            .iter()
+            .filter(|(_, node)| matches!(node.kind, ItemKind::Function { .. }))
+            .map(|(item, _)| item)
+    }
+
     /// Adds an [`ItemNode`] to [`Hir::items`] and returns its handle.
     pub(crate) fn add_item(&mut self, kind: ItemKind, span: Span) -> ItemId {
         self.items.add(ItemNode { kind, span })

@@ -52,6 +52,21 @@ impl<'a> SsaConstructor<'a> {
         self.block_states.add(block_id, BlockState::default());
     }
 
+    /// Records `instruction_id` (a jump or branch) as one of `block_id`'s predecessor edges.
+    pub(crate) fn declare_block_predecessor(
+        &mut self,
+        block_id: BlockId,
+        instruction_id: InstructionId,
+    ) {
+        assert!(
+            matches!(self.block_states[block_id].sealed, Sealed::No { .. }),
+            "cannot add a predecessor to an already-sealed block"
+        );
+        self.block_states[block_id]
+            .predecessors
+            .add_last(self.predecessor_edge_suballocator, instruction_id);
+    }
+
     pub(crate) fn write_variable(
         &mut self,
         variable: LocalBindingId,
@@ -90,7 +105,7 @@ impl<'a> SsaConstructor<'a> {
             }
             self.block_states[block_id].sealed = Sealed::Yes;
         } else {
-            panic!("block pointed by {block_id:?} is already sealed")
+            panic!("block {block_id:?} is already sealed")
         }
     }
 
@@ -230,5 +245,230 @@ impl Default for Sealed {
         Sealed::No {
             incomplete_variables: HandleList::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::middle_end::mir::Cfg;
+
+    #[test]
+    fn simple_block() {
+        let mut cfg = Cfg::new();
+        let mut predecessor_alloc = HandleListSubAllocator::new();
+        let mut incomplete_alloc = HandleListSubAllocator::new();
+        let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
+        let i32_ty = TypeId(0);
+        let x_var = LocalBindingId::new(0);
+
+        let mut cursor = CfgCursor::new(&mut cfg);
+        let block = cursor.create_block();
+        cursor.add_block(block);
+        ssa.declare_block(block);
+
+        let x1 = cursor.add_integer_literal(i32_ty, 1);
+        ssa.write_variable(x_var, block, x1);
+
+        assert_eq!(ssa.read_variable(&mut cursor, x_var, i32_ty, block), x1);
+    }
+
+    #[test]
+    fn sequence_of_blocks() {
+        let mut cfg = Cfg::new();
+        let mut predecessor_alloc = HandleListSubAllocator::new();
+        let mut incomplete_alloc = HandleListSubAllocator::new();
+        let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
+        let i32_ty = TypeId(0);
+        let x_var = LocalBindingId::new(0);
+
+        let mut cursor = CfgCursor::new(&mut cfg);
+
+        let block0 = cursor.create_block();
+        cursor.add_block(block0);
+        ssa.declare_block(block0);
+        let x1 = cursor.add_integer_literal(i32_ty, 1);
+        ssa.write_variable(x_var, block0, x1);
+
+        let block1 = cursor.create_block();
+        let jump0 = cursor.add_jump(block1, &[]);
+        cursor.add_block(block1);
+        ssa.declare_block(block1);
+        ssa.declare_block_predecessor(block1, jump0);
+        ssa.seal_block(&mut cursor, block1);
+
+        let block2 = cursor.create_block();
+        let jump1 = cursor.add_jump(block2, &[]);
+        cursor.add_block(block2);
+        ssa.declare_block(block2);
+        ssa.declare_block_predecessor(block2, jump1);
+        ssa.seal_block(&mut cursor, block2);
+
+        // single-predecessor chains should just forward x1, no block parameters anywhere
+        assert_eq!(ssa.read_variable(&mut cursor, x_var, i32_ty, block2), x1);
+        assert!(cursor.get_block(block1).parameters().is_empty());
+        assert!(cursor.get_block(block2).parameters().is_empty());
+    }
+
+    #[test]
+    fn merge_of_equal_values_is_trivial() {
+        let mut cfg = Cfg::new();
+        let mut predecessor_alloc = HandleListSubAllocator::new();
+        let mut incomplete_alloc = HandleListSubAllocator::new();
+        let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
+        let i32_ty = TypeId(0);
+        let bool_ty = TypeId(1);
+        let x_var = LocalBindingId::new(0);
+
+        let mut cursor = CfgCursor::new(&mut cfg);
+
+        let entry = cursor.create_block();
+        cursor.add_block(entry);
+        ssa.declare_block(entry);
+        let x1 = cursor.add_integer_literal(i32_ty, 1);
+        ssa.write_variable(x_var, entry, x1);
+        let cond = cursor.add_boolean_literal(true, bool_ty);
+
+        let then_block = cursor.create_block();
+        let else_block = cursor.create_block();
+        let branch = cursor.add_branch_if(cond, then_block, &[], else_block, &[]);
+
+        cursor.add_block(then_block);
+        ssa.declare_block(then_block);
+        ssa.declare_block_predecessor(then_block, branch);
+        ssa.seal_block(&mut cursor, then_block);
+        let merge = cursor.create_block();
+        let then_jump = cursor.add_jump(merge, &[]);
+
+        cursor.add_block(else_block);
+        ssa.declare_block(else_block);
+        ssa.declare_block_predecessor(else_block, branch);
+        ssa.seal_block(&mut cursor, else_block);
+        let else_jump = cursor.add_jump(merge, &[]);
+
+        cursor.add_block(merge);
+        ssa.declare_block(merge);
+        ssa.declare_block_predecessor(merge, then_jump);
+        ssa.declare_block_predecessor(merge, else_jump);
+        ssa.seal_block(&mut cursor, merge);
+
+        // both branches forward the same x1 unchanged, so no real block parameter is needed
+        let x_in_merge = ssa.read_variable(&mut cursor, x_var, i32_ty, merge);
+        assert_eq!(cursor.resolve_aliases(x_in_merge), x1);
+        assert!(cursor.get_block(merge).parameters().is_empty());
+    }
+
+    #[test]
+    fn merge_of_different_values_creates_a_block_parameter() {
+        let mut cfg = Cfg::new();
+        let mut predecessor_alloc = HandleListSubAllocator::new();
+        let mut incomplete_alloc = HandleListSubAllocator::new();
+        let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
+        let i32_ty = TypeId(0);
+        let bool_ty = TypeId(1);
+        let x_var = LocalBindingId::new(0);
+
+        let mut cursor = CfgCursor::new(&mut cfg);
+
+        let entry = cursor.create_block();
+        cursor.add_block(entry);
+        ssa.declare_block(entry);
+        let cond = cursor.add_boolean_literal(true, bool_ty);
+
+        let then_block = cursor.create_block();
+        let else_block = cursor.create_block();
+        let branch = cursor.add_branch_if(cond, then_block, &[], else_block, &[]);
+
+        cursor.add_block(then_block);
+        ssa.declare_block(then_block);
+        ssa.declare_block_predecessor(then_block, branch);
+        ssa.seal_block(&mut cursor, then_block);
+        let x1 = cursor.add_integer_literal(i32_ty, 1);
+        ssa.write_variable(x_var, then_block, x1);
+        let merge = cursor.create_block();
+        let then_jump = cursor.add_jump(merge, &[]);
+
+        cursor.add_block(else_block);
+        ssa.declare_block(else_block);
+        ssa.declare_block_predecessor(else_block, branch);
+        ssa.seal_block(&mut cursor, else_block);
+        let x2 = cursor.add_integer_literal(i32_ty, 2);
+        ssa.write_variable(x_var, else_block, x2);
+        let else_jump = cursor.add_jump(merge, &[]);
+
+        cursor.add_block(merge);
+        ssa.declare_block(merge);
+        ssa.declare_block_predecessor(merge, then_jump);
+        ssa.declare_block_predecessor(merge, else_jump);
+        ssa.seal_block(&mut cursor, merge);
+
+        let x_in_merge = ssa.read_variable(&mut cursor, x_var, i32_ty, merge);
+        assert_eq!(cursor.get_block(merge).parameters(), &[x_in_merge]);
+        assert_eq!(cursor.block_argument(x_in_merge, then_jump), x1);
+        assert_eq!(cursor.block_argument(x_in_merge, else_jump), x2);
+    }
+
+    #[test]
+    fn program_with_loop() {
+        let mut cfg = Cfg::new();
+        let mut predecessor_alloc = HandleListSubAllocator::new();
+        let mut incomplete_alloc = HandleListSubAllocator::new();
+        let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
+        let i32_ty = TypeId(0);
+        let bool_ty = TypeId(1);
+        let x_var = LocalBindingId::new(0);
+
+        let mut cursor = CfgCursor::new(&mut cfg);
+
+        // entry: x = 1; jump header
+        let entry = cursor.create_block();
+        cursor.add_block(entry);
+        ssa.declare_block(entry);
+        let x1 = cursor.add_integer_literal(i32_ty, 1);
+        ssa.write_variable(x_var, entry, x1);
+
+        let header = cursor.create_block();
+        let entry_jump = cursor.add_jump(header, &[]);
+
+        // header: unsealed, its back-edge from the loop body doesn't exist yet
+        cursor.add_block(header);
+        ssa.declare_block(header);
+        ssa.declare_block_predecessor(header, entry_jump);
+
+        // reading x here, before sealing, forces the placeholder block-parameter path
+        let x_in_header = ssa.read_variable(&mut cursor, x_var, i32_ty, header);
+
+        let cond = cursor.add_boolean_literal(true, bool_ty);
+        let body = cursor.create_block();
+        let exit = cursor.create_block();
+        let branch = cursor.add_branch_if(cond, body, &[], exit, &[]);
+
+        // body: x = 2; jump header (the back-edge)
+        cursor.add_block(body);
+        ssa.declare_block(body);
+        ssa.declare_block_predecessor(body, branch);
+        ssa.seal_block(&mut cursor, body);
+        let x2 = cursor.add_integer_literal(i32_ty, 2);
+        ssa.write_variable(x_var, body, x2);
+        let back_edge = cursor.add_jump(header, &[]);
+
+        // header's predecessor set is finally complete: seal it
+        ssa.declare_block_predecessor(header, back_edge);
+        ssa.seal_block(&mut cursor, header);
+
+        // exit: read x after the loop
+        cursor.add_block(exit);
+        ssa.declare_block(exit);
+        ssa.declare_block_predecessor(exit, branch);
+        ssa.seal_block(&mut cursor, exit);
+        let x_in_exit = ssa.read_variable(&mut cursor, x_var, i32_ty, exit);
+
+        // x1 != x2, so header's placeholder should have resolved to a real, kept parameter
+        assert_eq!(cursor.get_block(header).parameters(), &[x_in_header]);
+        assert_eq!(cursor.block_argument(x_in_header, entry_jump), x1);
+        assert_eq!(cursor.block_argument(x_in_header, back_edge), x2);
+        // exit has a single predecessor (the branch out of header), so it should just
+        // forward header's parameter directly, no new value created
+        assert_eq!(x_in_exit, x_in_header);
     }
 }

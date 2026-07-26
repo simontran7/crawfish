@@ -330,6 +330,16 @@ impl<'a> CfgCursor<'a> {
     /// If pointing at an instruction, the new instruction is inserted before it. If
     /// pointing at the bottom of a block, it's appended to that block. Otherwise, panics.
     /// In either case the cursor does not move, so repeated calls insert instructions in order.
+    ///
+    /// Appending to a block that already ends in a terminator panics: a terminator is always
+    /// a block's last instruction, so anything following it is unreachable and would leave the
+    /// block malformed. Inserting *before* an existing instruction is always allowed, since
+    /// that lands ahead of the terminator rather than after it.
+    ///
+    /// That check reads the block's last instruction from the layout rather than tracking it
+    /// as cursor state, so it holds for a cursor created over an already-populated `Cfg` — a
+    /// later pass over a finished function — where cursor-held state would start out claiming
+    /// every block is empty.
     pub(crate) fn add_instruction(
         &mut self,
         instruction: Instruction,
@@ -341,6 +351,14 @@ impl<'a> CfgCursor<'a> {
                     .add_instruction_before(instruction, result_tys, before)
             }
             CursorPosition::After(block_id) => {
+                assert!(
+                    !self
+                        .cfg
+                        .get_block(block_id)
+                        .last_instruction()
+                        .is_some_and(|id| self.cfg.get_instruction(id).is_terminator()),
+                    "cannot append to a block that already ends in a terminator"
+                );
                 self.cfg
                     .append_instruction(block_id, instruction, result_tys)
             }
