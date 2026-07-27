@@ -1,6 +1,7 @@
 pub mod arg_parser;
 pub mod driver;
 
+pub(crate) mod back_end;
 pub(crate) mod common;
 pub(crate) mod diagnostics;
 pub(crate) mod front_end;

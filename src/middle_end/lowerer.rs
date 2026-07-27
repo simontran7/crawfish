@@ -26,8 +26,6 @@ pub(crate) struct MirLowerer<'a> {
     hir: &'a Hir,
     ctx: &'a CompilerContext,
     mir: Mir,
-    /// Reused across every function so each [`SsaConstructor`] shares one
-    /// backing [`HandleList`][crate::middle_end::handle_list::HandleList].
     predecessors_edges_suballoc: HandleListSubAllocator<InstructionId>,
     incomplete_alloc: HandleListSubAllocator<LocalBindingId>,
 }
@@ -53,9 +51,9 @@ impl<'a> MirLowerer<'a> {
     /// [`DiagnosticSink::has_errors`][crate::diagnostics::DiagnosticSink::has_errors]
     /// once, after this returns.
     pub(crate) fn lower(mut self) -> Mir {
-        for function_id in self.hir.functions() {
-            let function = self.lower_function(function_id);
-            self.mir.add_function(function);
+        for hir_function in self.hir.functions() {
+            let mir_function = self.lower_function(hir_function);
+            self.mir.add_function(mir_function);
         }
         self.mir
     }
@@ -80,10 +78,12 @@ impl<'a> MirLowerer<'a> {
             .type_interner
             .as_func(self.hir.item_bindings[binding].ty)
             .unwrap();
-        // zero-sized parameters are dropped here so the signature matches the
-        // entry block, which skips them too (see `FunctionBuilder`'s contracts)
         let signature = Signature {
-            parameters: self.erase_zero_sized(parameter_types),
+            parameters: parameter_types
+                .iter()
+                .copied()
+                .filter(|&ty| !self.ctx.type_interner.is_zero_sized(ty))
+                .collect(),
             return_type,
         };
         let mut function = Function::new(name, signature);
@@ -104,16 +104,6 @@ impl<'a> MirLowerer<'a> {
         function.body.flush_aliases();
 
         function
-    }
-
-    /// Drops zero-sized types from a parameter list, so signatures agree with
-    /// the block parameters and call arguments that also skip them.
-    fn erase_zero_sized(&self, parameter_types: &[TypeId]) -> Vec<TypeId> {
-        parameter_types
-            .iter()
-            .copied()
-            .filter(|&ty| !self.ctx.type_interner.is_zero_sized(ty))
-            .collect()
     }
 }
 
@@ -145,30 +135,15 @@ struct FunctionBuilder<'a> {
     ctx: &'a CompilerContext,
     cursor: CfgCursor<'a>,
     ssa: SsaConstructor<'a>,
-    /// The block instructions are currently appended to; the `block`
-    /// argument for `ssa.read_variable`/`write_variable`.
-    /// // source: cranelift frontend.rs `FunctionBuilder::position`
+    // source: cranelift frontend.rs `FunctionBuilder::position`
     current: Option<BlockId>,
-    /// Stack of enclosing loops, so `break`/`continue` can find their jump
-    /// targets. Only loops need frames (nothing in crawfish branches out of
-    /// an `if` or block); if-bookkeeping lives in `lower_if`'s locals.
-    /// // source: cranelift stack.rs `ControlStackFrame::Loop`, minus the
-    /// // wasm operand-stack fields
+    // source: cranelift stack.rs `ControlStackFrame::Loop`, minus the wasm operand-stack fields
     loop_frames: Vec<LoopFrame>,
-    /// False after lowering `Return` (or a jump); suppresses emitting
-    /// instructions and predecessor edges from dead code.
-    /// // source: cranelift stack.rs `FuncTranslationStacks::reachable`
+    // source: cranelift stack.rs `FuncTranslationStacks::reachable`
     reachable: bool,
-    /// Callee's item binding → its `FunctionReferenceId`, so repeated calls
-    /// to one function share a single reference + signature.
-    /// // source: memoization pattern of wasmtime's
-    /// // `get_or_create_interned_sig_ref` (code_translator.rs Operator::Call)
+    // source: memoization pattern of wasmtime's `get_or_create_interned_sig_ref` (code_translator.rs Operator::Call)
     function_refs: HashMap<ItemBindingId, FunctionReferenceId>,
-    /// Next index for synthetic SSA variables (if/short-circuit merges),
-    /// starting past the HIR's real local bindings.
-    /// // source: wasmtime stack.rs `block_param_vars` — representing merge
-    /// // values as variables so SSA construction decides whether a real
-    /// // block parameter is needed
+    // source: wasmtime stack.rs `block_param_vars` — representing merge values as variables so SSA construction decides whether a real block parameter is needed
     next_synthetic_variable: usize,
 }
 
@@ -224,7 +199,7 @@ impl<'a> FunctionBuilder<'a> {
             self.hir.get_parameter_slice(parameters).to_vec();
         for binding in parameter_bindings {
             let ty = self.hir.local_bindings[binding].ty;
-            if self.is_zero_sized(ty) {
+            if self.ctx.type_interner.is_zero_sized(ty) {
                 continue; // unit carries no value
             }
             let value = self.cursor.get_block_mut(entry).append_parameter(ty);
@@ -319,7 +294,7 @@ impl<'a> FunctionBuilder<'a> {
                 // // source: code_translator.rs Operator::LocalGet →
                 // // builder.use_var
                 BindingKind::Local => {
-                    if self.is_zero_sized(ty) {
+                    if self.ctx.type_interner.is_zero_sized(ty) {
                         return None;
                     }
                     let local = binding.as_local().unwrap();
@@ -421,7 +396,7 @@ impl<'a> FunctionBuilder<'a> {
                     }
                 }
 
-                let call = if self.is_zero_sized(ty) {
+                let call = if self.ctx.type_interner.is_zero_sized(ty) {
                     self.cursor.add_call(function_ref, &args, &[])
                 } else {
                     self.cursor.add_call(function_ref, &args, &[ty])
@@ -474,7 +449,7 @@ impl<'a> FunctionBuilder<'a> {
             return None;
         }
 
-        let produces_value = !self.is_zero_sized(ty);
+        let produces_value = !self.ctx.type_interner.is_zero_sized(ty);
         let result_variable = produces_value.then(|| self.fresh_synthetic_variable());
 
         // Create+declare in one place so nested constructs (which create
@@ -615,13 +590,6 @@ impl<'a> FunctionBuilder<'a> {
         )
     }
 
-    // ------------------------------------------------------------------
-    // Loops (NOTE: unreachable until the parser/HIR grow loop nodes)
-    // ------------------------------------------------------------------
-
-    /// Innermost enclosing loop, for `break`/`continue`. `None` means
-    /// `break`/`continue` outside a loop — to be rejected in semantic
-    /// analysis when loops are added, so callers unwrap.
     fn innermost_loop_mut(&mut self) -> Option<&mut LoopFrame> {
         self.loop_frames.last_mut()
     }
@@ -709,13 +677,6 @@ impl<'a> FunctionBuilder<'a> {
         self.reachable = true;
     }
 
-    // ------------------------------------------------------------------
-    // Calls & constants
-    // ------------------------------------------------------------------
-
-    /// Returns the (memoized) `FunctionReferenceId` for the function bound
-    /// by `binding`, registering its `Signature` and `FunctionReference` on
-    /// first use.
     fn function_ref(&mut self, binding: ItemBindingId) -> FunctionReferenceId {
         if let Some(&function_ref) = self.function_refs.get(&binding) {
             return function_ref;
@@ -732,7 +693,7 @@ impl<'a> FunctionBuilder<'a> {
         let parameters = parameter_types
             .iter()
             .copied()
-            .filter(|&ty| !self.is_zero_sized(ty))
+            .filter(|&ty| !self.ctx.type_interner.is_zero_sized(ty))
             .collect();
         let signature = self.cursor.add_signature(Signature {
             parameters,
@@ -755,10 +716,6 @@ impl<'a> FunctionBuilder<'a> {
         }
         panic!("no constant item found for binding")
     }
-
-    // ------------------------------------------------------------------
-    // Block & variable plumbing
-    // ------------------------------------------------------------------
 
     /// Creates a block and immediately declares it to the SSA constructor.
     /// Always use this instead of raw `create_block`: declaration must
@@ -789,10 +746,6 @@ impl<'a> FunctionBuilder<'a> {
         let variable = LocalBindingId::new(self.next_synthetic_variable);
         self.next_synthetic_variable += 1;
         variable
-    }
-
-    fn is_zero_sized(&self, ty: TypeId) -> bool {
-        self.ctx.type_interner.is_zero_sized(ty)
     }
 }
 

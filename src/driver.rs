@@ -6,8 +6,14 @@ use crate::front_end::semantic_analysis::semantic_analyzer::SemanticAnalyzer;
 use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;
 use crate::front_end::syntactic_analysis::parser::Parser;
 
+use crate::back_end::llvm_codegen::LlvmCodegen;
+use crate::back_end::target;
 use crate::middle_end::lowerer::MirLowerer;
 use crate::middle_end::mir_dumper::MirDumper;
+
+use std::path::Path;
+
+use inkwell::context::Context;
 
 /// Compiles `source` named `filename`, printing any diagnostics to stderr.
 ///
@@ -63,8 +69,6 @@ pub fn compile(filename: &str, source: &str) {
     // MIR passes can look across function boundaries (inlining, whole-program
     // analysis) rather than seeing one body at a time.
     let mir = MirLowerer::new(&hir, &ctx).lower();
-    // checked once, after every function is lowered, so one bad body doesn't
-    // hide diagnostics in its siblings
     if ctx.diagnostics.has_errors() {
         ctx.diagnostics.render(filename, source);
         return;
@@ -74,6 +78,18 @@ pub fn compile(filename: &str, source: &str) {
         Ok(output) => print!("{}", output),
         Err(e) => eprintln!("Error dumping MIR: {}", e),
     };
+
+    let llvm_context = Context::create();
+    let module = LlvmCodegen::new(&mir, &ctx, &llvm_context, filename).compile();
+    #[cfg(debug_assertions)]
+    println!("{}", module.print_to_string().to_string());
+
+    // ahead-of-time: object code + link, producing a real, standalone
+    // executable — not a JIT, matching how rustc/Zig/Go all deliver a build
+    let executable_path = Path::new(filename).with_extension("");
+    if let Err(e) = target::compile_to_executable(&module, &executable_path) {
+        eprintln!("Error producing executable: {e}");
+    }
 
     ctx.diagnostics.render(filename, source);
 }

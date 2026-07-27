@@ -153,7 +153,7 @@ impl<'a> Tokenizer<'a> {
         loop {
             self.eat_whitespace();
             if !self.cursor.as_str().starts_with("//") {
-                return;
+                break;
             }
             self.advance_while(|c| c != '\n');
         }

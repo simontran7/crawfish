@@ -441,7 +441,7 @@ impl<'a> CfgCursor<'a> {
 
     /// Builds and inserts an `IntegerLiteral` instruction at the current position, returning its result value.
     pub(crate) fn add_integer_literal(&mut self, ty: TypeId, value: u128) -> ValueId {
-        let instruction_id = self.add_instruction(Instruction::IntegerLiteral { ty, value }, &[ty]);
+        let instruction_id = self.add_instruction(Instruction::IntegerLiteral { value }, &[ty]);
         self.cfg
             .get_instruction(instruction_id)
             .first_result()
@@ -507,13 +507,13 @@ impl<'a> CfgCursor<'a> {
         self.add_instruction(Instruction::Unreachable, &[])
     }
 
-    /// Registers `signature` in the underlying `Cfg`. See [`Cfg::add_signature`].
+    /// Registers `signature` in the underlying `Cfg`.
     pub(crate) fn add_signature(&mut self, signature: Signature) -> SignatureId {
         self.cfg.add_signature(signature)
     }
 
     /// Registers a reference to a function named `name` with signature
-    /// `signature_id`. See [`Cfg::add_function_reference`].
+    /// `signature_id`.
     pub(crate) fn add_function_reference(
         &mut self,
         name: Symbol,

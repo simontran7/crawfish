@@ -5,7 +5,7 @@ use std::fmt::{self, Write};
 use soup::handle_map::Handle;
 
 use crate::common::context::CompilerContext;
-use crate::middle_end::mir::{BlockId, Function, InstructionId, InstructionShape, Mir, ValueId};
+use crate::middle_end::mir::{BlockId, Function, InstructionId, InstructionRef, Mir, ValueId};
 
 /// Dumps every [`Function`] in a [`Mir`], blank-line separated.
 ///
@@ -124,14 +124,8 @@ impl<'a> FunctionDumper<'a> {
             .to_string(self.function.signature.return_type);
         writeln!(out, "function {name}({parameters}) -> {return_type} {{")?;
 
-        // Reserve a left column for source locations when populated:
-        // instructions indent 4 normally, wider when spans exist; block
-        // headers sit outdented 4 from the instruction indent.
-        let indent = if self.function.source_locations.count() == 0 {
-            4
-        } else {
-            16
-        };
+        // Instructions indent 4; block headers sit outdented 4 from that.
+        let indent = 4;
 
         // immediate-target → values aliased directly to it
         let mut aliases = self.alias_map();
@@ -218,21 +212,14 @@ impl<'a> FunctionDumper<'a> {
         writeln!(out, ":")
     }
 
-    /// Writes one instruction line, with the source span in the left column
-    /// when `source_locations` is populated.
+    /// Writes one instruction line, indented under its block.
     pub(crate) fn instruction(
         &self,
         out: &mut String,
         instruction: InstructionId,
         indent: usize,
     ) -> fmt::Result {
-        let left_column = self
-            .function
-            .source_locations
-            .get(instruction)
-            .map(|span| format!("@{}..{}", span.start(), span.end()))
-            .unwrap_or_default();
-        write!(out, "{left_column:<indent$}")?;
+        write!(out, "{:indent$}", "")?;
 
         let view = self.function.body.get_instruction(instruction);
 
@@ -241,8 +228,8 @@ impl<'a> FunctionDumper<'a> {
             write!(out, "{} = ", join_values(results))?;
         }
 
-        match view.shape() {
-            InstructionShape::Binary { operator, args } => {
+        match view.as_ref() {
+            InstructionRef::Binary { operator, args } => {
                 write!(
                     out,
                     "Binary {:?} v{}, v{}",
@@ -251,16 +238,16 @@ impl<'a> FunctionDumper<'a> {
                     args[1].index()
                 )?;
             }
-            InstructionShape::Unary { operator, arg } => {
+            InstructionRef::Unary { operator, arg } => {
                 write!(out, "Unary {:?} v{}", operator, arg.index())?;
             }
-            InstructionShape::IntegerLiteral { value } => {
+            InstructionRef::IntegerLiteral { value } => {
                 write!(out, "IntegerLiteral {value}")?;
             }
-            InstructionShape::BooleanLiteral { value } => {
+            InstructionRef::BooleanLiteral { value } => {
                 write!(out, "BooleanLiteral {value}")?;
             }
-            InstructionShape::Call { callee, args } => {
+            InstructionRef::Call { callee, args } => {
                 let name = self
                     .ctx
                     .string_interner
@@ -268,11 +255,11 @@ impl<'a> FunctionDumper<'a> {
                     .unwrap();
                 write!(out, "Call {name}({})", join_values(args))?;
             }
-            InstructionShape::Jump { destination, args } => {
+            InstructionRef::Jump { destination, args } => {
                 write!(out, "Jump ")?;
                 self.block_call(out, destination, args)?;
             }
-            InstructionShape::BranchIf {
+            InstructionRef::BranchIf {
                 arg,
                 then_destination,
                 then_args,
@@ -284,14 +271,14 @@ impl<'a> FunctionDumper<'a> {
                 write!(out, ", ")?;
                 self.block_call(out, else_destination, else_args)?;
             }
-            InstructionShape::Return { args } => {
+            InstructionRef::Return { args } => {
                 if args.is_empty() {
                     write!(out, "Return")?;
                 } else {
                     write!(out, "Return {}", join_values(args))?;
                 }
             }
-            InstructionShape::Unreachable => write!(out, "Unreachable")?,
+            InstructionRef::Unreachable => write!(out, "Unreachable")?,
         }
         writeln!(out)
     }

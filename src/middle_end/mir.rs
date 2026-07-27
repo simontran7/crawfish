@@ -3,7 +3,6 @@ use std::slice;
 use soup::handle_map::HandleMap;
 use soup::handle_map::SideHandleMap;
 
-use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
@@ -42,7 +41,6 @@ pub(crate) struct Function {
     pub(crate) name: Symbol,
     pub(crate) signature: Signature,
     pub(crate) body: Cfg,
-    pub(crate) source_locations: SideHandleMap<InstructionId, Span>,
 }
 
 /// The body of a single function.
@@ -109,10 +107,8 @@ pub(crate) struct Value {
 ///
 /// - [`ValueOrigin::InstructionResult`]: an output of an instruction. The `u16` is the index of
 ///   the instruction's result in [`DataFlowGraph::instruction_results`].
-///
 /// - [`ValueOrigin::Parameter`]: an incoming parameter of a block. The `u16` is the
 ///   index of this parameter in [`Block::parameters`].
-///
 /// - [`ValueOrigin::Undefined`]: a placeholder with no instruction or block backing it, created
 ///   when trivial block-parameter elimination has no real value to fall back on.
 #[derive(Clone, Copy)]
@@ -130,11 +126,17 @@ pub(crate) struct Block {
     parameters: HandleList<ValueId>,
 }
 
-/// A single MIR instruction.
+/// A single MIR instruction. Each instruction may produce zero or more
+/// results, recorded separately in [`DataFlowGraph::instruction_results`].
 ///
-/// Each instruction may produce zero or more results, recorded separately
-/// in [`DataFlowGraph::instruction_results`].
-pub(crate) enum Instruction {
+/// Generic over `L`, the representation of a variable-length argument list —
+/// instantiated as [`Instruction`] (owned, arena-backed `HandleList`s, safe to
+/// store in `DataFlowGraph`) and as [`InstructionRef`] (borrowed slices, cheap
+/// to read outside this module). Only `Call`/`Jump`/`BranchIf`/`Return`'s
+/// argument-list fields depend on `L`; every other field is identical in
+/// both, by construction, so the two forms can never drift out of sync the
+/// way two independently hand-written enums could.
+pub(crate) enum InstructionKind<L> {
     // Arithmetic
     Binary {
         operator: BinOp,
@@ -147,7 +149,6 @@ pub(crate) enum Instruction {
 
     // Literals
     IntegerLiteral {
-        ty: TypeId,
         value: u128,
     },
     BooleanLiteral {
@@ -157,26 +158,31 @@ pub(crate) enum Instruction {
     // Calls
     Call {
         callee: FunctionReferenceId,
-        args: HandleList<ValueId>,
+        args: L,
     },
 
     // Terminators (i.e., they end a block and determine which block, if any, runs next)
     Jump {
         destination: BlockId,
-        args: HandleList<ValueId>,
+        args: L,
     },
     BranchIf {
         arg: ValueId,
         then_destination: BlockId,
-        then_args: HandleList<ValueId>,
+        then_args: L,
         else_destination: BlockId,
-        else_args: HandleList<ValueId>,
+        else_args: L,
     },
     Return {
-        args: HandleList<ValueId>,
+        args: L,
     },
     Unreachable,
 }
+
+/// A single MIR instruction, stored in [`DataFlowGraph`]. Argument lists are
+/// [`HandleList`]s, indices into a suballocator — resolve them to a slice via
+/// [`InstructionView::as_ref`] rather than reading a `HandleList` directly.
+pub(crate) type Instruction = InstructionKind<HandleList<ValueId>>;
 
 /// A reference to a function that can be called via [`Instruction::Call`].
 pub(crate) struct FunctionReference {
@@ -216,45 +222,10 @@ pub(crate) struct InstructionView<'a> {
     cfg: &'a Cfg,
 }
 
-/// A borrowed, fully-redeemed view of an [`Instruction`]: same variants,
-/// but every `HandleList` is already a slice. This is the read-only shape
-/// handed across the `Cfg` boundary (dumper, verifier) — the `HandleList`
-/// + suballocator pairing never leaves this module.
-pub(crate) enum InstructionShape<'a> {
-    Binary {
-        operator: BinOp,
-        args: [ValueId; 2],
-    },
-    Unary {
-        operator: UnOp,
-        arg: ValueId,
-    },
-    IntegerLiteral {
-        value: u128,
-    },
-    BooleanLiteral {
-        value: bool,
-    },
-    Call {
-        callee: FunctionReferenceId,
-        args: &'a [ValueId],
-    },
-    Jump {
-        destination: BlockId,
-        args: &'a [ValueId],
-    },
-    BranchIf {
-        arg: ValueId,
-        then_destination: BlockId,
-        then_args: &'a [ValueId],
-        else_destination: BlockId,
-        else_args: &'a [ValueId],
-    },
-    Return {
-        args: &'a [ValueId],
-    },
-    Unreachable,
-}
+/// [`Instruction`], with every `HandleList` already resolved to a slice.
+/// This is what's handed across the `Cfg` boundary (dumper, verifier) — the
+/// `HandleList` + suballocator pairing never leaves this module.
+pub(crate) type InstructionRef<'a> = InstructionKind<&'a [ValueId]>;
 
 /// A mutable view over an instruction, returned by [`Cfg::get_instruction_mut`].
 pub(crate) struct InstructionViewMut<'a> {
@@ -356,7 +327,6 @@ impl Function {
             name,
             signature,
             body: Cfg::new(),
-            source_locations: SideHandleMap::new(),
         }
     }
 }
@@ -916,7 +886,7 @@ impl Cfg {
     }
 }
 
-impl Instruction {
+impl InstructionKind<HandleList<ValueId>> {
     /// Rewrites every `ValueId` this instruction references by applying `f` to each one.
     fn rewrite_operands(
         &mut self,
@@ -1192,31 +1162,30 @@ impl<'a> InstructionView<'a> {
         }
     }
 
-    /// Returns this instruction's opcode-and-scalar shape for read-only
-    /// inspection (dumping, verification): the variant and its non-list
-    /// fields, with every `HandleList` already redeemed to a slice.
-    pub(crate) fn shape(&self) -> InstructionShape<'a> {
+    /// Returns this instruction for read-only inspection (dumping,
+    /// verification), with every `HandleList` resolved to a slice.
+    pub(crate) fn as_ref(&self) -> InstructionRef<'a> {
         let suballocator = &self.cfg.dfg.suballocator;
         match &self.cfg.dfg.instructions[self.instruction_id] {
-            Instruction::Binary { operator, args } => InstructionShape::Binary {
+            Instruction::Binary { operator, args } => InstructionRef::Binary {
                 operator: *operator,
                 args: [args[0], args[1]],
             },
-            Instruction::Unary { operator, arg } => InstructionShape::Unary {
+            Instruction::Unary { operator, arg } => InstructionRef::Unary {
                 operator: *operator,
                 arg: *arg,
             },
-            Instruction::IntegerLiteral { value, .. } => {
-                InstructionShape::IntegerLiteral { value: *value }
+            Instruction::IntegerLiteral { value } => {
+                InstructionRef::IntegerLiteral { value: *value }
             }
             Instruction::BooleanLiteral { value } => {
-                InstructionShape::BooleanLiteral { value: *value }
+                InstructionRef::BooleanLiteral { value: *value }
             }
-            Instruction::Call { callee, args } => InstructionShape::Call {
+            Instruction::Call { callee, args } => InstructionRef::Call {
                 callee: *callee,
                 args: args.to_slice(suballocator),
             },
-            Instruction::Jump { destination, args } => InstructionShape::Jump {
+            Instruction::Jump { destination, args } => InstructionRef::Jump {
                 destination: *destination,
                 args: args.to_slice(suballocator),
             },
@@ -1226,17 +1195,17 @@ impl<'a> InstructionView<'a> {
                 then_args,
                 else_destination,
                 else_args,
-            } => InstructionShape::BranchIf {
+            } => InstructionRef::BranchIf {
                 arg: *arg,
                 then_destination: *then_destination,
                 then_args: then_args.to_slice(suballocator),
                 else_destination: *else_destination,
                 else_args: else_args.to_slice(suballocator),
             },
-            Instruction::Return { args } => InstructionShape::Return {
+            Instruction::Return { args } => InstructionRef::Return {
                 args: args.to_slice(suballocator),
             },
-            Instruction::Unreachable => InstructionShape::Unreachable,
+            Instruction::Unreachable => InstructionRef::Unreachable,
         }
     }
 }

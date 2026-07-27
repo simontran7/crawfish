@@ -1,59 +1,5 @@
 # TODO
 
-## Currently
-
-- [ ] LLVM IR Generation
-
-Two-pass strategy (block parameters → LLVM phi nodes) (https://createlang.rs/03_secondlang/ir.html)
-
-**Pass 1:** Create all LLVM basic blocks and allocate phi nodes for block parameters.
-
-```rust
-for block in func.layout.blocks() {
-    let llvm_bb = llvm_func.append_basic_block(&ctx, "");
-    bb_map[block] = llvm_bb;
-
-    for (i, &param) in func.dfg.block_params(block).iter().enumerate() {
-        let ty = func.dfg.value_type(param);
-        let phi = builder.build_phi(llvm_ty(ty), "");
-        value_map[param] = phi.as_basic_value();
-        phi_map[block].push(phi);
-    }
-}
-```
-
-**Pass 2:** Emit instructions; on every branch, patch the phi nodes.
-
-```rust
-for block in function.body.blocks() {
-    builder.position_at_end(bb_map[block]);
-
-    for instruction in func.cfg.block_insts(block) {
-        match &func.dfg[inst] {
-            InstData::Jump { dest, args } => {
-                for (phi, &arg) in phi_map[*dest].iter().zip(args) {
-                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
-                }
-                builder.build_unconditional_branch(bb_map[*dest]);
-            }
-            InstData::Brif { cond, then_dest, then_args, else_dest, else_args } => {
-                for (phi, &arg) in phi_map[*then_dest].iter().zip(then_args) {
-                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
-                }
-                for (phi, &arg) in phi_map[*else_dest].iter().zip(else_args) {
-                    phi.add_incoming(&[(&value_map[arg], bb_map[block])]);
-                }
-                let cond_val = value_map[*cond].into_int_value();
-                builder.build_conditional_branch(cond_val, bb_map[*then_dest], bb_map[*else_dest]);
-            }
-            // ... other instructions map straightforwardly
-        }
-    }
-}
-```
-
-## Later
-
 ### Lexical Analysis
 
 - [ ] speed up with SIMD (https://bluuewhale.github.io/posts/simd-json/, https://validark.dev/posts/deus-lex-machina/)
@@ -182,9 +128,9 @@ definite-initialization MIR pass.
 
 - [ ] ARC: (https://nonstrict.eu/wwdcindex/wwdc2011/323/?t=397, https://github.com/swiftlang/swift/blob/main/docs/SIL/SIL.md, https://github.com/swiftlang/swift/blob/main/docs/SIL/Instructions.md)
 
-- [ ] Const checking: prevents non-const functions as values of a constant definition ([mir_const_qualif](https://github.com/rust-lang/rust/blob/master/compiler/rustc_mir_transform/src/lib.rs), [check.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/check.rs), [ops.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/ops.rs), [ConstContext](https://github.com/rust-lang/rust/blob/master/compiler/rustc_hir/src/hir.rs))
+- [ ] Const checking: an explicit `const fn` marker (following Rust, not inferred purity) makes a function callable from a constant context. Const-checking permits calls only to `const fn`-marked functions inside a const initializer (or another `const fn`'s body) and rejects everything else — a syntactic restriction over the value's HIR shape, decided before any evaluation is attempted ([check.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/check.rs), [ops.rs](https://github.com/rust-lang/rust/blob/master/compiler/rustc_const_eval/src/check_consts/ops.rs)).
 
-- [ ] Const evaluation (CTFE): lower each `const` item's initializer to its own MIR Function (zero params), evaluate it with a small compile-time interpreter to produce a literal value. Referenced by other consts/functions via a lazy handle, resolved on demand (rustc's `eval_to_const_value_raw` model).
+- [ ] Const evaluation (CTFE): one mechanism for both cases, following rustc rather than special-casing plain consts. A plain `const` item's initializer is lowered into its own `Function`/`Cfg` (zero params) via the existing `FunctionBuilder` — same lowering path a real function body goes through, so no separate fold/environment logic is written or maintained. A small compile-time interpreter (a call stack + recursion limit) then walks that `Cfg` to produce a value. `const fn` calls reuse the identical interpreter, but walk the callee's real, already-lowered `Cfg` (the same one used for runtime codegen, per rustc's model) rather than a body built specially for evaluation. Results are cached by `ItemBindingId`, resolved lazily on first reference.
 
 ### Language Features
 
