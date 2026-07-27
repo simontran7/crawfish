@@ -1,23 +1,23 @@
+use crate::common::context::CompilerContext;
 use crate::common::span::Span;
 use crate::diagnostics::delimiter_diagnostics::DelimiterDiagnostic;
 use crate::front_end::lexical_analysis::token::{Token, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
 
 /// Builds token trees from a list of tokens.
-pub(crate) struct TokenTreeParser {
+pub(crate) struct TokenTreeParser<'a> {
     /// Iterator over the tokens to be processed.
     cursor: std::iter::Peekable<std::vec::IntoIter<Token>>,
     // Current token being processed.
     current: Token,
     /// Stack of open delimiters.
     open_delimiters: Vec<Token>,
-    /// Collected delimiter errors.
-    errors: Vec<DelimiterDiagnostic>,
+    ctx: &'a CompilerContext,
 }
 
-impl TokenTreeParser {
+impl<'a> TokenTreeParser<'a> {
     /// Creates and returns an instance of `TokenTreeParser`.
-    pub(crate) fn new(tokens: Vec<Token>) -> Self {
+    pub(crate) fn new(tokens: Vec<Token>, ctx: &'a CompilerContext) -> Self {
         let mut it = tokens.into_iter().peekable();
 
         let current = it.next().unwrap(); // Lexer always emits at least one token (e.g., EOF)
@@ -26,18 +26,18 @@ impl TokenTreeParser {
             cursor: it,
             current,
             open_delimiters: Vec::new(),
-            errors: Vec::new(),
+            ctx,
         }
     }
 
-    /// Parses the tokens into token trees, returning any delimiter errors encountered.
-    pub(crate) fn parse(mut self) -> Result<Vec<TokenTree>, Vec<DelimiterDiagnostic>> {
-        let token_trees = self.parse_rec(false);
-        if self.errors.is_empty() {
-            Ok(token_trees)
-        } else {
-            Err(self.errors)
-        }
+    /// Parses the tokens into token trees.
+    ///
+    /// The trees are always returned, even when diagnostics were emitted: an
+    /// unclosed delimiter is treated as closing at end of input, so the result
+    /// is still shaped well enough to hand to the parser. Callers check
+    /// [`CompilerContext::diagnostics`] to decide whether to proceed.
+    pub(crate) fn parse(mut self) -> Vec<TokenTree> {
+        self.parse_rec(false)
     }
 
     /// Recursively turns tokens into token trees.
@@ -64,10 +64,12 @@ impl TokenTreeParser {
                     token_trees.push(TokenTree::Token(eod));
                     return token_trees;
                 } else {
-                    self.errors.push(DelimiterDiagnostic::Unexpected {
-                        span: self.current.span(),
-                        found: self.current.kind(),
-                    });
+                    self.ctx
+                        .diagnostics
+                        .record(DelimiterDiagnostic::Unexpected {
+                            span: self.current.span(),
+                            found: self.current.kind(),
+                        });
                     self.advance();
                 }
             } else if self.current.kind() == TokenKind::Eof {
@@ -142,7 +144,7 @@ impl TokenTreeParser {
             .any(|t| Some(t.kind()) == matching_open);
 
         if matches_earlier {
-            self.errors.push(DelimiterDiagnostic::Unclosed {
+            self.ctx.diagnostics.record(DelimiterDiagnostic::Unclosed {
                 span: open.span(),
                 expected: expected_close,
             });
@@ -153,12 +155,14 @@ impl TokenTreeParser {
                 inner,
             }
         } else {
-            self.errors.push(DelimiterDiagnostic::Mismatched {
-                closer_span: found_close.span(),
-                expected: expected_close,
-                found: found_close.kind(),
-                opener_span: open.span(),
-            });
+            self.ctx
+                .diagnostics
+                .record(DelimiterDiagnostic::Mismatched {
+                    closer_span: found_close.span(),
+                    expected: expected_close,
+                    found: found_close.kind(),
+                    opener_span: open.span(),
+                });
             let close = self.advance();
             TokenTree::Delimited {
                 open,
@@ -178,7 +182,7 @@ impl TokenTreeParser {
     ) -> TokenTree {
         self.open_delimiters.pop();
 
-        self.errors.push(DelimiterDiagnostic::Unclosed {
+        self.ctx.diagnostics.record(DelimiterDiagnostic::Unclosed {
             span: open_token.span(),
             expected: expected_close,
         });
@@ -214,17 +218,12 @@ mod tests {
 
             let tokens = Tokenizer::new(&source, &mut ctx).tokenize();
 
-            match TokenTreeParser::new(tokens).parse() {
-                Ok(trees) => insta::assert_snapshot!(filename, format!("{:#?}", trees)),
-                Err(diagnostics) => {
-                    let output = diagnostics
-                        .iter()
-                        .map(|d| format!("{d:?}"))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    insta::assert_snapshot!(filename, output);
-                }
-            };
+            let trees = TokenTreeParser::new(tokens, &ctx).parse();
+            if ctx.diagnostics.is_empty() {
+                insta::assert_snapshot!(filename, format!("{:#?}", trees));
+            } else {
+                insta::assert_snapshot!(filename, ctx.diagnostics.dump());
+            }
         });
     }
 }

@@ -9,7 +9,35 @@ use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::handle_list::{HandleList, HandleListSubAllocator};
 
-/// A single function's MIR.
+/// Every function in the source file, lowered to MIR.
+///
+/// Holding them all at once is what lets a later pass look across function
+/// boundaries (inlining, whole-program analysis); the LLVM lowering that
+/// consumes this walks it one [`Function`] at a time.
+pub(crate) struct Mir {
+    functions: Vec<Function>,
+}
+
+impl Mir {
+    /// Creates and returns a `Mir` with no functions.
+    pub(crate) fn new() -> Self {
+        Self {
+            functions: Vec::new(),
+        }
+    }
+
+    /// Appends a lowered function.
+    pub(crate) fn add_function(&mut self, function: Function) {
+        self.functions.push(function);
+    }
+
+    /// Iterates every function, in the order they were lowered.
+    pub(crate) fn functions(&self) -> impl Iterator<Item = &Function> {
+        self.functions.iter()
+    }
+}
+
+/// A single MIR function.
 pub(crate) struct Function {
     pub(crate) name: Symbol,
     pub(crate) signature: Signature,
@@ -188,6 +216,46 @@ pub(crate) struct InstructionView<'a> {
     cfg: &'a Cfg,
 }
 
+/// A borrowed, fully-redeemed view of an [`Instruction`]: same variants,
+/// but every `HandleList` is already a slice. This is the read-only shape
+/// handed across the `Cfg` boundary (dumper, verifier) — the `HandleList`
+/// + suballocator pairing never leaves this module.
+pub(crate) enum InstructionShape<'a> {
+    Binary {
+        operator: BinOp,
+        args: [ValueId; 2],
+    },
+    Unary {
+        operator: UnOp,
+        arg: ValueId,
+    },
+    IntegerLiteral {
+        value: u128,
+    },
+    BooleanLiteral {
+        value: bool,
+    },
+    Call {
+        callee: FunctionReferenceId,
+        args: &'a [ValueId],
+    },
+    Jump {
+        destination: BlockId,
+        args: &'a [ValueId],
+    },
+    BranchIf {
+        arg: ValueId,
+        then_destination: BlockId,
+        then_args: &'a [ValueId],
+        else_destination: BlockId,
+        else_args: &'a [ValueId],
+    },
+    Return {
+        args: &'a [ValueId],
+    },
+    Unreachable,
+}
+
 /// A mutable view over an instruction, returned by [`Cfg::get_instruction_mut`].
 pub(crate) struct InstructionViewMut<'a> {
     instruction_id: InstructionId,
@@ -331,6 +399,11 @@ impl Cfg {
             layout: &self.layout,
             next: self.layout.entry,
         }
+    }
+
+    /// Returns an iterator over every value id, in creation order.
+    pub(crate) fn values(&self) -> impl Iterator<Item = ValueId> + '_ {
+        self.dfg.values.keys()
     }
 
     /// Returns a view over `block_id` for block-local queries.
@@ -927,7 +1000,7 @@ impl<'a> BlockView<'a> {
     }
 
     /// Returns the block's parameters as a slice.
-    pub(crate) fn parameters(&self) -> &[ValueId] {
+    pub(crate) fn parameters(&self) -> &'a [ValueId] {
         self.cfg.dfg.blocks[self.block_id]
             .parameters
             .to_slice(&self.cfg.dfg.suballocator)
@@ -1042,7 +1115,7 @@ impl<'a> InstructionView<'a> {
     }
 
     /// Returns the instruction's result values as a slice.
-    pub(crate) fn results(&self) -> &[ValueId] {
+    pub(crate) fn results(&self) -> &'a [ValueId] {
         self.cfg.dfg.instruction_results[self.instruction_id].to_slice(&self.cfg.dfg.suballocator)
     }
 
@@ -1118,6 +1191,54 @@ impl<'a> InstructionView<'a> {
             _ => panic!("instruction is not a branch"),
         }
     }
+
+    /// Returns this instruction's opcode-and-scalar shape for read-only
+    /// inspection (dumping, verification): the variant and its non-list
+    /// fields, with every `HandleList` already redeemed to a slice.
+    pub(crate) fn shape(&self) -> InstructionShape<'a> {
+        let suballocator = &self.cfg.dfg.suballocator;
+        match &self.cfg.dfg.instructions[self.instruction_id] {
+            Instruction::Binary { operator, args } => InstructionShape::Binary {
+                operator: *operator,
+                args: [args[0], args[1]],
+            },
+            Instruction::Unary { operator, arg } => InstructionShape::Unary {
+                operator: *operator,
+                arg: *arg,
+            },
+            Instruction::IntegerLiteral { value, .. } => {
+                InstructionShape::IntegerLiteral { value: *value }
+            }
+            Instruction::BooleanLiteral { value } => {
+                InstructionShape::BooleanLiteral { value: *value }
+            }
+            Instruction::Call { callee, args } => InstructionShape::Call {
+                callee: *callee,
+                args: args.to_slice(suballocator),
+            },
+            Instruction::Jump { destination, args } => InstructionShape::Jump {
+                destination: *destination,
+                args: args.to_slice(suballocator),
+            },
+            Instruction::BranchIf {
+                arg,
+                then_destination,
+                then_args,
+                else_destination,
+                else_args,
+            } => InstructionShape::BranchIf {
+                arg: *arg,
+                then_destination: *then_destination,
+                then_args: then_args.to_slice(suballocator),
+                else_destination: *else_destination,
+                else_args: else_args.to_slice(suballocator),
+            },
+            Instruction::Return { args } => InstructionShape::Return {
+                args: args.to_slice(suballocator),
+            },
+            Instruction::Unreachable => InstructionShape::Unreachable,
+        }
+    }
 }
 
 impl<'a> InstructionViewMut<'a> {
@@ -1182,6 +1303,10 @@ impl<'a> ValueView<'a> {
     /// Returns this value's origin, resolving through any alias chain first.
     pub(crate) fn origin(&self) -> ValueOrigin {
         self.cfg.dfg.values[self.cfg.resolve_aliases(self.value_id)].origin
+    }
+
+    pub(crate) fn alias_target(&self) -> Option<ValueId> {
+        self.cfg.dfg.values[self.value_id].alias
     }
 }
 

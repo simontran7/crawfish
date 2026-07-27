@@ -19,22 +19,20 @@ use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 /// Syntax errors don't abort parsing: each `parse_*` method that can fail
 /// returns a `Result` whose `Err` case is an `Error*Id` handle to a node
 /// added to the [`Ast`] at the offending span, while the diagnostic itself
-/// is pushed onto `errors`. This lets the caller recover and keep parsing
-/// the rest of the source file. [`Parser::parse`] only returns `Err` (the
-/// full diagnostic list, discarding the partial [`Ast`]) if at least one
-/// such error was recorded.
+/// is emitted into [`CompilerContext::diagnostics`]. This lets the caller
+/// recover and keep parsing the rest of the source file, so [`Parser::parse`]
+/// always returns a complete [`Ast`].
 ///
 /// # Examples
 ///
 /// ```rust,ignore
-/// let ctx = CompilerContext::new();
+/// let mut ctx = CompilerContext::new();
 /// let tokens = Tokenizer::new(source, &mut ctx).tokenize();
-/// let token_trees = TokenTreeParser::new(tokens).parse().unwrap();
-/// let ast = Parser::new(source, &token_trees, &ctx).parse().unwrap();
+/// let token_trees = TokenTreeParser::new(tokens, &ctx).parse();
+/// let ast = Parser::new(source, &token_trees, &ctx).parse();
 /// ```
 pub(crate) struct Parser<'a> {
     cursor: Cursor<'a>,
-    errors: Vec<SyntacticDiagnostic>,
     ctx: &'a CompilerContext,
     ast: Ast,
 }
@@ -66,24 +64,24 @@ impl<'a> Parser<'a> {
     ) -> Self {
         Self {
             cursor: Cursor::new(token_trees),
-            errors: Vec::new(),
             ctx,
             ast: Ast::new(source.len()),
         }
     }
 
     /// Parses the entire token tree stream as a source file, returning the
-    /// completed [`Ast`] if no [`SyntacticDiagnostic`]s were recorded, or
-    /// the full diagnostic list otherwise.
-    pub(crate) fn parse(mut self) -> Result<Ast, Vec<SyntacticDiagnostic>> {
+    /// completed [`Ast`].
+    ///
+    /// The [`Ast`] is always complete, even when diagnostics were emitted:
+    /// failed `parse_*` methods leave `Error*Id` nodes behind, so the tree is
+    /// still shaped well enough for later stages to keep surfacing
+    /// diagnostics. Callers check [`CompilerContext::diagnostics`] to decide
+    /// whether to proceed.
+    pub(crate) fn parse(mut self) -> Ast {
         while !self.cursor.is_at_end() {
             self.parse_source_file_item();
         }
-        if self.errors.is_empty() {
-            Ok(self.ast)
-        } else {
-            Err(self.errors)
-        }
+        self.ast
     }
 
     /// Parses one top-level item (a [`TokenKind::Func`] or
@@ -101,10 +99,12 @@ impl<'a> Parser<'a> {
             TokenKind::Const => self.parse_constant_definition().into(),
             _ => {
                 let offending_token = self.cursor.bump();
-                self.errors.push(SyntacticDiagnostic::InvalidTopLevelItem {
-                    span: offending_token.span(),
-                    found: offending_token.kind().to_string(),
-                });
+                self.ctx
+                    .diagnostics
+                    .record(SyntacticDiagnostic::InvalidTopLevelItem {
+                        span: offending_token.span(),
+                        found: offending_token.kind().to_string(),
+                    });
                 self.cursor.sync_until(&[TokenKind::Func, TokenKind::Const]);
                 self.ast.add_erroneous_item(offending_token.span()).into()
             }
@@ -434,19 +434,23 @@ impl<'a> Parser<'a> {
             TokenKind::True | TokenKind::False => self.parse_boolean_literal().into(),
             TokenKind::Plus => {
                 let token = self.cursor.bump();
-                self.errors.push(SyntacticDiagnostic::InvalidExpression {
-                    span: token.span(),
-                    found: TokenKind::Plus.to_string(),
-                });
+                self.ctx
+                    .diagnostics
+                    .record(SyntacticDiagnostic::InvalidExpression {
+                        span: token.span(),
+                        found: TokenKind::Plus.to_string(),
+                    });
                 self.nud()
             }
             TokenKind::Return => self.parse_return().into(),
             _ => {
                 let token = self.cursor.bump();
-                self.errors.push(SyntacticDiagnostic::InvalidExpression {
-                    span: token.span(),
-                    found: token.kind().to_string(),
-                });
+                self.ctx
+                    .diagnostics
+                    .record(SyntacticDiagnostic::InvalidExpression {
+                        span: token.span(),
+                        found: token.kind().to_string(),
+                    });
                 self.cursor
                     .sync_until(&[TokenKind::Semicolon, TokenKind::Comma]);
                 self.ast.add_erroneous_expression(token.span()).into()
@@ -565,11 +569,13 @@ impl<'a> Parser<'a> {
                 Some(self.parse_block_expression().into())
             } else {
                 let span = self.cursor.peek().span();
-                self.errors.push(SyntacticDiagnostic::UnexpectedToken {
-                    span,
-                    expected: "`{` or `if`".to_string(),
-                    found: self.cursor.peek().kind().to_string(),
-                });
+                self.ctx
+                    .diagnostics
+                    .record(SyntacticDiagnostic::UnexpectedToken {
+                        span,
+                        expected: "`{` or `if`".to_string(),
+                        found: self.cursor.peek().kind().to_string(),
+                    });
                 Some(self.ast.add_erroneous_expression(span).into())
             }
         } else {
@@ -610,11 +616,14 @@ impl<'a> Parser<'a> {
 
             if !parser.cursor.is_at_end() {
                 let leftover = parser.cursor.peek();
-                parser.errors.push(SyntacticDiagnostic::UnexpectedToken {
-                    span: leftover.span(),
-                    expected: "`)`".to_string(),
-                    found: leftover.kind().to_string(),
-                });
+                parser
+                    .ctx
+                    .diagnostics
+                    .record(SyntacticDiagnostic::UnexpectedToken {
+                        span: leftover.span(),
+                        expected: "`)`".to_string(),
+                        found: leftover.kind().to_string(),
+                    });
             }
 
             Ok(expression)
@@ -708,8 +717,9 @@ impl<'a> Parser<'a> {
         if let Ok(value) = u128::from_str_radix(digits, base) {
             Ok(self.ast.add_integer_literal(value, span))
         } else {
-            self.errors
-                .push(SyntacticDiagnostic::InvalidIntegerLiteral {
+            self.ctx
+                .diagnostics
+                .record(SyntacticDiagnostic::InvalidIntegerLiteral {
                     span,
                     found: raw.to_string(),
                 });
@@ -776,11 +786,13 @@ impl<'a> Parser<'a> {
             self.cursor.bump();
             true
         } else {
-            self.errors.push(SyntacticDiagnostic::UnexpectedToken {
-                span: self.cursor.peek().span(),
-                expected: kind.to_string(),
-                found: self.cursor.peek().kind().to_string(),
-            });
+            self.ctx
+                .diagnostics
+                .record(SyntacticDiagnostic::UnexpectedToken {
+                    span: self.cursor.peek().span(),
+                    expected: kind.to_string(),
+                    found: self.cursor.peek().kind().to_string(),
+                });
             false
         }
     }
@@ -793,11 +805,13 @@ impl<'a> Parser<'a> {
             self.cursor.bump();
             true
         } else {
-            self.errors.push(SyntacticDiagnostic::UnexpectedToken {
-                span: self.cursor.peek().span(),
-                expected: kind.to_string(),
-                found: self.cursor.peek().kind().to_string(),
-            });
+            self.ctx
+                .diagnostics
+                .record(SyntacticDiagnostic::UnexpectedToken {
+                    span: self.cursor.peek().span(),
+                    expected: kind.to_string(),
+                    found: self.cursor.peek().kind().to_string(),
+                });
             false
         }
     }
@@ -941,20 +955,17 @@ mod tests {
 
             let tokens = Tokenizer::new(&source, &mut ctx).tokenize();
 
-            let token_trees = TokenTreeParser::new(tokens).parse().unwrap();
+            let token_trees = TokenTreeParser::new(tokens, &ctx).parse();
+            assert!(
+                !ctx.diagnostics.has_errors(),
+                "{filename}: test input has delimiter errors"
+            );
 
-            let ast = match Parser::new(&source, &token_trees, &ctx).parse() {
-                Ok(ast) => ast,
-                Err(diagnostics) => {
-                    let output = diagnostics
-                        .iter()
-                        .map(|d| format!("{d:?}"))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    insta::assert_snapshot!(filename, output);
-                    return;
-                }
-            };
+            let ast = Parser::new(&source, &token_trees, &ctx).parse();
+            if !ctx.diagnostics.is_empty() {
+                insta::assert_snapshot!(filename, ctx.diagnostics.dump());
+                return;
+            }
 
             let output = AstDumper::new(&ast, &ctx).dump().unwrap();
             insta::assert_snapshot!(filename, output);

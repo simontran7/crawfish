@@ -90,7 +90,7 @@ pub(crate) enum SemanticDiagnostic {
 
 impl SemanticDiagnostic {
     /// Renders this diagnostic to stderr, pointing at the offending span(s) in `source`.
-    pub(crate) fn report(&self, filename: &str, source: &str) {
+    pub(crate) fn render(&self, filename: &str, source: &str) {
         let report = match self {
             Self::TypeMismatch {
                 expected,

@@ -38,7 +38,6 @@ pub(crate) struct SemanticAnalyzer<'ast> {
     constraints: Vec<Constraint>,
     substitutions: UnificationTable,
     current_return_ty: Option<TypeId>,
-    errors: Vec<SemanticDiagnostic>,
 }
 
 /// The failure case of [`SemanticAnalyzer::unify`]: the two [`TypeId`]s
@@ -58,7 +57,6 @@ impl<'ast> SemanticAnalyzer<'ast> {
             substitutions: UnificationTable::new(),
             constraints: Vec::new(),
             current_return_ty: None,
-            errors: Vec::new(),
         }
     }
 
@@ -68,9 +66,14 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`SemanticAnalyzer::solve_constraints`] to resolve inference
     /// variables and report type errors, then
     /// [`SemanticAnalyzer::substitute`] to write resolved types into the
-    /// [`Hir`]. Returns the completed [`Hir`] if no [`SemanticDiagnostic`]s
-    /// were recorded, or the full diagnostic list otherwise.
-    pub(crate) fn analyze(mut self) -> Result<Hir, Vec<SemanticDiagnostic>> {
+    /// [`Hir`]. Returns the completed [`Hir`].
+    ///
+    /// The [`Hir`] is always complete, even when diagnostics were emitted:
+    /// unresolved names lower to [`BindingId::ERROR`] with
+    /// [`TypeInterner::error_id`], so the tree stays whole and further
+    /// diagnostics don't cascade off the bad node. Callers check
+    /// [`CompilerContext::diagnostics`] to decide whether to proceed.
+    pub(crate) fn analyze(mut self) -> Hir {
         // all top-level items need to live in the same scope so they can see each other.
         // When `typecheck_source_file()` later processes function bodies, variables can look up
         // top-level names (other functions, constants) in that scope.
@@ -83,11 +86,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         self.substitute();
 
-        if self.errors.is_empty() {
-            Ok(self.hir)
-        } else {
-            Err(self.errors)
-        }
+        self.hir
     }
 
     /// Calls [`SemanticAnalyzer::collect_item_definition`] for every
@@ -215,7 +214,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                         }
                     }
                 };
-                self.errors.push(diagnostic);
+                self.ctx.diagnostics.record(diagnostic);
             }
         }
     }
@@ -317,11 +316,14 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 if let Err(DefineError::AlreadyDefined { prev_binding_id }) =
                     self.symbol_table.add_binding(name, item_binding_id.into())
                 {
-                    self.errors.push(SemanticDiagnostic::DuplicateDefinition {
-                        name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
-                        span: node.span,
-                        previous_span: self.hir.item_bindings[prev_binding_id.index().into()].span,
-                    });
+                    self.ctx
+                        .diagnostics
+                        .record(SemanticDiagnostic::DuplicateDefinition {
+                            name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
+                            span: node.span,
+                            previous_span: self.hir.item_bindings[prev_binding_id.index().into()]
+                                .span,
+                        });
                 }
             }
             ast::handles::ItemKind::ConstantDefinition => {
@@ -339,11 +341,14 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 if let Err(DefineError::AlreadyDefined { prev_binding_id }) =
                     self.symbol_table.add_binding(name, item_binding_id.into())
                 {
-                    self.errors.push(SemanticDiagnostic::DuplicateDefinition {
-                        name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
-                        span: node.span,
-                        previous_span: self.hir.item_bindings[prev_binding_id.index().into()].span,
-                    });
+                    self.ctx
+                        .diagnostics
+                        .record(SemanticDiagnostic::DuplicateDefinition {
+                            name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
+                            span: node.span,
+                            previous_span: self.hir.item_bindings[prev_binding_id.index().into()]
+                                .span,
+                        });
                 }
             }
             ast::handles::ItemKind::Error => {
@@ -400,11 +405,13 @@ impl<'ast> SemanticAnalyzer<'ast> {
             if let Err(DefineError::AlreadyDefined { prev_binding_id }) =
                 self.symbol_table.add_binding(name, local_binding_id.into())
             {
-                self.errors.push(SemanticDiagnostic::DuplicateDefinition {
-                    name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
-                    span: parameter.span,
-                    previous_span: self.hir.local_bindings[prev_binding_id.index().into()].span,
-                });
+                self.ctx
+                    .diagnostics
+                    .record(SemanticDiagnostic::DuplicateDefinition {
+                        name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
+                        span: parameter.span,
+                        previous_span: self.hir.local_bindings[prev_binding_id.index().into()].span,
+                    });
             }
 
             param_local_binding_ids.push(local_binding_id);
@@ -427,7 +434,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         // create the HIR node
         self.hir.add_item(
             ItemKind::Function {
-                name: binding_id.as_item().unwrap(),
+                binding: binding_id.as_item().unwrap(),
                 parameters: parameter_slice,
                 body: body_id,
             },
@@ -455,7 +462,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         // create the HIR node
         self.hir.add_item(
             ItemKind::Constant {
-                name: binding_id.as_item().unwrap(),
+                binding: binding_id.as_item().unwrap(),
                 value: value_id,
             },
             node.span,
@@ -638,11 +645,14 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 if let Err(DefineError::AlreadyDefined { prev_binding_id }) =
                     self.symbol_table.add_binding(name, local_binding_id.into())
                 {
-                    self.errors.push(SemanticDiagnostic::DuplicateDefinition {
-                        name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
-                        span: node.span,
-                        previous_span: self.hir.local_bindings[prev_binding_id.index().into()].span,
-                    });
+                    self.ctx
+                        .diagnostics
+                        .record(SemanticDiagnostic::DuplicateDefinition {
+                            name: self.ctx.string_interner.resolve(name).unwrap().to_string(),
+                            span: node.span,
+                            previous_span: self.hir.local_bindings[prev_binding_id.index().into()]
+                                .span,
+                        });
                 }
 
                 // create HIR node
@@ -820,8 +830,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let binding_id = match self.symbol_table.find_binding(node.symbol) {
             Ok(id) => id,
             Err(LookupError::BlockedByBoundary(ScopeKind::ConstantBoundary)) => {
-                self.errors
-                    .push(SemanticDiagnostic::NonConstantValue { span: node.span });
+                self.ctx
+                    .diagnostics
+                    .record(SemanticDiagnostic::NonConstantValue { span: node.span });
                 return self.hir.add_expression(
                     ExpressionKind::Variable(BindingId::ERROR),
                     self.ctx.type_interner.error_id,
@@ -829,8 +840,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 );
             }
             Err(LookupError::BlockedByBoundary(ScopeKind::FunctionBoundary)) => {
-                self.errors
-                    .push(SemanticDiagnostic::CaptureInFunction { span: node.span });
+                self.ctx
+                    .diagnostics
+                    .record(SemanticDiagnostic::CaptureInFunction { span: node.span });
                 return self.hir.add_expression(
                     ExpressionKind::Variable(BindingId::ERROR),
                     self.ctx.type_interner.error_id,
@@ -839,15 +851,17 @@ impl<'ast> SemanticAnalyzer<'ast> {
             }
             Err(LookupError::BlockedByBoundary(ScopeKind::Normal)) => unreachable!(),
             Err(LookupError::NotFound) => {
-                self.errors.push(SemanticDiagnostic::UnresolvedName {
-                    name: self
-                        .ctx
-                        .string_interner
-                        .resolve(node.symbol)
-                        .unwrap()
-                        .to_string(),
-                    span: node.span,
-                });
+                self.ctx
+                    .diagnostics
+                    .record(SemanticDiagnostic::UnresolvedName {
+                        name: self
+                            .ctx
+                            .string_interner
+                            .resolve(node.symbol)
+                            .unwrap()
+                            .to_string(),
+                        span: node.span,
+                    });
                 return self.hir.add_expression(
                     ExpressionKind::Variable(BindingId::ERROR),
                     self.ctx.type_interner.error_id,
@@ -1053,16 +1067,19 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let target_is_error = match target_binding {
             Some(b) if b.as_local().is_some() => false,
             Some(b) if b.as_item().is_some() => {
-                self.errors
-                    .push(SemanticDiagnostic::InvalidAssignTarget { span: node.span });
+                self.ctx
+                    .diagnostics
+                    .record(SemanticDiagnostic::InvalidAssignTarget { span: node.span });
                 true
             }
             Some(_) => true, // binding error (`UnresolvedName` diagnostic already reported)
             None => {
                 // not a place expression (e.g. `42 = val`)
-                self.errors.push(SemanticDiagnostic::InvalidAssignTarget {
-                    span: self.hir.expressions[target_id].span,
-                });
+                self.ctx
+                    .diagnostics
+                    .record(SemanticDiagnostic::InvalidAssignTarget {
+                        span: self.hir.expressions[target_id].span,
+                    });
                 true
             }
         };
@@ -1134,14 +1151,16 @@ impl<'ast> SemanticAnalyzer<'ast> {
             .resolve(self.hir.expressions[callee_id].ty)
             .unwrap()
         else {
-            self.errors.push(SemanticDiagnostic::NotCallable {
-                found: self
-                    .ctx
-                    .type_interner
-                    .to_string(self.hir.expressions[callee_id].ty),
-                callee_span: self.hir.expressions[callee_id].span,
-                call_span: node.span,
-            });
+            self.ctx
+                .diagnostics
+                .record(SemanticDiagnostic::NotCallable {
+                    found: self
+                        .ctx
+                        .type_interner
+                        .to_string(self.hir.expressions[callee_id].ty),
+                    callee_span: self.hir.expressions[callee_id].span,
+                    call_span: node.span,
+                });
             for &ast_arg_id in ast_arg_slice {
                 self.infer(ast_arg_id); // surface errors inside args
             }
@@ -1158,18 +1177,20 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // check arity (i.e., number of arguments compared to number of parameters)
         if ast_arg_len != parameter_tys.len() {
-            self.errors.push(SemanticDiagnostic::ArityMismatch {
-                expected: parameter_tys.len(),
-                found: ast_arg_len,
-                callee_span: self.hir.expressions[callee_id].span,
-                call_span: node.span,
-                // when there are too few args, extra_arg_spans is empty (no extra args to point to),
-                // and when there are too many, it correctly collects the spans of the surplus arguments.
-                extra_arg_spans: ast_arg_slice[parameter_tys.len().min(ast_arg_len)..]
-                    .iter()
-                    .map(|&id| self.ast.span_of_expression(id))
-                    .collect(),
-            });
+            self.ctx
+                .diagnostics
+                .record(SemanticDiagnostic::ArityMismatch {
+                    expected: parameter_tys.len(),
+                    found: ast_arg_len,
+                    callee_span: self.hir.expressions[callee_id].span,
+                    call_span: node.span,
+                    // when there are too few args, extra_arg_spans is empty (no extra args to point to),
+                    // and when there are too many, it correctly collects the spans of the surplus arguments.
+                    extra_arg_spans: ast_arg_slice[parameter_tys.len().min(ast_arg_len)..]
+                        .iter()
+                        .map(|&id| self.ast.span_of_expression(id))
+                        .collect(),
+                });
         }
 
         // type-check and lower each argument
@@ -1217,8 +1238,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
             let value_id = node
                 .value
                 .map(|ast_expression_id| self.infer(ast_expression_id));
-            self.errors
-                .push(SemanticDiagnostic::ReturnOutsideFunction { span: node.span });
+            self.ctx
+                .diagnostics
+                .record(SemanticDiagnostic::ReturnOutsideFunction { span: node.span });
             return self.hir.add_expression(
                 ExpressionKind::Return { value: value_id },
                 self.ctx.type_interner.error_id,
@@ -1326,15 +1348,17 @@ impl<'ast> SemanticAnalyzer<'ast> {
             return ty;
         }
         // TODO: try resolve user-defined types here
-        self.errors.push(SemanticDiagnostic::UnknownType {
-            name: self
-                .ctx
-                .string_interner
-                .resolve(node.symbol)
-                .unwrap()
-                .to_string(),
-            span: node.span,
-        });
+        self.ctx
+            .diagnostics
+            .record(SemanticDiagnostic::UnknownType {
+                name: self
+                    .ctx
+                    .string_interner
+                    .resolve(node.symbol)
+                    .unwrap()
+                    .to_string(),
+                span: node.span,
+            });
         self.ctx.type_interner.error_id
     }
 

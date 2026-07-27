@@ -1,5 +1,6 @@
 //! A cursor for navigating and editing a `Cfg`'s layout.
 
+use crate::common::string_interner::Symbol;
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::mir::{
@@ -504,5 +505,20 @@ impl<'a> CfgCursor<'a> {
     /// Builds and inserts an `Unreachable` instruction at the current position.
     pub(crate) fn add_unreachable(&mut self) -> InstructionId {
         self.add_instruction(Instruction::Unreachable, &[])
+    }
+
+    /// Registers `signature` in the underlying `Cfg`. See [`Cfg::add_signature`].
+    pub(crate) fn add_signature(&mut self, signature: Signature) -> SignatureId {
+        self.cfg.add_signature(signature)
+    }
+
+    /// Registers a reference to a function named `name` with signature
+    /// `signature_id`. See [`Cfg::add_function_reference`].
+    pub(crate) fn add_function_reference(
+        &mut self,
+        name: Symbol,
+        signature: SignatureId,
+    ) -> FunctionReferenceId {
+        self.cfg.add_function_reference(name, signature)
     }
 }

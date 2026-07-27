@@ -1,0 +1,11 @@
+func add(x: I32, y: I32) -> I32 {
+    x + y
+}
+
+func max(a: I32, b: I32) -> I32 {
+    let mut result: I32 = a;
+    if a < b {
+        result = b;
+    }
+    result
+}

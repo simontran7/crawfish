@@ -57,11 +57,11 @@ impl<'a> HirDumper<'a> {
 
         match item.kind {
             ItemKind::Function {
-                name,
+                binding,
                 parameters,
                 body,
             } => {
-                let binding_info = &self.hir.item_bindings[name];
+                let binding_info = &self.hir.item_bindings[binding];
                 let name = self.ctx.string_interner.resolve(binding_info.name).unwrap();
                 let ty = self.ctx.type_interner.to_string(binding_info.ty);
 
@@ -87,8 +87,8 @@ impl<'a> HirDumper<'a> {
                 // dump block
                 self.dump_expression(body, depth + 1, "", hir_output)?;
             }
-            ItemKind::Constant { name, value } => {
-                let binding_info = &self.hir.item_bindings[name];
+            ItemKind::Constant { binding, value } => {
+                let binding_info = &self.hir.item_bindings[binding];
                 let name = self.ctx.string_interner.resolve(binding_info.name).unwrap();
                 let ty = self.ctx.type_interner.to_string(binding_info.ty);
 

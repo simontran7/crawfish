@@ -20,7 +20,7 @@ pub(crate) enum DelimiterDiagnostic {
 
 impl DelimiterDiagnostic {
     /// Renders this diagnostic to stderr, pointing at the offending span(s) in `source`.
-    pub(crate) fn report(&self, filename: &str, source: &str) {
+    pub(crate) fn render(&self, filename: &str, source: &str) {
         let report = match self {
             Self::Unclosed { span, expected } => {
                 Report::build(ReportKind::Error, filename, span.start() as usize)

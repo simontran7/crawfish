@@ -1,0 +1,22 @@
+---
+source: src/middle_end/lowerer.rs
+expression: output
+input_file: src/middle_end/inputs/basic.crw
+---
+function add(I32, I32) -> I32 {
+Block0(v0: I32, v1: I32):
+    v2 = Binary Add v0, v1
+    Return v2
+}
+
+function max(I32, I32) -> I32 {
+Block0(v0: I32, v1: I32):
+    v2 = Binary Lt v0, v1
+    BranchIf v2, Block1, Block2(v0)
+
+Block1:
+    Jump Block2(v1)
+
+Block2(v3: I32):
+    Return v3
+}

@@ -2,30 +2,6 @@
 
 ## Currently
 
-- [ ] Visitor/Fold trait split for MIR passes: separate read-only traversal (Visitor) from transforming traversal (Fold), each with default no-op/identity methods per instruction kind. Factor out once verification, const evaluation, and codegen all walk the CFG the same way. Reference: rustc's [MIR visitors](https://github.com/rust-lang/rust/blob/master/compiler/rustc_middle/src/mir/visit.rs).
-
-- [ ] `MirDumper`: a textual dump of a lowered `Function`, matching `AstDumper`/`HirDumper`'s `new(&node, &ctx)` shape. Write it as soon as the first function lowers end to end — hand-written assertions on `ValueId`s stop being readable the moment block parameters appear, and the verifier below needs to print the function an error occurred in. Reference: Cranelift's [write.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/write.rs).
-  - Format is already written down in `Cfg`'s doc comment ([mir.rs](src/middle_end/mir.rs)): `Block0(v0: i32, v1: i32):` headers, indented instructions, blocks separated by blank lines, wrapped in a `function name(params) -> ret { … }` spec line.
-  - [ ] Print aliases, don't resolve them. Build a reverse map (target → every value aliased to it), then emit `v5 -> v3` lines under each block header, chasing chains with a todo-stack (`alias_map` / `write_value_aliases` in write.rs). This makes trivial block-parameter elimination visible for free, and removes any need for separate pre-/post-`flush_aliases` dumps. Requires an accessor returning a value's *immediate* alias target rather than the fully-resolved one — Cranelift's `value_alias_dest_for_serialization` exists solely for this.
-  - [ ] Make it generic over a writer trait (Cranelift's `FuncWriter`, with `decorate_function`/`decorate_block` taking `&mut FW`). The plain impl produces normal output; the verifier supplies a second impl that interleaves error annotations into the same layout, instead of growing a duplicate printer.
-  - [ ] Iterate the layout (`cursor.blocks()`), not the dfg — block order is the layout's business.
-  - [ ] Reserve a left column when `source_locations` is populated: indent instructions 4 normally and wider when spans exist, with block headers outdented 4 from whatever the instruction indent is.
-  - Not applicable from write.rs: `type_suffix` (disambiguates polymorphic opcodes; crawfish's `Instruction` enum carries explicit types), and `impl Display for Function` (rendering `TypeId`/`Symbol` needs `&CompilerContext`, which `Display::fmt` has nowhere to accept — hence the dumper struct).
-
-- [ ] MIR verification ([verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs))
-  - [ ] `CfgIndex`: predecessor/successor index over `Cfg`, computed on demand (mirrors Cranelift's [`ControlFlowGraph`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/flowgraph.rs)). Not needed by `FunctionBuilder` — it tracks its own predecessors transiently during construction, before the CFG is complete. Used two ways here: (1) as input to the `DominatorTree` below, and (2) on its own, rebuilt from scratch and diffed against whatever predecessor/successor data a pass is carrying, to catch it having gone stale — mirrors the verifier's `cfg_integrity` check.
-  - [ ] `DominatorTree`, built from `CfgIndex` (mirrors [`dominator_tree.rs`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/dominator_tree.rs)): required to check SSA's core invariant, every use of a value is dominated by its definition (and every use of a block parameter is in a block dominated by the block that defines it) — the actual check the verifier exists to perform.
-  - Checks below are Cranelift's [verifier categories](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs), filtered to what applies to crawfish's simpler IR (no VMContext, exception handling, SIMD, or multiple calling conventions).
-  - [ ] `verify_entity_references`: every `BlockId`/`InstructionId`/`FunctionReferenceId`/`SignatureId`/`ValueId` referenced anywhere actually exists in its table — no dangling handles.
-  - [ ] `block_integrity`: a terminator (`Jump`/`BranchIf`/`Return`/`Unreachable`) appears exactly once per block, only as the last instruction.
-  - [ ] `typecheck_variable_args`: `Jump`/`BranchIf` args match the destination block's `parameters` in count and type — the most direct test of `FunctionBuilder`'s phi-placement logic; prioritize this one over the type-checking items below.
-  - [ ] `instruction_integrity`: each instruction's result count matches what `DataFlowGraph::instruction_results` expects for it. (Opcode-doesn't-match-format is already unrepresentable, since `Instruction` is a plain Rust enum.)
-  - [ ] `typecheck` / `typecheck_results` / `typecheck_fixed_args`: each instruction's operand and result types match what its variant expects (e.g. `Binary`'s two args are compatible types). Mostly re-checks what sema already validated before lowering — a lowering-bug check, not a construction-bug check.
-  - [ ] `typecheck_entry_block_params`: entry block's parameters match the function's `Signature::parameters`.
-  - [ ] `typecheck_return`: `Return`'s args match `Signature::return_type`, in count and type.
-  - [ ] `typecheck_function_signature`: the `Signature` itself is well-formed, independent of any instruction.
-  - [ ] `iconst_bounds`: `IntegerLiteral { ty, value }`'s value fits within `ty`'s bit width.
-
 - [ ] LLVM IR Generation
 
 Two-pass strategy (block parameters → LLVM phi nodes) (https://createlang.rs/03_secondlang/ir.html)
@@ -184,6 +160,25 @@ When the first `Ty` variant is defined with a `TypeId` field — most likely whe
 - [ ] Builder with typestate i.e., enforce block sealing at the API level so construction-order bugs (e.g. reading a block's parameters before all predecessors are known) are unrepresentable. Reference: Cranelift's [FunctionBuilder](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/frontend/src/frontend.rs).
 
 ### MIR Transformation Passes
+
+- [ ] Visitor/Fold trait split for MIR passes: separate read-only traversal (Visitor) from transforming traversal (Fold), each with default no-op/identity methods per instruction kind. Factor out once verification, const evaluation, and codegen all walk the CFG the same way. Reference: rustc's [MIR visitors](https://github.com/rust-lang/rust/blob/master/compiler/rustc_middle/src/mir/visit.rs).
+
+- [ ] `AssignToImmutable` is currently detected during lowering but when `let x;` lands, detection should move into a
+definite-initialization MIR pass.
+
+- [ ] MIR verification ([verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs))
+  - [ ] `CfgIndex`: predecessor/successor index over `Cfg`, computed on demand (mirrors Cranelift's [`ControlFlowGraph`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/flowgraph.rs)). Not needed by `FunctionBuilder` — it tracks its own predecessors transiently during construction, before the CFG is complete. Used two ways here: (1) as input to the `DominatorTree` below, and (2) on its own, rebuilt from scratch and diffed against whatever predecessor/successor data a pass is carrying, to catch it having gone stale — mirrors the verifier's `cfg_integrity` check.
+  - [ ] `DominatorTree`, built from `CfgIndex` (mirrors [`dominator_tree.rs`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/dominator_tree.rs)): required to check SSA's core invariant, every use of a value is dominated by its definition (and every use of a block parameter is in a block dominated by the block that defines it) — the actual check the verifier exists to perform.
+  - Checks below are Cranelift's [verifier categories](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs), filtered to what applies to crawfish's simpler IR (no VMContext, exception handling, SIMD, or multiple calling conventions).
+  - [ ] `verify_entity_references`: every `BlockId`/`InstructionId`/`FunctionReferenceId`/`SignatureId`/`ValueId` referenced anywhere actually exists in its table — no dangling handles.
+  - [ ] `block_integrity`: a terminator (`Jump`/`BranchIf`/`Return`/`Unreachable`) appears exactly once per block, only as the last instruction.
+  - [ ] `typecheck_variable_args`: `Jump`/`BranchIf` args match the destination block's `parameters` in count and type — the most direct test of `FunctionBuilder`'s phi-placement logic; prioritize this one over the type-checking items below.
+  - [ ] `instruction_integrity`: each instruction's result count matches what `DataFlowGraph::instruction_results` expects for it. (Opcode-doesn't-match-format is already unrepresentable, since `Instruction` is a plain Rust enum.)
+  - [ ] `typecheck` / `typecheck_results` / `typecheck_fixed_args`: each instruction's operand and result types match what its variant expects (e.g. `Binary`'s two args are compatible types). Mostly re-checks what sema already validated before lowering — a lowering-bug check, not a construction-bug check.
+  - [ ] `typecheck_entry_block_params`: entry block's parameters match the function's `Signature::parameters`.
+  - [ ] `typecheck_return`: `Return`'s args match `Signature::return_type`, in count and type.
+  - [ ] `typecheck_function_signature`: the `Signature` itself is well-formed, independent of any instruction.
+  - [ ] `iconst_bounds`: `IntegerLiteral { ty, value }`'s value fits within `ty`'s bit width.
 
 - [ ] ARC: (https://nonstrict.eu/wwdcindex/wwdc2011/323/?t=397, https://github.com/swiftlang/swift/blob/main/docs/SIL/SIL.md, https://github.com/swiftlang/swift/blob/main/docs/SIL/Instructions.md)
 

@@ -67,13 +67,13 @@ pub(crate) struct ExpressionNode {
 pub(crate) enum ItemKind {
     /// A function definition: `func name(parameters) -> ReturnType { body }`.
     Function {
-        name: ItemBindingId,
+        binding: ItemBindingId,
         parameters: ParameterSlice,
         body: ExpressionId,
     },
     /// A top-level constant: `const name: Type = value;`.
     Constant {
-        name: ItemBindingId,
+        binding: ItemBindingId,
         value: ExpressionId,
     },
 }
@@ -89,6 +89,9 @@ pub(crate) enum StatementKind {
         has_semicolon: bool,
     },
     /// A `let` binding: `let pattern = value;`.
+    ///
+    /// Named `pattern` for the destructuring patterns the language will grow; until then
+    /// every `let` binds exactly one name, so the field is a single [`LocalBindingId`].
     Let {
         pattern: LocalBindingId,
         value: ExpressionId,
