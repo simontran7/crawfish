@@ -80,8 +80,10 @@ impl<'a> MirLowerer<'a> {
             .type_interner
             .as_func(self.hir.item_bindings[binding].ty)
             .unwrap();
+        // zero-sized parameters are dropped here so the signature matches the
+        // entry block, which skips them too (see `FunctionBuilder`'s contracts)
         let signature = Signature {
-            parameters: parameter_types.to_vec(),
+            parameters: self.erase_zero_sized(parameter_types),
             return_type,
         };
         let mut function = Function::new(name, signature);
@@ -103,6 +105,16 @@ impl<'a> MirLowerer<'a> {
 
         function
     }
+
+    /// Drops zero-sized types from a parameter list, so signatures agree with
+    /// the block parameters and call arguments that also skip them.
+    fn erase_zero_sized(&self, parameter_types: &[TypeId]) -> Vec<TypeId> {
+        parameter_types
+            .iter()
+            .copied()
+            .filter(|&ty| !self.ctx.type_interner.is_zero_sized(ty))
+            .collect()
+    }
 }
 
 /// Fills in one [`Function`]'s [`Cfg`][crate::middle_end::mir::Cfg].
@@ -123,9 +135,11 @@ impl<'a> MirLowerer<'a> {
 ///   lowering may `expect` values after type checking passed.
 /// - Constant initializers can't reference locals (`ConstantBoundary`), so
 ///   constant references lower by re-lowering the initializer inline.
-/// - Unit is value-less in MIR: unit-typed expressions lower to `None`,
-///   unit-typed variables never enter SSA, unit parameters are skipped.
-///   (v1 limitation: unit-typed call *arguments* are unsupported.)
+/// - Zero-sized types carry no value in MIR (see
+///   [`FunctionBuilder::is_zero_sized`]; unit is the only one today):
+///   such expressions lower to `None`, such variables never enter SSA, and
+///   such parameters are skipped.
+///   (v1 limitation: zero-sized call *arguments* are unsupported.)
 struct FunctionBuilder<'a> {
     hir: &'a Hir,
     ctx: &'a CompilerContext,
@@ -210,7 +224,7 @@ impl<'a> FunctionBuilder<'a> {
             self.hir.get_parameter_slice(parameters).to_vec();
         for binding in parameter_bindings {
             let ty = self.hir.local_bindings[binding].ty;
-            if self.is_unit(ty) {
+            if self.is_zero_sized(ty) {
                 continue; // unit carries no value
             }
             let value = self.cursor.get_block_mut(entry).append_parameter(ty);
@@ -305,7 +319,7 @@ impl<'a> FunctionBuilder<'a> {
                 // // source: code_translator.rs Operator::LocalGet →
                 // // builder.use_var
                 BindingKind::Local => {
-                    if self.is_unit(ty) {
+                    if self.is_zero_sized(ty) {
                         return None;
                     }
                     let local = binding.as_local().unwrap();
@@ -394,16 +408,20 @@ impl<'a> FunctionBuilder<'a> {
                     self.hir.get_expression_slice(arguments).to_vec();
                 let mut args = Vec::with_capacity(argument_ids.len());
                 for argument in argument_ids {
-                    let value = self
-                        .lower_expression(argument)
-                        .expect("unit-typed call arguments are unsupported in v1");
+                    let value = self.lower_expression(argument);
                     if !self.reachable {
                         return None;
                     }
-                    args.push(value);
+                    // A zero-sized argument still ran, for its side effects,
+                    // but carries no value to pass. Dropping it here matches
+                    // the callee, whose signature and entry block both skip
+                    // zero-sized parameters, so the arity still lines up.
+                    if let Some(value) = value {
+                        args.push(value);
+                    }
                 }
 
-                let call = if self.is_unit(ty) {
+                let call = if self.is_zero_sized(ty) {
                     self.cursor.add_call(function_ref, &args, &[])
                 } else {
                     self.cursor.add_call(function_ref, &args, &[ty])
@@ -456,7 +474,7 @@ impl<'a> FunctionBuilder<'a> {
             return None;
         }
 
-        let produces_value = !self.is_unit(ty);
+        let produces_value = !self.is_zero_sized(ty);
         let result_variable = produces_value.then(|| self.fresh_synthetic_variable());
 
         // Create+declare in one place so nested constructs (which create
@@ -709,8 +727,15 @@ impl<'a> FunctionBuilder<'a> {
             .type_interner
             .as_func(self.hir.item_bindings[binding].ty)
             .expect("call callee binding must have a function type");
+        // erased exactly as in `MirLowerer::lower_function`, so a callee's
+        // reference here agrees with the signature it was lowered with
+        let parameters = parameter_types
+            .iter()
+            .copied()
+            .filter(|&ty| !self.is_zero_sized(ty))
+            .collect();
         let signature = self.cursor.add_signature(Signature {
-            parameters: parameter_types.to_vec(),
+            parameters,
             return_type,
         });
         let function_ref = self.cursor.add_function_reference(name, signature);
@@ -766,8 +791,8 @@ impl<'a> FunctionBuilder<'a> {
         variable
     }
 
-    fn is_unit(&self, ty: TypeId) -> bool {
-        ty == self.ctx.type_interner.unit_id
+    fn is_zero_sized(&self, ty: TypeId) -> bool {
+        self.ctx.type_interner.is_zero_sized(ty)
     }
 }
 

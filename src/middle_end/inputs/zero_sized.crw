@@ -1,0 +1,13 @@
+func ignore(a: I32, u: Unit, b: I32) -> I32 {
+    a + b
+}
+
+func returns_unit(n: I32) -> Unit {
+}
+
+func main() -> I32 {
+    let mut counter: I32 = 7;
+    let total: I32 = ignore(1, counter = counter + 5, 2);
+    returns_unit(counter);
+    total + counter
+}

@@ -48,7 +48,8 @@ impl<'a> Tokenizer<'a> {
         tokens
     }
 
-    /// Lexes the next [`Token`] in `source`, after skipping whitespace.
+    /// Lexes the next [`Token`] in `source`, after skipping trivia
+    /// (whitespace and `//` line comments).
     /// Returns [`TokenKind::Eof`] once the cursor reaches the end of
     /// `source`; callers should stop calling [`Tokenizer::next_token`]
     /// after that.
@@ -57,7 +58,7 @@ impl<'a> Tokenizer<'a> {
     /// `Float`, and `String` are unused placeholders in [`LitKind`] for a
     /// future lexer extension.
     fn next_token(&mut self) -> Token {
-        self.eat_whitespace();
+        self.eat_trivia();
         let start_pos = self.pos();
         let token_kind = match self.advance() {
             '=' => match self.peek() {
@@ -137,6 +138,25 @@ impl<'a> Tokenizer<'a> {
     /// Eats whitespace.
     fn eat_whitespace(&mut self) {
         self.advance_while(|c| c.is_whitespace());
+    }
+
+    /// Eats whitespace and line comments until the next real token.
+    ///
+    /// Loops because the two interleave: `// a\n  // b` is one run of trivia,
+    /// and eating either kind once would stop short. Comments are discarded
+    /// rather than tokenized, so nothing downstream of the lexer knows they
+    /// existed — which is why adding them needed no parser change.
+    ///
+    /// A comment runs to the newline but doesn't consume it; the next
+    /// iteration's [`Tokenizer::eat_whitespace`] does.
+    fn eat_trivia(&mut self) {
+        loop {
+            self.eat_whitespace();
+            if !self.cursor.as_str().starts_with("//") {
+                return;
+            }
+            self.advance_while(|c| c != '\n');
+        }
     }
 
     /// Eats lexeme, which may be an identifier or a reserve word.

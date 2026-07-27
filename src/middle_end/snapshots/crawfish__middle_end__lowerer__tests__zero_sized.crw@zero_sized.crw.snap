@@ -1,0 +1,28 @@
+---
+source: src/middle_end/lowerer.rs
+expression: output
+input_file: src/middle_end/inputs/zero_sized.crw
+---
+function ignore(I32, I32) -> I32 {
+Block0(v0: I32, v1: I32):
+    v2 = Binary Add v0, v1
+    Return v2
+}
+
+function returns_unit(I32) -> () {
+Block0(v0: I32):
+    Return
+}
+
+function main() -> I32 {
+Block0:
+    v0 = IntegerLiteral 7
+    v1 = IntegerLiteral 1
+    v2 = IntegerLiteral 5
+    v3 = Binary Add v0, v2
+    v4 = IntegerLiteral 2
+    v5 = Call ignore(v1, v4)
+    Call returns_unit(v3)
+    v6 = Binary Add v5, v3
+    Return v6
+}

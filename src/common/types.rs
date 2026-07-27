@@ -132,6 +132,21 @@ impl TypeInterner {
         self.types.get(id.0 as usize)
     }
 
+    /// Whether values of `id` carry nothing at runtime.
+    ///
+    /// Zero-sized types have no MIR `ValueId`: such expressions lower to
+    /// `None`, such variables never enter SSA, and such parameters and
+    /// arguments are dropped from signatures and call sites alike. Unit is the
+    /// only one today; empty structs and `[T; 0]` belong here when they land,
+    /// and extending this predicate is all they should need.
+    ///
+    /// Modelled on rustc's `layout.is_zst()`, but applied a stage earlier:
+    /// rustc keeps zero-sized values in MIR and erases them during codegen,
+    /// whereas MIR here never holds one.
+    pub(crate) fn is_zero_sized(&self, id: TypeId) -> bool {
+        id == self.unit_id
+    }
+
     /// Looks up the [`TypeId`] of a built-in type by name, e.g. `Bool` or
     /// `I32`. Returns `None` for any name that isn't a built-in type
     /// (including user-defined types, which this interner does not handle).

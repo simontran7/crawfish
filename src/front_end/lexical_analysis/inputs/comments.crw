@@ -1,0 +1,8 @@
+// leading comment
+// two in a row
+
+func f() -> I32 { // trailing comment after code
+    // comment on its own line
+    6 / 2 // a single slash is division, not a comment
+}
+// comment at end of file with no trailing newline
