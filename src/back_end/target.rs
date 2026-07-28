@@ -1,5 +1,4 @@
-//! Turns a finished LLVM [`Module`] into a real, runnable executable
-//! ahead-of-time. 
+//! Turns a finished LLVM [`Module`] into an executable ahead-of-time.
 
 use std::path::Path;
 use std::process::Command;

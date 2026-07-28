@@ -1,5 +1,5 @@
 use crate::common::span::Span;
-use crate::common::types::TypeId;
+use crate::common::types::TypeHandle;
 
 /// Why a [`Constraint`] was generated, carrying the [`Span`]s needed to
 /// point at the relevant expressions if the constraint turns out to be
@@ -45,8 +45,8 @@ pub(crate) enum Provenance {
 /// [`UnificationTable`]: crate::front_end::semantic_analysis::unification_table::UnificationTable
 pub(crate) enum Constraint {
     Equality {
-        expected: TypeId,
-        actual: TypeId,
+        expected: TypeHandle,
+        actual: TypeHandle,
         provenance: Provenance,
     },
 }

@@ -12,40 +12,40 @@ use super::nodes::{
 };
 
 /// A 4-byte handle to an item node, distinguished by `KIND` so that, e.g.,
-/// `FunctionDefinitionId` and `ConstantDefinitionId` cannot be confused even
-/// though both are backed by a `u32`. Converts to [`ItemId`].
+/// `FunctionDefinitionHandle` and `ConstantDefinitionHandle` cannot be confused even
+/// though both are backed by a `u32`. Converts to [`ItemHandle`].
 #[derive(Debug)]
-pub(crate) struct TypedItemId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedItemHandle<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to a statement node. Converts to [`StatementId`].
+/// A 4-byte handle to a statement node. Converts to [`StatementHandle`].
 #[derive(Debug)]
-pub(crate) struct TypedStatementId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedStatementHandle<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to an expression node. Converts to [`ExpressionId`].
+/// A 4-byte handle to an expression node. Converts to [`ExpressionHandle`].
 #[derive(Debug)]
-pub(crate) struct TypedExpressionId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedExpressionHandle<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to a function parameter node. Converts to [`ParameterId`].
+/// A 4-byte handle to a function parameter node. Converts to [`ParameterHandle`].
 #[derive(Debug)]
-pub(crate) struct TypedParameterId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedParameterHandle<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to an identifier node. Converts to [`IdentifierId`].
+/// A 4-byte handle to an identifier node. Converts to [`IdentifierHandle`].
 #[derive(Debug)]
-pub(crate) struct TypedIdentifierId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedIdentifierHandle<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to a type annotation node. Converts to [`TypeAnnotationId`].
+/// A 4-byte handle to a type annotation node. Converts to [`TypeAnnotationHandle`].
 #[derive(Debug)]
-pub(crate) struct TypedTypeAnnotationId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedTypeAnnotationHandle<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to a `let` pattern node. Converts to [`PatternId`].
+/// A 4-byte handle to a `let` pattern node. Converts to [`PatternHandle`].
 #[derive(Debug)]
-pub(crate) struct TypedPatternId<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedPatternHandle<T, const KIND: u8>(u32, PhantomData<T>);
 
 // ----------------------------------
 // Untyped tagged handles
 // Each: struct + kind enum → inherent impl → trait impls
 //
-// These pack a [`TypedItemId`]/[`TypedStatementId`]/etc. and its `KIND`
+// These pack a [`TypedItemHandle`]/[`TypedStatementHandle`]/etc. and its `KIND`
 // discriminant into a single `u32`: the high bits store the kind enum
 // (which `Typed*Id<NodeType, KIND>` this handle came from), and the low
 // bits store the index within that node type's table. This lets code that
@@ -54,12 +54,12 @@ pub(crate) struct TypedPatternId<T, const KIND: u8>(u32, PhantomData<T>);
 // ----------------------------------
 
 /// An opaque, tagged handle to one of the `*ItemNode` types: dispatch on
-/// [`ItemId::kind`] to recover the concrete node type and its
-/// `TypedItemId<NodeType, KIND>`.
+/// [`ItemHandle::kind`] to recover the concrete node type and its
+/// `TypedItemHandle<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ItemId(u32);
+pub(crate) struct ItemHandle(u32);
 
-/// Which `*ItemNode` type an [`ItemId`] refers to.
+/// Which `*ItemNode` type an [`ItemHandle`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum ItemKind {
@@ -69,12 +69,12 @@ pub(crate) enum ItemKind {
 }
 
 /// An opaque, tagged handle to one of the `*StatementNode` types: dispatch
-/// on [`StatementId::kind`] to recover the concrete node type and its
-/// `TypedStatementId<NodeType, KIND>`.
+/// on [`StatementHandle::kind`] to recover the concrete node type and its
+/// `TypedStatementHandle<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StatementId(u32);
+pub(crate) struct StatementHandle(u32);
 
-/// Which `*StatementNode` type a [`StatementId`] refers to.
+/// Which `*StatementNode` type a [`StatementHandle`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum StatementKind {
@@ -85,12 +85,12 @@ pub(crate) enum StatementKind {
 }
 
 /// An opaque, tagged handle to one of the `*ExpressionNode` types: dispatch
-/// on [`ExpressionId::kind`] to recover the concrete node type and its
-/// `TypedExpressionId<NodeType, KIND>`.
+/// on [`ExpressionHandle::kind`] to recover the concrete node type and its
+/// `TypedExpressionHandle<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ExpressionId(u32);
+pub(crate) struct ExpressionHandle(u32);
 
-/// Which `*ExpressionNode` type an [`ExpressionId`] refers to.
+/// Which `*ExpressionNode` type an [`ExpressionHandle`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum ExpressionKind {
@@ -109,12 +109,12 @@ pub(crate) enum ExpressionKind {
 }
 
 /// An opaque, tagged handle to a `ValidParameterNode` or
-/// `ErrorParameterNode`: dispatch on [`ParameterId::kind`] to recover the
-/// concrete node type and its `TypedParameterId<NodeType, KIND>`.
+/// `ErrorParameterNode`: dispatch on [`ParameterHandle::kind`] to recover the
+/// concrete node type and its `TypedParameterHandle<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ParameterId(u32);
+pub(crate) struct ParameterHandle(u32);
 
-/// Which parameter node type a [`ParameterId`] refers to.
+/// Which parameter node type a [`ParameterHandle`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum ParameterKind {
@@ -123,12 +123,12 @@ pub(crate) enum ParameterKind {
 }
 
 /// An opaque, tagged handle to a `ValidIdentifierNode` or
-/// `ErrorIdentifierNode`: dispatch on [`IdentifierId::kind`] to recover the
-/// concrete node type and its `TypedIdentifierId<NodeType, KIND>`.
+/// `ErrorIdentifierNode`: dispatch on [`IdentifierHandle::kind`] to recover the
+/// concrete node type and its `TypedIdentifierHandle<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IdentifierId(u32);
+pub(crate) struct IdentifierHandle(u32);
 
-/// Which identifier node type an [`IdentifierId`] refers to.
+/// Which identifier node type an [`IdentifierHandle`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum IdentifierKind {
@@ -137,12 +137,12 @@ pub(crate) enum IdentifierKind {
 }
 
 /// An opaque, tagged handle to a `NamedTypeAnnotationNode` or
-/// `ErrorTypeAnnotationNode`: dispatch on [`TypeAnnotationId::kind`] to
-/// recover the concrete node type and its `TypedTypeAnnotationId<NodeType, KIND>`.
+/// `ErrorTypeAnnotationNode`: dispatch on [`TypeAnnotationHandle::kind`] to
+/// recover the concrete node type and its `TypedTypeAnnotationHandle<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TypeAnnotationId(u32);
+pub(crate) struct TypeAnnotationHandle(u32);
 
-/// Which type annotation node type a [`TypeAnnotationId`] refers to.
+/// Which type annotation node type a [`TypeAnnotationHandle`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum TypeAnnotationKind {
@@ -151,12 +151,12 @@ pub(crate) enum TypeAnnotationKind {
 }
 
 /// An opaque, tagged handle to an `IdentifierPatternNode` or
-/// `ErrorPatternNode`: dispatch on [`PatternId::kind`] to recover the
-/// concrete node type and its `TypedPatternId<NodeType, KIND>`.
+/// `ErrorPatternNode`: dispatch on [`PatternHandle::kind`] to recover the
+/// concrete node type and its `TypedPatternHandle<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PatternId(u32);
+pub(crate) struct PatternHandle(u32);
 
-/// Which pattern node type a [`PatternId`] refers to.
+/// Which pattern node type a [`PatternHandle`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum PatternKind {
@@ -164,28 +164,28 @@ pub(crate) enum PatternKind {
     Error,
 }
 
-/// A run of [`ItemId`]s, used by `SourceFileNode::items`.
+/// A run of [`ItemHandle`]s, used by `SourceFileNode::items`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ItemSlice {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`StatementId`]s, used by `BlockExpressionNode::statements`.
+/// A run of [`StatementHandle`]s, used by `BlockExpressionNode::statements`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct StatementSlice {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`ExpressionId`]s, used by `FunctionCallNode::arguments`.
+/// A run of [`ExpressionHandle`]s, used by `FunctionCallNode::arguments`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ExpressionSlice {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`ParameterId`]s, used by `FunctionDefinitionNode::parameters`.
+/// A run of [`ParameterHandle`]s, used by `FunctionDefinitionNode::parameters`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ParameterSlice {
     pub(crate) start: u32,
@@ -198,24 +198,24 @@ pub(crate) struct ParameterSlice {
 // (the real data is just a `u32`).
 //
 // Each family below backs the `Typed*Id<NodeType, KIND>` aliases declared in
-// `nodes.rs` (e.g. `FunctionDefinitionId`, `LetStatementId`). `KIND` is the
-// discriminant of the corresponding untyped [`ItemId`]/[`StatementId`]/etc.
+// `nodes.rs` (e.g. `FunctionDefinitionHandle`, `LetStatementHandle`). `KIND` is the
+// discriminant of the corresponding untyped [`ItemHandle`]/[`StatementHandle`]/etc.
 // kind enum, and converting a typed handle into its untyped form packs that
 // `KIND` alongside the index.
 
-impl<T, const KIND: u8> Clone for TypedItemId<T, KIND> {
+impl<T, const KIND: u8> Clone for TypedItemHandle<T, KIND> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, const KIND: u8> Copy for TypedItemId<T, KIND> {}
-impl<T, const KIND: u8> PartialEq for TypedItemId<T, KIND> {
+impl<T, const KIND: u8> Copy for TypedItemHandle<T, KIND> {}
+impl<T, const KIND: u8> PartialEq for TypedItemHandle<T, KIND> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-impl<T, const KIND: u8> Eq for TypedItemId<T, KIND> {}
-impl<T, const KIND: u8> Handle for TypedItemId<T, KIND> {
+impl<T, const KIND: u8> Eq for TypedItemHandle<T, KIND> {}
+impl<T, const KIND: u8> Handle for TypedItemHandle<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
@@ -223,30 +223,30 @@ impl<T, const KIND: u8> Handle for TypedItemId<T, KIND> {
         self.0 as usize
     }
 }
-impl<T, const KIND: u8> From<usize> for TypedItemId<T, KIND> {
+impl<T, const KIND: u8> From<usize> for TypedItemHandle<T, KIND> {
     fn from(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
 }
-impl<T, const KIND: u8> From<TypedItemId<T, KIND>> for usize {
-    fn from(id: TypedItemId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedItemHandle<T, KIND>> for usize {
+    fn from(id: TypedItemHandle<T, KIND>) -> Self {
         id.0 as Self
     }
 }
 
-impl<T, const KIND: u8> Clone for TypedStatementId<T, KIND> {
+impl<T, const KIND: u8> Clone for TypedStatementHandle<T, KIND> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, const KIND: u8> Copy for TypedStatementId<T, KIND> {}
-impl<T, const KIND: u8> PartialEq for TypedStatementId<T, KIND> {
+impl<T, const KIND: u8> Copy for TypedStatementHandle<T, KIND> {}
+impl<T, const KIND: u8> PartialEq for TypedStatementHandle<T, KIND> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-impl<T, const KIND: u8> Eq for TypedStatementId<T, KIND> {}
-impl<T, const KIND: u8> Handle for TypedStatementId<T, KIND> {
+impl<T, const KIND: u8> Eq for TypedStatementHandle<T, KIND> {}
+impl<T, const KIND: u8> Handle for TypedStatementHandle<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
@@ -254,30 +254,30 @@ impl<T, const KIND: u8> Handle for TypedStatementId<T, KIND> {
         self.0 as usize
     }
 }
-impl<T, const KIND: u8> From<usize> for TypedStatementId<T, KIND> {
+impl<T, const KIND: u8> From<usize> for TypedStatementHandle<T, KIND> {
     fn from(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
 }
-impl<T, const KIND: u8> From<TypedStatementId<T, KIND>> for usize {
-    fn from(id: TypedStatementId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedStatementHandle<T, KIND>> for usize {
+    fn from(id: TypedStatementHandle<T, KIND>) -> Self {
         id.0 as Self
     }
 }
 
-impl<T, const KIND: u8> Clone for TypedExpressionId<T, KIND> {
+impl<T, const KIND: u8> Clone for TypedExpressionHandle<T, KIND> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, const KIND: u8> Copy for TypedExpressionId<T, KIND> {}
-impl<T, const KIND: u8> PartialEq for TypedExpressionId<T, KIND> {
+impl<T, const KIND: u8> Copy for TypedExpressionHandle<T, KIND> {}
+impl<T, const KIND: u8> PartialEq for TypedExpressionHandle<T, KIND> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-impl<T, const KIND: u8> Eq for TypedExpressionId<T, KIND> {}
-impl<T, const KIND: u8> Handle for TypedExpressionId<T, KIND> {
+impl<T, const KIND: u8> Eq for TypedExpressionHandle<T, KIND> {}
+impl<T, const KIND: u8> Handle for TypedExpressionHandle<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
@@ -285,30 +285,30 @@ impl<T, const KIND: u8> Handle for TypedExpressionId<T, KIND> {
         self.0 as usize
     }
 }
-impl<T, const KIND: u8> From<usize> for TypedExpressionId<T, KIND> {
+impl<T, const KIND: u8> From<usize> for TypedExpressionHandle<T, KIND> {
     fn from(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
 }
-impl<T, const KIND: u8> From<TypedExpressionId<T, KIND>> for usize {
-    fn from(id: TypedExpressionId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedExpressionHandle<T, KIND>> for usize {
+    fn from(id: TypedExpressionHandle<T, KIND>) -> Self {
         id.0 as Self
     }
 }
 
-impl<T, const KIND: u8> Clone for TypedParameterId<T, KIND> {
+impl<T, const KIND: u8> Clone for TypedParameterHandle<T, KIND> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, const KIND: u8> Copy for TypedParameterId<T, KIND> {}
-impl<T, const KIND: u8> PartialEq for TypedParameterId<T, KIND> {
+impl<T, const KIND: u8> Copy for TypedParameterHandle<T, KIND> {}
+impl<T, const KIND: u8> PartialEq for TypedParameterHandle<T, KIND> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-impl<T, const KIND: u8> Eq for TypedParameterId<T, KIND> {}
-impl<T, const KIND: u8> Handle for TypedParameterId<T, KIND> {
+impl<T, const KIND: u8> Eq for TypedParameterHandle<T, KIND> {}
+impl<T, const KIND: u8> Handle for TypedParameterHandle<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
@@ -316,30 +316,30 @@ impl<T, const KIND: u8> Handle for TypedParameterId<T, KIND> {
         self.0 as usize
     }
 }
-impl<T, const KIND: u8> From<usize> for TypedParameterId<T, KIND> {
+impl<T, const KIND: u8> From<usize> for TypedParameterHandle<T, KIND> {
     fn from(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
 }
-impl<T, const KIND: u8> From<TypedParameterId<T, KIND>> for usize {
-    fn from(id: TypedParameterId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedParameterHandle<T, KIND>> for usize {
+    fn from(id: TypedParameterHandle<T, KIND>) -> Self {
         id.0 as Self
     }
 }
 
-impl<T, const KIND: u8> Clone for TypedIdentifierId<T, KIND> {
+impl<T, const KIND: u8> Clone for TypedIdentifierHandle<T, KIND> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, const KIND: u8> Copy for TypedIdentifierId<T, KIND> {}
-impl<T, const KIND: u8> PartialEq for TypedIdentifierId<T, KIND> {
+impl<T, const KIND: u8> Copy for TypedIdentifierHandle<T, KIND> {}
+impl<T, const KIND: u8> PartialEq for TypedIdentifierHandle<T, KIND> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-impl<T, const KIND: u8> Eq for TypedIdentifierId<T, KIND> {}
-impl<T, const KIND: u8> Handle for TypedIdentifierId<T, KIND> {
+impl<T, const KIND: u8> Eq for TypedIdentifierHandle<T, KIND> {}
+impl<T, const KIND: u8> Handle for TypedIdentifierHandle<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
@@ -347,30 +347,30 @@ impl<T, const KIND: u8> Handle for TypedIdentifierId<T, KIND> {
         self.0 as usize
     }
 }
-impl<T, const KIND: u8> From<usize> for TypedIdentifierId<T, KIND> {
+impl<T, const KIND: u8> From<usize> for TypedIdentifierHandle<T, KIND> {
     fn from(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
 }
-impl<T, const KIND: u8> From<TypedIdentifierId<T, KIND>> for usize {
-    fn from(id: TypedIdentifierId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedIdentifierHandle<T, KIND>> for usize {
+    fn from(id: TypedIdentifierHandle<T, KIND>) -> Self {
         id.0 as Self
     }
 }
 
-impl<T, const KIND: u8> Clone for TypedTypeAnnotationId<T, KIND> {
+impl<T, const KIND: u8> Clone for TypedTypeAnnotationHandle<T, KIND> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, const KIND: u8> Copy for TypedTypeAnnotationId<T, KIND> {}
-impl<T, const KIND: u8> PartialEq for TypedTypeAnnotationId<T, KIND> {
+impl<T, const KIND: u8> Copy for TypedTypeAnnotationHandle<T, KIND> {}
+impl<T, const KIND: u8> PartialEq for TypedTypeAnnotationHandle<T, KIND> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-impl<T, const KIND: u8> Eq for TypedTypeAnnotationId<T, KIND> {}
-impl<T, const KIND: u8> Handle for TypedTypeAnnotationId<T, KIND> {
+impl<T, const KIND: u8> Eq for TypedTypeAnnotationHandle<T, KIND> {}
+impl<T, const KIND: u8> Handle for TypedTypeAnnotationHandle<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
@@ -378,30 +378,30 @@ impl<T, const KIND: u8> Handle for TypedTypeAnnotationId<T, KIND> {
         self.0 as usize
     }
 }
-impl<T, const KIND: u8> From<usize> for TypedTypeAnnotationId<T, KIND> {
+impl<T, const KIND: u8> From<usize> for TypedTypeAnnotationHandle<T, KIND> {
     fn from(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
 }
-impl<T, const KIND: u8> From<TypedTypeAnnotationId<T, KIND>> for usize {
-    fn from(id: TypedTypeAnnotationId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedTypeAnnotationHandle<T, KIND>> for usize {
+    fn from(id: TypedTypeAnnotationHandle<T, KIND>) -> Self {
         id.0 as Self
     }
 }
 
-impl<T, const KIND: u8> Clone for TypedPatternId<T, KIND> {
+impl<T, const KIND: u8> Clone for TypedPatternHandle<T, KIND> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, const KIND: u8> Copy for TypedPatternId<T, KIND> {}
-impl<T, const KIND: u8> PartialEq for TypedPatternId<T, KIND> {
+impl<T, const KIND: u8> Copy for TypedPatternHandle<T, KIND> {}
+impl<T, const KIND: u8> PartialEq for TypedPatternHandle<T, KIND> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-impl<T, const KIND: u8> Eq for TypedPatternId<T, KIND> {}
-impl<T, const KIND: u8> Handle for TypedPatternId<T, KIND> {
+impl<T, const KIND: u8> Eq for TypedPatternHandle<T, KIND> {}
+impl<T, const KIND: u8> Handle for TypedPatternHandle<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
@@ -409,18 +409,18 @@ impl<T, const KIND: u8> Handle for TypedPatternId<T, KIND> {
         self.0 as usize
     }
 }
-impl<T, const KIND: u8> From<usize> for TypedPatternId<T, KIND> {
+impl<T, const KIND: u8> From<usize> for TypedPatternHandle<T, KIND> {
     fn from(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
 }
-impl<T, const KIND: u8> From<TypedPatternId<T, KIND>> for usize {
-    fn from(id: TypedPatternId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedPatternHandle<T, KIND>> for usize {
+    fn from(id: TypedPatternHandle<T, KIND>) -> Self {
         id.0 as Self
     }
 }
 
-impl ItemId {
+impl ItemHandle {
     const INDEX_BITS: u32 = 27;
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
@@ -455,13 +455,13 @@ impl ItemId {
     }
 }
 
-impl<T, const KIND: u8> From<TypedItemId<T, KIND>> for ItemId {
-    fn from(typed: TypedItemId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedItemHandle<T, KIND>> for ItemHandle {
+    fn from(typed: TypedItemHandle<T, KIND>) -> Self {
         Self::new(KIND, typed.0 as usize)
     }
 }
 
-impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ItemId {
+impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ItemHandle {
     fn from(result: Result<O, E>) -> Self {
         match result {
             Ok(o) => o.into(),
@@ -470,7 +470,7 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ItemId {
     }
 }
 
-impl StatementId {
+impl StatementHandle {
     const INDEX_BITS: u32 = 27;
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
@@ -506,13 +506,13 @@ impl StatementId {
     }
 }
 
-impl<T, const KIND: u8> From<TypedStatementId<T, KIND>> for StatementId {
-    fn from(typed: TypedStatementId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedStatementHandle<T, KIND>> for StatementHandle {
+    fn from(typed: TypedStatementHandle<T, KIND>) -> Self {
         Self::new(KIND, typed.0 as usize)
     }
 }
 
-impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for StatementId {
+impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for StatementHandle {
     fn from(result: Result<O, E>) -> Self {
         match result {
             Ok(o) => o.into(),
@@ -521,7 +521,7 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for StatementId {
     }
 }
 
-impl ExpressionId {
+impl ExpressionHandle {
     const INDEX_BITS: u32 = 27;
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
@@ -565,13 +565,13 @@ impl ExpressionId {
     }
 }
 
-impl<T, const KIND: u8> From<TypedExpressionId<T, KIND>> for ExpressionId {
-    fn from(typed: TypedExpressionId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedExpressionHandle<T, KIND>> for ExpressionHandle {
+    fn from(typed: TypedExpressionHandle<T, KIND>) -> Self {
         Self::new(KIND, typed.0 as usize)
     }
 }
 
-impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ExpressionId {
+impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ExpressionHandle {
     fn from(result: Result<O, E>) -> Self {
         match result {
             Ok(o) => o.into(),
@@ -580,7 +580,7 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ExpressionId {
     }
 }
 
-impl ParameterId {
+impl ParameterHandle {
     const INDEX_BITS: u32 = 27;
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
@@ -614,13 +614,13 @@ impl ParameterId {
     }
 }
 
-impl<T, const KIND: u8> From<TypedParameterId<T, KIND>> for ParameterId {
-    fn from(typed: TypedParameterId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedParameterHandle<T, KIND>> for ParameterHandle {
+    fn from(typed: TypedParameterHandle<T, KIND>) -> Self {
         Self::new(KIND, typed.0 as usize)
     }
 }
 
-impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ParameterId {
+impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ParameterHandle {
     fn from(result: Result<O, E>) -> Self {
         match result {
             Ok(o) => o.into(),
@@ -629,7 +629,7 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for ParameterId {
     }
 }
 
-impl IdentifierId {
+impl IdentifierHandle {
     const INDEX_BITS: u32 = 27;
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
@@ -663,13 +663,13 @@ impl IdentifierId {
     }
 }
 
-impl<T, const KIND: u8> From<TypedIdentifierId<T, KIND>> for IdentifierId {
-    fn from(typed: TypedIdentifierId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedIdentifierHandle<T, KIND>> for IdentifierHandle {
+    fn from(typed: TypedIdentifierHandle<T, KIND>) -> Self {
         Self::new(KIND, typed.0 as usize)
     }
 }
 
-impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for IdentifierId {
+impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for IdentifierHandle {
     fn from(result: Result<O, E>) -> Self {
         match result {
             Ok(o) => o.into(),
@@ -678,7 +678,7 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for IdentifierId {
     }
 }
 
-impl TypeAnnotationId {
+impl TypeAnnotationHandle {
     const INDEX_BITS: u32 = 27;
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
@@ -712,13 +712,13 @@ impl TypeAnnotationId {
     }
 }
 
-impl<T, const KIND: u8> From<TypedTypeAnnotationId<T, KIND>> for TypeAnnotationId {
-    fn from(typed: TypedTypeAnnotationId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedTypeAnnotationHandle<T, KIND>> for TypeAnnotationHandle {
+    fn from(typed: TypedTypeAnnotationHandle<T, KIND>) -> Self {
         Self::new(KIND, typed.0 as usize)
     }
 }
 
-impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for TypeAnnotationId {
+impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for TypeAnnotationHandle {
     fn from(result: Result<O, E>) -> Self {
         match result {
             Ok(o) => o.into(),
@@ -727,7 +727,7 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for TypeAnnotationId {
     }
 }
 
-impl PatternId {
+impl PatternHandle {
     const INDEX_BITS: u32 = 27;
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
@@ -761,13 +761,13 @@ impl PatternId {
     }
 }
 
-impl<T, const KIND: u8> From<TypedPatternId<T, KIND>> for PatternId {
-    fn from(typed: TypedPatternId<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedPatternHandle<T, KIND>> for PatternHandle {
+    fn from(typed: TypedPatternHandle<T, KIND>) -> Self {
         Self::new(KIND, typed.0 as usize)
     }
 }
 
-impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for PatternId {
+impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for PatternHandle {
     fn from(result: Result<O, E>) -> Self {
         match result {
             Ok(o) => o.into(),
@@ -776,58 +776,60 @@ impl<O: Into<Self>, E: Into<Self>> From<Result<O, E>> for PatternId {
     }
 }
 
-pub(crate) type FunctionDefinitionId =
-    TypedItemId<FunctionDefinitionNode, { ItemKind::FunctionDefinition as u8 }>;
-pub(crate) type ConstantDefinitionId =
-    TypedItemId<ConstantDefinitionNode, { ItemKind::ConstantDefinition as u8 }>;
-pub(crate) type ErrorItemId = TypedItemId<ErrorItemNode, { ItemKind::Error as u8 }>;
+pub(crate) type FunctionDefinitionHandle =
+    TypedItemHandle<FunctionDefinitionNode, { ItemKind::FunctionDefinition as u8 }>;
+pub(crate) type ConstantDefinitionHandle =
+    TypedItemHandle<ConstantDefinitionNode, { ItemKind::ConstantDefinition as u8 }>;
+pub(crate) type ErrorItemHandle = TypedItemHandle<ErrorItemNode, { ItemKind::Error as u8 }>;
 
-pub(crate) type ExpressionStatementId =
-    TypedStatementId<ExpressionStatementNode, { StatementKind::ExpressionStatement as u8 }>;
-pub(crate) type ItemStatementId =
-    TypedStatementId<ItemStatementNode, { StatementKind::ItemStatement as u8 }>;
-pub(crate) type LetStatementId =
-    TypedStatementId<LetStatementNode, { StatementKind::LetStatement as u8 }>;
-pub(crate) type ErrorStatementId =
-    TypedStatementId<ErrorStatementNode, { StatementKind::Error as u8 }>;
+pub(crate) type ExpressionStatementHandle =
+    TypedStatementHandle<ExpressionStatementNode, { StatementKind::ExpressionStatement as u8 }>;
+pub(crate) type ItemStatementHandle =
+    TypedStatementHandle<ItemStatementNode, { StatementKind::ItemStatement as u8 }>;
+pub(crate) type LetStatementHandle =
+    TypedStatementHandle<LetStatementNode, { StatementKind::LetStatement as u8 }>;
+pub(crate) type ErrorStatementHandle =
+    TypedStatementHandle<ErrorStatementNode, { StatementKind::Error as u8 }>;
 
-pub(crate) type UnitLiteralId =
-    TypedExpressionId<UnitLiteralNode, { ExpressionKind::UnitLiteral as u8 }>;
-pub(crate) type IntegerLiteralId =
-    TypedExpressionId<IntegerLiteralNode, { ExpressionKind::IntegerLiteral as u8 }>;
-pub(crate) type BooleanLiteralId =
-    TypedExpressionId<BooleanLiteralNode, { ExpressionKind::BooleanLiteral as u8 }>;
-pub(crate) type VariableId = TypedExpressionId<VariableNode, { ExpressionKind::Variable as u8 }>;
-pub(crate) type UnaryOperationId =
-    TypedExpressionId<UnaryOperationNode, { ExpressionKind::UnaryOperation as u8 }>;
-pub(crate) type BinaryOperationId =
-    TypedExpressionId<BinaryOperationNode, { ExpressionKind::BinaryOperation as u8 }>;
-pub(crate) type IfExpressionId =
-    TypedExpressionId<IfExpressionNode, { ExpressionKind::IfExpression as u8 }>;
-pub(crate) type BlockExpressionId =
-    TypedExpressionId<BlockExpressionNode, { ExpressionKind::BlockExpression as u8 }>;
-pub(crate) type FunctionCallId =
-    TypedExpressionId<FunctionCallNode, { ExpressionKind::FunctionCall as u8 }>;
-pub(crate) type AssignId = TypedExpressionId<AssignNode, { ExpressionKind::Assign as u8 }>;
-pub(crate) type ReturnId = TypedExpressionId<ReturnNode, { ExpressionKind::Return as u8 }>;
-pub(crate) type ErrorExpressionId =
-    TypedExpressionId<ErrorExpressionNode, { ExpressionKind::Error as u8 }>;
+pub(crate) type UnitLiteralHandle =
+    TypedExpressionHandle<UnitLiteralNode, { ExpressionKind::UnitLiteral as u8 }>;
+pub(crate) type IntegerLiteralHandle =
+    TypedExpressionHandle<IntegerLiteralNode, { ExpressionKind::IntegerLiteral as u8 }>;
+pub(crate) type BooleanLiteralHandle =
+    TypedExpressionHandle<BooleanLiteralNode, { ExpressionKind::BooleanLiteral as u8 }>;
+pub(crate) type VariableHandle =
+    TypedExpressionHandle<VariableNode, { ExpressionKind::Variable as u8 }>;
+pub(crate) type UnaryOperationHandle =
+    TypedExpressionHandle<UnaryOperationNode, { ExpressionKind::UnaryOperation as u8 }>;
+pub(crate) type BinaryOperationHandle =
+    TypedExpressionHandle<BinaryOperationNode, { ExpressionKind::BinaryOperation as u8 }>;
+pub(crate) type IfExpressionHandle =
+    TypedExpressionHandle<IfExpressionNode, { ExpressionKind::IfExpression as u8 }>;
+pub(crate) type BlockExpressionHandle =
+    TypedExpressionHandle<BlockExpressionNode, { ExpressionKind::BlockExpression as u8 }>;
+pub(crate) type FunctionCallHandle =
+    TypedExpressionHandle<FunctionCallNode, { ExpressionKind::FunctionCall as u8 }>;
+pub(crate) type AssignHandle = TypedExpressionHandle<AssignNode, { ExpressionKind::Assign as u8 }>;
+pub(crate) type ReturnHandle = TypedExpressionHandle<ReturnNode, { ExpressionKind::Return as u8 }>;
+pub(crate) type ErrorExpressionHandle =
+    TypedExpressionHandle<ErrorExpressionNode, { ExpressionKind::Error as u8 }>;
 
-pub(crate) type ValidParameterId =
-    TypedParameterId<ValidParameterNode, { ParameterKind::Valid as u8 }>;
-pub(crate) type ErrorParameterId =
-    TypedParameterId<ErrorParameterNode, { ParameterKind::Error as u8 }>;
+pub(crate) type ValidParameterHandle =
+    TypedParameterHandle<ValidParameterNode, { ParameterKind::Valid as u8 }>;
+pub(crate) type ErrorParameterHandle =
+    TypedParameterHandle<ErrorParameterNode, { ParameterKind::Error as u8 }>;
 
-pub(crate) type ValidIdentifierId =
-    TypedIdentifierId<ValidIdentifierNode, { IdentifierKind::Valid as u8 }>;
-pub(crate) type ErrorIdentifierId =
-    TypedIdentifierId<ErrorIdentifierNode, { IdentifierKind::Error as u8 }>;
+pub(crate) type ValidIdentifierHandle =
+    TypedIdentifierHandle<ValidIdentifierNode, { IdentifierKind::Valid as u8 }>;
+pub(crate) type ErrorIdentifierHandle =
+    TypedIdentifierHandle<ErrorIdentifierNode, { IdentifierKind::Error as u8 }>;
 
-pub(crate) type NamedTypeAnnotationId =
-    TypedTypeAnnotationId<NamedTypeAnnotationNode, { TypeAnnotationKind::Named as u8 }>;
-pub(crate) type ErrorTypeAnnotationId =
-    TypedTypeAnnotationId<ErrorTypeAnnotationNode, { TypeAnnotationKind::Error as u8 }>;
+pub(crate) type NamedTypeAnnotationHandle =
+    TypedTypeAnnotationHandle<NamedTypeAnnotationNode, { TypeAnnotationKind::Named as u8 }>;
+pub(crate) type ErrorTypeAnnotationHandle =
+    TypedTypeAnnotationHandle<ErrorTypeAnnotationNode, { TypeAnnotationKind::Error as u8 }>;
 
-pub(crate) type IdentifierPatternId =
-    TypedPatternId<IdentifierPatternNode, { PatternKind::Identifier as u8 }>;
-pub(crate) type ErrorPatternId = TypedPatternId<ErrorPatternNode, { PatternKind::Error as u8 }>;
+pub(crate) type IdentifierPatternHandle =
+    TypedPatternHandle<IdentifierPatternNode, { PatternKind::Identifier as u8 }>;
+pub(crate) type ErrorPatternHandle =
+    TypedPatternHandle<ErrorPatternNode, { PatternKind::Error as u8 }>;

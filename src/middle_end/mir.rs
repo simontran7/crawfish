@@ -4,7 +4,8 @@ use soup::handle_map::HandleMap;
 use soup::handle_map::SideHandleMap;
 
 use crate::common::string_interner::Symbol;
-use crate::common::types::TypeId;
+use crate::common::types::TypeHandle;
+use crate::front_end::semantic_analysis::hir::ItemBindingHandle;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::handle_list::{HandleList, HandleListSubAllocator};
 
@@ -38,6 +39,12 @@ impl Mir {
 
 /// A single MIR function.
 pub(crate) struct Function {
+    /// Identifies this function uniquely across the whole program — unlike
+    /// `name`, which is only unique within the scope it was declared in (two
+    /// functions nested in different outer functions can share a `name`).
+    /// Backends must key any function-identity map (e.g. LLVM `FunctionValue`
+    /// lookup) by `binding`, not `name`.
+    pub(crate) binding: ItemBindingHandle,
     pub(crate) name: Symbol,
     pub(crate) signature: Signature,
     pub(crate) body: Cfg,
@@ -93,12 +100,12 @@ pub(crate) struct Cfg {
 /// that only cares "is this a `Parameter`, give me the block" never has to route through an
 /// irrelevant third `Alias` case.
 pub(crate) struct Value {
-    ty: TypeId,
+    ty: TypeHandle,
     /// `Some(x)` means this value has been redirected to behave as `x` instead. See
     /// [`Cfg::mark_as_alias`], [`Cfg::resolve_aliases`], and [`Cfg::flush_aliases`].
     /// This lets a pass merge two values in O(1) (e.g. trivial block-parameter elimination
     /// during SSA construction) without eagerly rewriting every existing use.
-    alias: Option<ValueId>,
+    alias: Option<ValueHandle>,
     origin: ValueOrigin,
 }
 
@@ -113,9 +120,9 @@ pub(crate) struct Value {
 ///   when trivial block-parameter elimination has no real value to fall back on.
 #[derive(Clone, Copy)]
 pub(crate) enum ValueOrigin {
-    InstructionResult(InstructionId, u16),
-    Parameter(BlockId, u16),
-    Undefined(TypeId),
+    InstructionResult(InstructionHandle, u16),
+    Parameter(BlockHandle, u16),
+    Undefined(TypeHandle),
 }
 
 /// A basic block.
@@ -123,7 +130,7 @@ pub(crate) struct Block {
     /// The SSA equivalent of φ-nodes (i.e., they
     /// unify values from different predecessor
     /// edges at a control-flow join).
-    parameters: HandleList<ValueId>,
+    parameters: HandleList<ValueHandle>,
 }
 
 /// A single MIR instruction. Each instruction may produce zero or more
@@ -140,11 +147,11 @@ pub(crate) enum InstructionKind<L> {
     // Arithmetic
     Binary {
         operator: BinOp,
-        args: [ValueId; 2],
+        args: [ValueHandle; 2],
     },
     Unary {
         operator: UnOp,
-        arg: ValueId,
+        arg: ValueHandle,
     },
 
     // Literals
@@ -157,20 +164,20 @@ pub(crate) enum InstructionKind<L> {
 
     // Calls
     Call {
-        callee: FunctionReferenceId,
+        callee: FunctionReferenceHandle,
         args: L,
     },
 
     // Terminators (i.e., they end a block and determine which block, if any, runs next)
     Jump {
-        destination: BlockId,
+        destination: BlockHandle,
         args: L,
     },
     BranchIf {
-        arg: ValueId,
-        then_destination: BlockId,
+        arg: ValueHandle,
+        then_destination: BlockHandle,
         then_args: L,
-        else_destination: BlockId,
+        else_destination: BlockHandle,
         else_args: L,
     },
     Return {
@@ -182,83 +189,87 @@ pub(crate) enum InstructionKind<L> {
 /// A single MIR instruction, stored in [`DataFlowGraph`]. Argument lists are
 /// [`HandleList`]s, indices into a suballocator — resolve them to a slice via
 /// [`InstructionView::as_ref`] rather than reading a `HandleList` directly.
-pub(crate) type Instruction = InstructionKind<HandleList<ValueId>>;
+pub(crate) type Instruction = InstructionKind<HandleList<ValueHandle>>;
 
 /// A reference to a function that can be called via [`Instruction::Call`].
 pub(crate) struct FunctionReference {
+    /// The callee's unique identity — see [`Function::binding`]. Backends
+    /// must resolve calls via this, not `name`, since `name` alone cannot
+    /// distinguish two same-named functions nested in different scopes.
+    pub(crate) binding: ItemBindingHandle,
     pub(crate) name: Symbol,
-    pub(crate) signature: SignatureId,
+    pub(crate) signature: SignatureHandle,
 }
 
 /// The parameter types and return type of a function, used to type-check
 /// calls made through a [`FunctionReference`].
 pub(crate) struct Signature {
-    pub(crate) parameters: Vec<TypeId>,
-    pub(crate) return_type: TypeId,
+    pub(crate) parameters: Vec<TypeHandle>,
+    pub(crate) return_type: TypeHandle,
 }
 
 // Opaque, 4-byte handles into the tables above.
-soup::handle_impl!(pub(crate) BlockId);
-soup::handle_impl!(pub(crate) InstructionId);
-soup::handle_impl!(pub(crate) FunctionReferenceId);
-soup::handle_impl!(pub(crate) SignatureId);
-soup::handle_impl!(pub(crate) ValueId);
+soup::handle_impl!(pub(crate) BlockHandle);
+soup::handle_impl!(pub(crate) InstructionHandle);
+soup::handle_impl!(pub(crate) FunctionReferenceHandle);
+soup::handle_impl!(pub(crate) SignatureHandle);
+soup::handle_impl!(pub(crate) ValueHandle);
 
 /// A read-only view over a block, returned by [`Cfg::get_block`].
 pub(crate) struct BlockView<'a> {
-    block_id: BlockId,
+    block_id: BlockHandle,
     cfg: &'a Cfg,
 }
 
 /// A mutable view over a block, returned by [`Cfg::get_block_mut`].
 pub(crate) struct BlockViewMut<'a> {
-    block_id: BlockId,
+    block_id: BlockHandle,
     cfg: &'a mut Cfg,
 }
 
 /// A read-only view over an instruction, returned by [`Cfg::get_instruction`].
 pub(crate) struct InstructionView<'a> {
-    instruction_id: InstructionId,
+    instruction_id: InstructionHandle,
     cfg: &'a Cfg,
 }
 
 /// [`Instruction`], with every `HandleList` already resolved to a slice.
 /// This is what's handed across the `Cfg` boundary (dumper, verifier) — the
 /// `HandleList` + suballocator pairing never leaves this module.
-pub(crate) type InstructionRef<'a> = InstructionKind<&'a [ValueId]>;
+pub(crate) type InstructionRef<'a> = InstructionKind<&'a [ValueHandle]>;
 
 /// A mutable view over an instruction, returned by [`Cfg::get_instruction_mut`].
 pub(crate) struct InstructionViewMut<'a> {
-    instruction_id: InstructionId,
+    instruction_id: InstructionHandle,
     cfg: &'a mut Cfg,
 }
 
 /// A read-only view over a value, returned by [`Cfg::get_value`].
 pub(crate) struct ValueView<'a> {
-    value_id: ValueId,
+    value_id: ValueHandle,
     cfg: &'a Cfg,
 }
 
 /// Iterator returned by [`InstructionView::used_values`].
 pub(crate) enum UsedValuesIter<'a> {
-    Slice(slice::Iter<'a, ValueId>),
+    Slice(slice::Iter<'a, ValueHandle>),
     Branch {
-        arg: Option<ValueId>,
-        then_args: slice::Iter<'a, ValueId>,
-        else_args: slice::Iter<'a, ValueId>,
+        arg: Option<ValueHandle>,
+        then_args: slice::Iter<'a, ValueHandle>,
+        else_args: slice::Iter<'a, ValueHandle>,
     },
 }
 
 /// Iterator over a `Cfg`'s blocks in layout order, returned by [`Cfg::blocks`].
 pub(crate) struct BlockIter<'a> {
     layout: &'a Layout,
-    next: Option<BlockId>,
+    next: Option<BlockHandle>,
 }
 
 /// Iterator over a block's instructions in layout order, returned by [`BlockView::instructions`].
 pub(crate) struct InstructionIter<'a> {
     layout: &'a Layout,
-    next: Option<InstructionId>,
+    next: Option<InstructionHandle>,
 }
 
 /// A def-use graph of Values and Instructions for a [`Function`].
@@ -273,13 +284,13 @@ pub(crate) struct InstructionIter<'a> {
 /// - Def edges: connect a definer (instruction or block) to the value it produces
 /// - Use edges: connect an instruction to a value it consumes as an operand
 struct DataFlowGraph {
-    values: HandleMap<ValueId, Value>,
-    instructions: HandleMap<InstructionId, Instruction>,
-    instruction_results: SideHandleMap<InstructionId, HandleList<ValueId>>,
-    blocks: HandleMap<BlockId, Block>,
-    function_references: HandleMap<FunctionReferenceId, FunctionReference>,
-    signatures: HandleMap<SignatureId, Signature>,
-    suballocator: HandleListSubAllocator<ValueId>,
+    values: HandleMap<ValueHandle, Value>,
+    instructions: HandleMap<InstructionHandle, Instruction>,
+    instruction_results: SideHandleMap<InstructionHandle, HandleList<ValueHandle>>,
+    blocks: HandleMap<BlockHandle, Block>,
+    function_references: HandleMap<FunctionReferenceHandle, FunctionReference>,
+    signatures: HandleMap<SignatureHandle, Signature>,
+    suballocator: HandleListSubAllocator<ValueHandle>,
 }
 
 /// An ordered view of the control flow graph (the sequence of blocks and
@@ -292,38 +303,40 @@ struct DataFlowGraph {
 ///          inst0 → inst1 → inst2 → ... (last node is the block's terminator)
 struct Layout {
     /// the head of the linked list
-    entry: Option<BlockId>,
+    entry: Option<BlockHandle>,
     /// the tail of the linked list
-    exit: Option<BlockId>,
-    blocks: SideHandleMap<BlockId, BlockNode>,
-    instructions: SideHandleMap<InstructionId, InstructionNode>,
+    exit: Option<BlockHandle>,
+    blocks: SideHandleMap<BlockHandle, BlockNode>,
+    instructions: SideHandleMap<InstructionHandle, InstructionNode>,
 }
 
 /// Linked-list node for [`Layout`]'s block ordering.
 // Clone: required by `SideHandleMap::add` for resize padding
 #[derive(Clone, Default)]
 struct BlockNode {
-    prev: Option<BlockId>,
-    first_instruction: Option<InstructionId>,
-    last_instruction: Option<InstructionId>,
-    next: Option<BlockId>,
+    prev: Option<BlockHandle>,
+    first_instruction: Option<InstructionHandle>,
+    last_instruction: Option<InstructionHandle>,
+    next: Option<BlockHandle>,
 }
 
 /// Linked-list node for [`Layout`]'s instruction ordering within a block.
 // Clone: required by `SideHandleMap::add` for resize padding
 #[derive(Clone, Default)]
 struct InstructionNode {
-    prev: Option<InstructionId>,
+    prev: Option<InstructionHandle>,
     /// `None` if the instruction has been removed from the layout (its DFG data
     /// remains valid, but it is no longer reachable via layout traversal).
-    block: Option<BlockId>,
-    next: Option<InstructionId>,
+    block: Option<BlockHandle>,
+    next: Option<InstructionHandle>,
 }
 
 impl Function {
-    /// Creates and returns a new function with `name` and `signature`, and an empty body.
-    pub(crate) fn new(name: Symbol, signature: Signature) -> Self {
+    /// Creates and returns a new function identified by `binding`, with `name`
+    /// and `signature`, and an empty body.
+    pub(crate) fn new(binding: ItemBindingHandle, name: Symbol, signature: Signature) -> Self {
         Self {
+            binding,
             name,
             signature,
             body: Cfg::new(),
@@ -341,9 +354,9 @@ impl Cfg {
     }
 
     /// Creates and returns a handle to a basic block.
-    pub(crate) fn create_block(&mut self) -> BlockId {
+    pub(crate) fn create_block(&mut self) -> BlockHandle {
         self.dfg.blocks.add(Block {
-            parameters: HandleList::<ValueId>::new(),
+            parameters: HandleList::<ValueHandle>::new(),
         })
     }
 
@@ -372,12 +385,12 @@ impl Cfg {
     }
 
     /// Returns an iterator over every value id, in creation order.
-    pub(crate) fn values(&self) -> impl Iterator<Item = ValueId> + '_ {
+    pub(crate) fn values(&self) -> impl Iterator<Item = ValueHandle> + '_ {
         self.dfg.values.keys()
     }
 
     /// Returns a view over `block_id` for block-local queries.
-    pub(crate) fn get_block(&self, block_id: BlockId) -> BlockView<'_> {
+    pub(crate) fn get_block(&self, block_id: BlockHandle) -> BlockView<'_> {
         BlockView {
             block_id,
             cfg: self,
@@ -385,7 +398,7 @@ impl Cfg {
     }
 
     /// Returns a mutable view over `block_id` for block-local mutations.
-    pub(crate) fn get_block_mut(&mut self, block_id: BlockId) -> BlockViewMut<'_> {
+    pub(crate) fn get_block_mut(&mut self, block_id: BlockHandle) -> BlockViewMut<'_> {
         BlockViewMut {
             block_id,
             cfg: self,
@@ -397,7 +410,7 @@ impl Cfg {
     /// clears `prev`/`next`, it doesn't delete the entry, so a removed block is still present.
     /// `prev.is_some()` tells a linked block from a removed one, except the entry block also
     /// has `prev: None` legitimately, hence the separate `self.layout.entry` check.
-    pub(crate) fn is_block_linked(&self, block_id: BlockId) -> bool {
+    pub(crate) fn is_block_linked(&self, block_id: BlockHandle) -> bool {
         Some(block_id) == self.layout.entry
             || self
                 .layout
@@ -407,7 +420,7 @@ impl Cfg {
     }
 
     /// Appends `block_id` to the end of the layout's block sequence.
-    pub(crate) fn append_block(&mut self, block_id: BlockId) {
+    pub(crate) fn append_block(&mut self, block_id: BlockHandle) {
         assert!(
             !self.is_block_linked(block_id),
             "cannot append a block that is already in the cfg"
@@ -428,7 +441,7 @@ impl Cfg {
     }
 
     /// Inserts `block_id` into the layout immediately before `before`.
-    pub(crate) fn add_block_before(&mut self, block_id: BlockId, before: BlockId) {
+    pub(crate) fn add_block_before(&mut self, block_id: BlockHandle, before: BlockHandle) {
         assert!(
             !self.is_block_linked(block_id),
             "cannot insert a block that is already in the cfg"
@@ -453,7 +466,7 @@ impl Cfg {
     }
 
     /// Inserts `block_id` into the layout immediately after `after`.
-    pub(crate) fn add_block_after(&mut self, block_id: BlockId, after: BlockId) {
+    pub(crate) fn add_block_after(&mut self, block_id: BlockHandle, after: BlockHandle) {
         assert!(
             !self.is_block_linked(block_id),
             "cannot insert a block that is already in the cfg"
@@ -478,7 +491,7 @@ impl Cfg {
     }
 
     /// Removes `block_id` from the layout.
-    pub(crate) fn remove_block(&mut self, block_id: BlockId) {
+    pub(crate) fn remove_block(&mut self, block_id: BlockHandle) {
         assert!(
             self.is_block_linked(block_id),
             "block pointed by `block_id` is not in the cfg"
@@ -502,7 +515,7 @@ impl Cfg {
     }
 
     /// Removes every instruction from `block_id`, leaving it empty but still in the layout.
-    pub(crate) fn clear_block(&mut self, block_id: BlockId) {
+    pub(crate) fn clear_block(&mut self, block_id: BlockHandle) {
         assert!(
             self.is_block_linked(block_id),
             "block pointed by `block_id` is not in the cfg"
@@ -513,7 +526,7 @@ impl Cfg {
     }
 
     /// Returns a view over `instruction_id` for instruction-local queries.
-    pub(crate) fn get_instruction(&self, instruction_id: InstructionId) -> InstructionView<'_> {
+    pub(crate) fn get_instruction(&self, instruction_id: InstructionHandle) -> InstructionView<'_> {
         InstructionView {
             instruction_id,
             cfg: self,
@@ -523,7 +536,7 @@ impl Cfg {
     /// Returns a mutable view over `instruction_id` for instruction-local mutations.
     pub(crate) fn get_instruction_mut(
         &mut self,
-        instruction_id: InstructionId,
+        instruction_id: InstructionHandle,
     ) -> InstructionViewMut<'_> {
         InstructionViewMut {
             instruction_id,
@@ -535,10 +548,10 @@ impl Cfg {
     fn create_instruction(
         &mut self,
         instruction: Instruction,
-        result_tys: &[TypeId],
-    ) -> InstructionId {
+        result_tys: &[TypeHandle],
+    ) -> InstructionHandle {
         let instruction_id = self.dfg.instructions.add(instruction);
-        let results: Vec<ValueId> = result_tys
+        let results: Vec<ValueHandle> = result_tys
             .iter()
             .enumerate()
             .map(|(i, &ty)| {
@@ -551,14 +564,18 @@ impl Cfg {
             .collect();
         self.dfg.instruction_results.add(
             instruction_id,
-            HandleList::<ValueId>::from(&mut self.dfg.suballocator, &results),
+            HandleList::<ValueHandle>::from(&mut self.dfg.suballocator, &results),
         );
         instruction_id
     }
 
     /// Appends `instruction_id` (already allocated in the DFG) to the end of `block_id`'s
     /// instruction sequence.
-    fn link_instruction_to_block(&mut self, block_id: BlockId, instruction_id: InstructionId) {
+    fn link_instruction_to_block(
+        &mut self,
+        block_id: BlockHandle,
+        instruction_id: InstructionHandle,
+    ) {
         let prev = self.layout.blocks[block_id].last_instruction;
         let node = InstructionNode {
             block: Some(block_id),
@@ -578,9 +595,9 @@ impl Cfg {
     pub(crate) fn add_instruction_before(
         &mut self,
         instruction: Instruction,
-        result_tys: &[TypeId],
-        before: InstructionId,
-    ) -> InstructionId {
+        result_tys: &[TypeHandle],
+        before: InstructionHandle,
+    ) -> InstructionHandle {
         let instruction_id = self.create_instruction(instruction, result_tys);
 
         let block_id = self.layout.instructions[before]
@@ -614,17 +631,17 @@ impl Cfg {
     /// `result_tys`.
     pub(crate) fn append_instruction(
         &mut self,
-        block_id: BlockId,
+        block_id: BlockHandle,
         instruction: Instruction,
-        result_tys: &[TypeId],
-    ) -> InstructionId {
+        result_tys: &[TypeHandle],
+    ) -> InstructionHandle {
         let instruction_id = self.create_instruction(instruction, result_tys);
         self.link_instruction_to_block(block_id, instruction_id);
         instruction_id
     }
 
     /// Appends a terminator (which produces no results) to the end of `block_id`.
-    pub(crate) fn set_terminator(&mut self, block_id: BlockId, terminator: Instruction) {
+    pub(crate) fn set_terminator(&mut self, block_id: BlockHandle, terminator: Instruction) {
         let instruction_id = self.create_instruction(terminator, &[]);
         self.link_instruction_to_block(block_id, instruction_id);
     }
@@ -632,7 +649,7 @@ impl Cfg {
     /// Removes `instruction_id` from the layout.
     // NOTE: Its DFG data (and any values it defines) remains valid but is no longer
     // reachable via layout traversal.
-    pub(crate) fn remove_instruction(&mut self, instruction_id: InstructionId) {
+    pub(crate) fn remove_instruction(&mut self, instruction_id: InstructionHandle) {
         let block_id = self.layout.instructions[instruction_id]
             .block
             .expect("instruction is not in the cfg");
@@ -656,7 +673,11 @@ impl Cfg {
 
     /// Splits a block in two up till and excluding `partition_point`, moving `partition_point` and everything after it into
     /// a newly inserted block pointed by `new_block_id`.
-    pub(crate) fn split_block(&mut self, new_block_id: BlockId, partition_point: InstructionId) {
+    pub(crate) fn split_block(
+        &mut self,
+        new_block_id: BlockHandle,
+        partition_point: InstructionHandle,
+    ) {
         assert!(
             !self.is_block_linked(new_block_id),
             "cannot split into a block that is already in the cfg"
@@ -700,29 +721,33 @@ impl Cfg {
     }
 
     /// Builds (but does not insert) a `Jump` instruction to `destination`, passing `args`.
-    pub(crate) fn new_jump(&mut self, destination: BlockId, args: &[ValueId]) -> Instruction {
+    pub(crate) fn new_jump(
+        &mut self,
+        destination: BlockHandle,
+        args: &[ValueHandle],
+    ) -> Instruction {
         Instruction::Jump {
             destination,
-            args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, args),
+            args: HandleList::<ValueHandle>::from(&mut self.dfg.suballocator, args),
         }
     }
 
     /// Builds (but does not insert) a `Return` instruction, passing `args`.
-    pub(crate) fn new_return(&mut self, args: &[ValueId]) -> Instruction {
+    pub(crate) fn new_return(&mut self, args: &[ValueHandle]) -> Instruction {
         Instruction::Return {
-            args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, args),
+            args: HandleList::<ValueHandle>::from(&mut self.dfg.suballocator, args),
         }
     }
 
     /// Builds (but does not insert) a `Call` instruction to `callee`, passing `args`.
     pub(crate) fn new_call(
         &mut self,
-        callee: FunctionReferenceId,
-        args: &[ValueId],
+        callee: FunctionReferenceHandle,
+        args: &[ValueHandle],
     ) -> Instruction {
         Instruction::Call {
             callee,
-            args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, args),
+            args: HandleList::<ValueHandle>::from(&mut self.dfg.suballocator, args),
         }
     }
 
@@ -730,23 +755,23 @@ impl Cfg {
     /// to whichever of `then_destination`/`else_destination` is taken.
     pub(crate) fn new_branch_if(
         &mut self,
-        arg: ValueId,
-        then_destination: BlockId,
-        then_args: &[ValueId],
-        else_destination: BlockId,
-        else_args: &[ValueId],
+        arg: ValueHandle,
+        then_destination: BlockHandle,
+        then_args: &[ValueHandle],
+        else_destination: BlockHandle,
+        else_args: &[ValueHandle],
     ) -> Instruction {
         Instruction::BranchIf {
             arg,
             then_destination,
-            then_args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, then_args),
+            then_args: HandleList::<ValueHandle>::from(&mut self.dfg.suballocator, then_args),
             else_destination,
-            else_args: HandleList::<ValueId>::from(&mut self.dfg.suballocator, else_args),
+            else_args: HandleList::<ValueHandle>::from(&mut self.dfg.suballocator, else_args),
         }
     }
 
     /// Returns a reference to `value_id`'s data.
-    pub(crate) fn get_value(&self, value_id: ValueId) -> ValueView<'_> {
+    pub(crate) fn get_value(&self, value_id: ValueHandle) -> ValueView<'_> {
         ValueView {
             value_id,
             cfg: self,
@@ -755,7 +780,7 @@ impl Cfg {
 
     /// Creates and returns a standalone "undefined" placeholder value of type `ty`.
     /// See [`ValueOrigin::Undefined`].
-    pub(crate) fn add_undefined(&mut self, ty: TypeId) -> ValueId {
+    pub(crate) fn add_undefined(&mut self, ty: TypeHandle) -> ValueHandle {
         self.dfg.values.add(Value {
             ty,
             alias: None,
@@ -765,7 +790,7 @@ impl Cfg {
 
     /// Returns whether `value_id` is currently attached (i.e., still reachable by walking from its definition site back to it) as an instruction result or block parameter.
     // NOTE: Aliases are never attached.
-    fn value_is_attached(&self, value_id: ValueId) -> bool {
+    fn value_is_attached(&self, value_id: ValueHandle) -> bool {
         if self.dfg.values[value_id].alias.is_some() {
             return false;
         }
@@ -786,7 +811,7 @@ impl Cfg {
     }
 
     /// Follows `value_id`'s alias chain (if any) to the value it ultimately stands for.
-    pub(crate) fn resolve_aliases(&self, value_id: ValueId) -> ValueId {
+    pub(crate) fn resolve_aliases(&self, value_id: ValueHandle) -> ValueHandle {
         let mut current_value = value_id;
         for _ in 0..=self.dfg.values.count() {
             match self.dfg.values[current_value].alias {
@@ -798,7 +823,7 @@ impl Cfg {
     }
 
     /// Turns `dest` into an alias of `src`.
-    pub(crate) fn mark_as_alias(&mut self, dest: ValueId, src: ValueId) {
+    pub(crate) fn mark_as_alias(&mut self, dest: ValueHandle, src: ValueHandle) {
         assert!(
             !self.value_is_attached(dest),
             "cannot alias a value that is still attached to an instruction or block"
@@ -825,7 +850,7 @@ impl Cfg {
     /// every single alias creation.
     pub(crate) fn flush_aliases(&mut self) {
         // step 1: compresses every alias chain so each aliased value points directly at its final target
-        let value_ids: Vec<ValueId> = self.dfg.values.keys().collect();
+        let value_ids: Vec<ValueHandle> = self.dfg.values.keys().collect();
         for mut value_id in value_ids {
             if let Some(original_pointee_id) = self.dfg.values[value_id].alias {
                 let resolved = Some(self.resolve_aliases(original_pointee_id));
@@ -856,42 +881,46 @@ impl Cfg {
     }
 
     /// Registers `signature` and returns a handle to it, for use with `add_function_reference`.
-    pub(crate) fn add_signature(&mut self, signature: Signature) -> SignatureId {
+    pub(crate) fn add_signature(&mut self, signature: Signature) -> SignatureHandle {
         self.dfg.signatures.add(signature)
     }
 
-    /// Registers a reference to a function named `name` with signature `signature_id`,
-    /// returning a handle usable as `Instruction::Call`'s callee.
+    /// Registers a reference to the function identified by `binding` (named
+    /// `name`, for display) with signature `signature_id`, returning a handle
+    /// usable as `Instruction::Call`'s callee.
     pub(crate) fn add_function_reference(
         &mut self,
+        binding: ItemBindingHandle,
         name: Symbol,
-        signature: SignatureId,
-    ) -> FunctionReferenceId {
-        self.dfg
-            .function_references
-            .add(FunctionReference { name, signature })
+        signature: SignatureHandle,
+    ) -> FunctionReferenceHandle {
+        self.dfg.function_references.add(FunctionReference {
+            binding,
+            name,
+            signature,
+        })
     }
 
     /// Returns a reference to `signature_id`'s data.
-    pub(crate) fn get_signature(&self, signature_id: SignatureId) -> &Signature {
+    pub(crate) fn get_signature(&self, signature_id: SignatureHandle) -> &Signature {
         &self.dfg.signatures[signature_id]
     }
 
     /// Returns a reference to `function_reference_id`'s data.
     pub(crate) fn get_function_reference(
         &self,
-        function_reference_id: FunctionReferenceId,
+        function_reference_id: FunctionReferenceHandle,
     ) -> &FunctionReference {
         &self.dfg.function_references[function_reference_id]
     }
 }
 
-impl InstructionKind<HandleList<ValueId>> {
-    /// Rewrites every `ValueId` this instruction references by applying `f` to each one.
+impl InstructionKind<HandleList<ValueHandle>> {
+    /// Rewrites every `ValueHandle` this instruction references by applying `f` to each one.
     fn rewrite_operands(
         &mut self,
-        suballocator: &mut HandleListSubAllocator<ValueId>,
-        mut f: impl FnMut(ValueId) -> ValueId,
+        suballocator: &mut HandleListSubAllocator<ValueHandle>,
+        mut f: impl FnMut(ValueHandle) -> ValueHandle,
     ) {
         match self {
             Instruction::Binary { args, .. } => {
@@ -937,17 +966,17 @@ impl InstructionKind<HandleList<ValueId>> {
 
 impl<'a> BlockView<'a> {
     /// Returns this block's id.
-    pub(crate) fn id(&self) -> BlockId {
+    pub(crate) fn id(&self) -> BlockHandle {
         self.block_id
     }
 
     /// Returns the block that follows this one in layout order, or `None` if this is the last block.
-    pub(crate) fn next(&self) -> Option<BlockId> {
+    pub(crate) fn next(&self) -> Option<BlockHandle> {
         self.cfg.layout.blocks[self.block_id].next
     }
 
     /// Returns the block that precedes this one in layout order, or `None` if this is the first block.
-    pub(crate) fn prev(&self) -> Option<BlockId> {
+    pub(crate) fn prev(&self) -> Option<BlockHandle> {
         self.cfg.layout.blocks[self.block_id].prev
     }
 
@@ -960,17 +989,17 @@ impl<'a> BlockView<'a> {
     }
 
     /// Returns the first instruction in this block, or `None` if the block is empty.
-    pub(crate) fn first_instruction(&self) -> Option<InstructionId> {
+    pub(crate) fn first_instruction(&self) -> Option<InstructionHandle> {
         self.cfg.layout.blocks[self.block_id].first_instruction
     }
 
     /// Returns the last instruction in this block, or `None` if the block is empty.
-    pub(crate) fn last_instruction(&self) -> Option<InstructionId> {
+    pub(crate) fn last_instruction(&self) -> Option<InstructionHandle> {
         self.cfg.layout.blocks[self.block_id].last_instruction
     }
 
     /// Returns the block's parameters as a slice.
-    pub(crate) fn parameters(&self) -> &'a [ValueId] {
+    pub(crate) fn parameters(&self) -> &'a [ValueHandle] {
         self.cfg.dfg.blocks[self.block_id]
             .parameters
             .to_slice(&self.cfg.dfg.suballocator)
@@ -979,7 +1008,7 @@ impl<'a> BlockView<'a> {
 
 impl<'a> BlockViewMut<'a> {
     /// Appends a parameter of type `ty` to this block and returns a handle to its associated value.
-    pub(crate) fn append_parameter(&mut self, ty: TypeId) -> ValueId {
+    pub(crate) fn append_parameter(&mut self, ty: TypeHandle) -> ValueHandle {
         let parameter = self.cfg.dfg.values.next_key();
         self.cfg.dfg.blocks[self.block_id]
             .parameters
@@ -1031,26 +1060,26 @@ impl<'a> BlockViewMut<'a> {
     }
 
     /// Detaches and returns the block's parameter list, leaving the block with no parameters.
-    pub(crate) fn detach_parameters(&mut self) -> HandleList<ValueId> {
+    pub(crate) fn detach_parameters(&mut self) -> HandleList<ValueHandle> {
         let params = self.cfg.dfg.blocks[self.block_id].parameters;
-        self.cfg.dfg.blocks[self.block_id].parameters = HandleList::<ValueId>::new();
+        self.cfg.dfg.blocks[self.block_id].parameters = HandleList::<ValueHandle>::new();
         params
     }
 }
 
 impl<'a> InstructionView<'a> {
     /// Returns this instruction's id.
-    pub(crate) fn id(&self) -> InstructionId {
+    pub(crate) fn id(&self) -> InstructionHandle {
         self.instruction_id
     }
 
     /// Returns the instruction that follows this one in its block, or `None` if this is the block's last instruction.
-    pub(crate) fn next(&self) -> Option<InstructionId> {
+    pub(crate) fn next(&self) -> Option<InstructionHandle> {
         self.cfg.layout.instructions[self.instruction_id].next
     }
 
     /// Returns the instruction that precedes this one in its block, or `None` if this is the block's first instruction.
-    pub(crate) fn prev(&self) -> Option<InstructionId> {
+    pub(crate) fn prev(&self) -> Option<InstructionHandle> {
         self.cfg.layout.instructions[self.instruction_id].prev
     }
 
@@ -1069,7 +1098,7 @@ impl<'a> InstructionView<'a> {
     }
 
     /// Returns the instruction's value operands as a slice.
-    pub(crate) fn arguments(&self) -> &'a [ValueId] {
+    pub(crate) fn arguments(&self) -> &'a [ValueHandle] {
         let suballocator = &self.cfg.dfg.suballocator;
         match &self.cfg.dfg.instructions[self.instruction_id] {
             Instruction::Binary { args, .. } => args,
@@ -1085,18 +1114,18 @@ impl<'a> InstructionView<'a> {
     }
 
     /// Returns the instruction's result values as a slice.
-    pub(crate) fn results(&self) -> &'a [ValueId] {
+    pub(crate) fn results(&self) -> &'a [ValueHandle] {
         self.cfg.dfg.instruction_results[self.instruction_id].to_slice(&self.cfg.dfg.suballocator)
     }
 
     /// Returns the first result, or `None` if this instruction produces no results.
-    pub(crate) fn first_result(&self) -> Option<ValueId> {
+    pub(crate) fn first_result(&self) -> Option<ValueHandle> {
         self.cfg.dfg.instruction_results[self.instruction_id].get(&self.cfg.dfg.suballocator, 0)
     }
 
     /// Returns the block that contains this instruction, or `None` if it has been
     /// removed from the layout.
-    pub(crate) fn containing_block(&self) -> Option<BlockId> {
+    pub(crate) fn containing_block(&self) -> Option<BlockHandle> {
         self.cfg.layout.instructions[self.instruction_id].block
     }
 
@@ -1125,7 +1154,7 @@ impl<'a> InstructionView<'a> {
     /// `append_block_argument`), so either can be read.
     ///
     /// Panics if this instruction doesn't branch to `destination`, or if `index` is out of bounds.
-    pub(crate) fn block_argument(&self, destination: BlockId, index: usize) -> ValueId {
+    pub(crate) fn block_argument(&self, destination: BlockHandle, index: usize) -> ValueHandle {
         let suballocator = &self.cfg.dfg.suballocator;
         match &self.cfg.dfg.instructions[self.instruction_id] {
             Instruction::Jump {
@@ -1211,9 +1240,9 @@ impl<'a> InstructionView<'a> {
 }
 
 impl<'a> InstructionViewMut<'a> {
-    /// Rewrites every `ValueId` the instruction references by applying `f` to each one,
+    /// Rewrites every `ValueHandle` the instruction references by applying `f` to each one,
     /// including `BranchIf`'s then/else block arguments.
-    pub(crate) fn rewrite_operands(&mut self, f: impl FnMut(ValueId) -> ValueId) {
+    pub(crate) fn rewrite_operands(&mut self, f: impl FnMut(ValueHandle) -> ValueHandle) {
         self.cfg.dfg.instructions[self.instruction_id]
             .rewrite_operands(&mut self.cfg.dfg.suballocator, f);
     }
@@ -1227,7 +1256,7 @@ impl<'a> InstructionViewMut<'a> {
     /// same block — a single instruction can be a predecessor via more than one edge.
     ///
     /// Panics if this instruction doesn't branch to `destination` at all.
-    pub(crate) fn append_block_argument(&mut self, destination: BlockId, value: ValueId) {
+    pub(crate) fn append_block_argument(&mut self, destination: BlockHandle, value: ValueHandle) {
         let suballocator = &mut self.cfg.dfg.suballocator;
         match &mut self.cfg.dfg.instructions[self.instruction_id] {
             Instruction::Jump {
@@ -1265,7 +1294,7 @@ impl<'a> InstructionViewMut<'a> {
 
 impl<'a> ValueView<'a> {
     /// Returns this value's type.
-    pub(crate) fn ty(&self) -> TypeId {
+    pub(crate) fn ty(&self) -> TypeHandle {
         self.cfg.dfg.values[self.value_id].ty
     }
 
@@ -1274,15 +1303,15 @@ impl<'a> ValueView<'a> {
         self.cfg.dfg.values[self.cfg.resolve_aliases(self.value_id)].origin
     }
 
-    pub(crate) fn alias_target(&self) -> Option<ValueId> {
+    pub(crate) fn alias_target(&self) -> Option<ValueHandle> {
         self.cfg.dfg.values[self.value_id].alias
     }
 }
 
 impl Iterator for UsedValuesIter<'_> {
-    type Item = ValueId;
+    type Item = ValueHandle;
 
-    fn next(&mut self) -> Option<ValueId> {
+    fn next(&mut self) -> Option<ValueHandle> {
         match self {
             UsedValuesIter::Slice(iter) => iter.next().copied(),
             UsedValuesIter::Branch {
@@ -1298,7 +1327,7 @@ impl Iterator for UsedValuesIter<'_> {
 }
 
 impl DoubleEndedIterator for UsedValuesIter<'_> {
-    fn next_back(&mut self) -> Option<ValueId> {
+    fn next_back(&mut self) -> Option<ValueHandle> {
         match self {
             UsedValuesIter::Slice(iter) => iter.next_back().copied(),
             UsedValuesIter::Branch {
@@ -1315,8 +1344,8 @@ impl DoubleEndedIterator for UsedValuesIter<'_> {
 }
 
 impl Iterator for BlockIter<'_> {
-    type Item = BlockId;
-    fn next(&mut self) -> Option<BlockId> {
+    type Item = BlockHandle;
+    fn next(&mut self) -> Option<BlockHandle> {
         let block = self.next?;
         self.next = self.layout.blocks[block].next;
         Some(block)
@@ -1324,8 +1353,8 @@ impl Iterator for BlockIter<'_> {
 }
 
 impl Iterator for InstructionIter<'_> {
-    type Item = InstructionId;
-    fn next(&mut self) -> Option<InstructionId> {
+    type Item = InstructionHandle;
+    fn next(&mut self) -> Option<InstructionHandle> {
         let inst = self.next?;
         self.next = self.layout.instructions[inst].next;
         Some(inst)
@@ -1342,7 +1371,7 @@ impl DataFlowGraph {
             blocks: HandleMap::new(),
             function_references: HandleMap::new(),
             signatures: HandleMap::new(),
-            suballocator: HandleListSubAllocator::<ValueId>::new(),
+            suballocator: HandleListSubAllocator::<ValueHandle>::new(),
         }
     }
 }

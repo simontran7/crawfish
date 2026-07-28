@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 pub enum Command {
     /// Compile the source file at this path.
     Compile(PathBuf),
+    /// Compile and run the source file at this path.
+    Run(PathBuf),
+    /// Check the source file at this path without producing an executable.
+    Check(PathBuf),
     /// Print usage information (`-h`/`--help`).
     Help,
     /// Print the compiler's version (`-v`/`--version`).
@@ -38,21 +42,29 @@ pub fn parse_args(args: &[String]) -> Result<Command, CLIError> {
     let mut args_iter = args.iter().skip(1);
     let command = args_iter.next().ok_or(CLIError::MissingArgument)?;
     match command.as_str() {
-        "compile" => {
-            let path_str = args_iter.next().ok_or(CLIError::MissingArgument)?;
-            let source_path = PathBuf::from(path_str);
-            if !source_path.is_file() {
-                return Err(CLIError::InvalidFilePath(path_str.to_owned()));
-            }
-            if !has_crw_extension(&source_path) {
-                return Err(CLIError::InvalidFileExtension);
-            }
-            Ok(Command::Compile(source_path))
-        }
+        "compile" => Ok(Command::Compile(parse_source_path(&mut args_iter)?)),
+        "run" => Ok(Command::Run(parse_source_path(&mut args_iter)?)),
+        "check" => Ok(Command::Check(parse_source_path(&mut args_iter)?)),
         "-h" | "--help" => Ok(Command::Help),
         "-v" | "--version" => Ok(Command::Version),
         other => Err(CLIError::InvalidCommand(other.to_owned())),
     }
+}
+
+/// Parses and validates the `<file>.crw` argument shared by `compile`,
+/// `run`, and `check`.
+fn parse_source_path<'a>(
+    args_iter: &mut impl Iterator<Item = &'a String>,
+) -> Result<PathBuf, CLIError> {
+    let path_str = args_iter.next().ok_or(CLIError::MissingArgument)?;
+    let source_path = PathBuf::from(path_str);
+    if !source_path.is_file() {
+        return Err(CLIError::InvalidFilePath(path_str.to_owned()));
+    }
+    if !has_crw_extension(&source_path) {
+        return Err(CLIError::InvalidFileExtension);
+    }
+    Ok(source_path)
 }
 
 fn has_crw_extension(p: &Path) -> bool {

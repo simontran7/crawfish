@@ -1,7 +1,7 @@
 use crate::common::context::CompilerContext;
 use crate::front_end::semantic_analysis::hir::{
-    BindingId, BindingKind, ExpressionId, ExpressionKind, Hir, ItemId, ItemKind, StatementId,
-    StatementKind,
+    BindingHandle, BindingKind, ExpressionHandle, ExpressionKind, Hir, ItemHandle, ItemKind,
+    StatementHandle, StatementKind,
 };
 
 use std::fmt::{self, Write};
@@ -11,7 +11,7 @@ use std::fmt::{self, Write};
 ///
 /// Unlike [`AstDumper`], which renders every field of every node, the
 /// `HirDumper` shows only what's relevant after type-checking: each node's
-/// kind (or, for leaves, its value) annotated with its resolved `TypeId`,
+/// kind (or, for leaves, its value) annotated with its resolved `TypeHandle`,
 /// using `[label] ` prefixes (e.g. `[condition] `, `[then branch] `) to mark
 /// a child's role when it isn't obvious from position alone. Each
 /// `dump_*` method writes its own line(s) via `writeln!` and recurses into
@@ -37,8 +37,8 @@ impl<'a> HirDumper<'a> {
     /// lines, and returns the result as a single string.
     pub(crate) fn dump(&self) -> Result<String, fmt::Error> {
         let mut hir_output = String::new();
-        for &item_id in self.hir.get_item_slice(self.hir.source_file.items) {
-            self.dump_item(item_id, 0, &mut hir_output)?;
+        for &item_handle in self.hir.get_item_slice(self.hir.source_file.items) {
+            self.dump_item(item_handle, 0, &mut hir_output)?;
             hir_output.push('\n');
         }
         Ok(hir_output)
@@ -47,40 +47,44 @@ impl<'a> HirDumper<'a> {
     /// Dumps the item `id` and its children at `depth`. Dispatches on
     /// [`ItemKind`], writing a `func name : type` or `const name : type`
     /// header (resolving the binding's name and type via
-    /// [`Hir::item_bindings`]) followed by its parameters (for functions)
+    /// [`Hir::get_item_binding`]) followed by its parameters (for functions)
     /// and its body or value, dumped one level deeper. The other `dump_*`
     /// methods follow this same dispatch-and-recurse pattern for
     /// [`StatementKind`] and [`ExpressionKind`].
-    fn dump_item(&self, id: ItemId, depth: usize, hir_output: &mut String) -> fmt::Result {
-        let item = &self.hir.items[id];
+    fn dump_item(&self, id: ItemHandle, depth: usize, hir_output: &mut String) -> fmt::Result {
+        let item = self.hir.get_item(id);
         let padding = Self::pad(depth);
 
-        match item.kind {
+        match *item.kind() {
             ItemKind::Function {
                 binding,
                 parameters,
                 body,
             } => {
-                let binding_info = &self.hir.item_bindings[binding];
-                let name = self.ctx.string_interner.resolve(binding_info.name).unwrap();
-                let ty = self.ctx.type_interner.to_string(binding_info.ty);
+                let binding_view = self.hir.get_item_binding(binding);
+                let name = self
+                    .ctx
+                    .string_interner
+                    .resolve(binding_view.name())
+                    .unwrap();
+                let ty = self.ctx.type_interner.to_string(binding_view.ty());
 
                 // dump header
                 writeln!(hir_output, "{padding}func {name} : {ty}")?;
 
                 // dump parameter
-                for &local_binding_id in self.hir.get_parameter_slice(parameters) {
-                    let local_binding_info = &self.hir.local_bindings[local_binding_id];
+                for &local_binding_handle in self.hir.get_parameter_slice(parameters) {
+                    let local_binding_view = self.hir.get_local_binding(local_binding_handle);
                     let parameter_name = self
                         .ctx
                         .string_interner
-                        .resolve(local_binding_info.name)
+                        .resolve(local_binding_view.name())
                         .unwrap();
                     writeln!(
                         hir_output,
                         "{}  parameter {parameter_name} : {}",
                         padding,
-                        self.ctx.type_interner.to_string(local_binding_info.ty)
+                        self.ctx.type_interner.to_string(local_binding_view.ty())
                     )?;
                 }
 
@@ -88,9 +92,13 @@ impl<'a> HirDumper<'a> {
                 self.dump_expression(body, depth + 1, "", hir_output)?;
             }
             ItemKind::Constant { binding, value } => {
-                let binding_info = &self.hir.item_bindings[binding];
-                let name = self.ctx.string_interner.resolve(binding_info.name).unwrap();
-                let ty = self.ctx.type_interner.to_string(binding_info.ty);
+                let binding_view = self.hir.get_item_binding(binding);
+                let name = self
+                    .ctx
+                    .string_interner
+                    .resolve(binding_view.name())
+                    .unwrap();
+                let ty = self.ctx.type_interner.to_string(binding_view.ty());
 
                 // dump header
                 writeln!(hir_output, "{padding}const {name} : {ty}")?;
@@ -112,23 +120,27 @@ impl<'a> HirDumper<'a> {
     /// lines with the value dumped one level deeper otherwise.
     fn dump_statement(
         &self,
-        id: StatementId,
+        id: StatementHandle,
         depth: usize,
         label: &str,
         hir_output: &mut String,
     ) -> fmt::Result {
-        let statement = &self.hir.statements[id];
+        let statement = self.hir.get_statement(id);
         let padding = Self::pad(depth);
 
-        match statement.kind {
+        match *statement.kind() {
             StatementKind::Expression { expression, .. } => {
                 self.dump_expression(expression, depth, label, hir_output)?;
             }
             StatementKind::Let { pattern, value } => {
-                let binding_info = &self.hir.local_bindings[pattern];
-                let name = self.ctx.string_interner.resolve(binding_info.name).unwrap();
-                let mutability = if binding_info.mutable { "mut " } else { "" };
-                let ty = self.ctx.type_interner.to_string(binding_info.ty);
+                let binding_view = self.hir.get_local_binding(pattern);
+                let name = self
+                    .ctx
+                    .string_interner
+                    .resolve(binding_view.name())
+                    .unwrap();
+                let mutability = if binding_view.mutable() { "mut " } else { "" };
+                let ty = self.ctx.type_interner.to_string(binding_view.ty());
 
                 // dump the whole statement inline or with the expression nested
                 if let Some(v) = self.try_inline(value) {
@@ -155,33 +167,33 @@ impl<'a> HirDumper<'a> {
     /// Dumps the expression `id` at `depth`, prefixed with `label`. See
     /// [`HirDumper::dump_item`] for the dispatch pattern shared by all
     /// `dump_*` methods. Every variant's line is annotated with the
-    /// expression's resolved `TypeId`, and operands are dumped one level
+    /// expression's resolved `TypeHandle`, and operands are dumped one level
     /// deeper with `[label] ` prefixes naming their role (e.g.
     /// `[target] `, `[callee] `) where it isn't implied by ordering alone.
     fn dump_expression(
         &self,
-        id: ExpressionId,
+        id: ExpressionHandle,
         depth: usize,
         label: &str,
         hir_output: &mut String,
     ) -> fmt::Result {
-        let expression = &self.hir.expressions[id];
+        let expression = self.hir.get_expression(id);
         let padding = Self::pad(depth);
-        let ty = self.ctx.type_interner.to_string(expression.ty);
+        let ty = self.ctx.type_interner.to_string(expression.ty());
 
-        match expression.kind {
+        match *expression.kind() {
             ExpressionKind::Block { statements, tail } => {
                 // dump header
                 writeln!(hir_output, "{padding}{label}Block : {ty}")?;
 
                 // dump statement
-                for &statement_id in self.hir.get_statement_slice(statements) {
-                    self.dump_statement(statement_id, depth + 1, "", hir_output)?;
+                for &statement_handle in self.hir.get_statement_slice(statements) {
+                    self.dump_statement(statement_handle, depth + 1, "", hir_output)?;
                 }
 
                 // dump tail (if it exists)
-                if let Some(tail_id) = tail {
-                    self.dump_expression(tail_id, depth + 1, "[tail] ", hir_output)?;
+                if let Some(tail_handle) = tail {
+                    self.dump_expression(tail_handle, depth + 1, "[tail] ", hir_output)?;
                 }
             }
             ExpressionKind::Assign { target, value } => {
@@ -232,8 +244,8 @@ impl<'a> HirDumper<'a> {
                 self.dump_expression(callee, depth + 1, "[callee] ", hir_output)?;
 
                 // dump arguments
-                for &arg_id in self.hir.get_expression_slice(arguments) {
-                    self.dump_expression(arg_id, depth + 1, "", hir_output)?;
+                for &argument_handle in self.hir.get_expression_slice(arguments) {
+                    self.dump_expression(argument_handle, depth + 1, "", hir_output)?;
                 }
             }
             ExpressionKind::If {
@@ -251,8 +263,8 @@ impl<'a> HirDumper<'a> {
                 self.dump_expression(then_branch, depth + 1, "[then branch] ", hir_output)?;
 
                 // dump else branch (if it exists)
-                if let Some(else_id) = else_branch {
-                    self.dump_expression(else_id, depth + 1, "[else branch] ", hir_output)?;
+                if let Some(else_handle) = else_branch {
+                    self.dump_expression(else_handle, depth + 1, "[else branch] ", hir_output)?;
                 }
             }
             ExpressionKind::Return { value } => {
@@ -260,8 +272,8 @@ impl<'a> HirDumper<'a> {
                 writeln!(hir_output, "{padding}{label}return : {ty}")?;
 
                 // dump value
-                if let Some(value_id) = value {
-                    self.dump_expression(value_id, depth + 1, "", hir_output)?;
+                if let Some(value_handle) = value {
+                    self.dump_expression(value_handle, depth + 1, "", hir_output)?;
                 }
             }
         }
@@ -274,8 +286,8 @@ impl<'a> HirDumper<'a> {
     /// returns its rendered form. Otherwise returns `None`, and
     /// [`HirDumper::dump_statement`] dumps the expression on its own
     /// indented line instead.
-    fn try_inline(&self, id: ExpressionId) -> Option<String> {
-        match self.hir.expressions[id].kind {
+    fn try_inline(&self, id: ExpressionHandle) -> Option<String> {
+        match *self.hir.get_expression(id).kind() {
             ExpressionKind::Integer(v) => Some(v.to_string()),
             ExpressionKind::Boolean(b) => Some(b.to_string()),
             ExpressionKind::Unit => Some("()".to_string()),
@@ -284,27 +296,21 @@ impl<'a> HirDumper<'a> {
         }
     }
 
-    /// Resolves `binding` to its source name, looking it up in
-    /// [`Hir::local_bindings`] or [`Hir::item_bindings`] depending on its
-    /// [`BindingKind`]. Returns `"<error>"` for [`BindingId::ERROR`].
-    fn binding_name(&self, binding: BindingId) -> String {
+    /// Resolves `binding` to its source name, looking it up via
+    /// [`Hir::get_local_binding`] or [`Hir::get_item_binding`] depending on
+    /// its [`BindingKind`]. Returns `"<error>"` for [`BindingHandle::ERROR`].
+    fn binding_name(&self, binding: BindingHandle) -> String {
         if binding.is_error() {
             return "<error>".into();
         }
-        match binding.kind() {
+        let name = match binding.kind() {
             BindingKind::Local => self
-                .ctx
-                .string_interner
-                .resolve(self.hir.local_bindings[binding.index().into()].name)
-                .unwrap()
-                .to_string(),
-            BindingKind::Item => self
-                .ctx
-                .string_interner
-                .resolve(self.hir.item_bindings[binding.index().into()].name)
-                .unwrap()
-                .to_string(),
-        }
+                .hir
+                .get_local_binding(binding.as_local().unwrap())
+                .name(),
+            BindingKind::Item => self.hir.get_item_binding(binding.as_item().unwrap()).name(),
+        };
+        self.ctx.string_interner.resolve(name).unwrap().to_string()
     }
 
     /// Returns `level` repetitions of [`HirDumper::INDENT`], the leading

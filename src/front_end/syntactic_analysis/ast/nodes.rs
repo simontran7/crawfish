@@ -17,10 +17,10 @@ pub(crate) struct SourceFileNode {
 /// `()`.
 #[derive(Debug)]
 pub(crate) struct FunctionDefinitionNode {
-    pub(crate) name: IdentifierId,
+    pub(crate) name: IdentifierHandle,
     pub(crate) parameters: ParameterSlice,
-    pub(crate) annotation: Option<TypeAnnotationId>,
-    pub(crate) body: BlockExpressionId,
+    pub(crate) annotation: Option<TypeAnnotationHandle>,
+    pub(crate) body: BlockExpressionHandle,
     pub(crate) span: Span,
 }
 
@@ -29,9 +29,9 @@ pub(crate) struct FunctionDefinitionNode {
 /// Unlike [`LetStatementNode`], the type annotation is mandatory.
 #[derive(Debug)]
 pub(crate) struct ConstantDefinitionNode {
-    pub(crate) name: IdentifierId,
-    pub(crate) annotation: TypeAnnotationId,
-    pub(crate) value: ExpressionId,
+    pub(crate) name: IdentifierHandle,
+    pub(crate) annotation: TypeAnnotationHandle,
+    pub(crate) value: ExpressionHandle,
     pub(crate) span: Span,
 }
 
@@ -46,7 +46,7 @@ pub(crate) struct ErrorItemNode {
 /// and becomes the [`BlockExpressionNode`]'s value.
 #[derive(Debug)]
 pub(crate) struct ExpressionStatementNode {
-    pub(crate) expression: ExpressionId,
+    pub(crate) expression: ExpressionHandle,
     pub(crate) has_semicolon: bool,
     pub(crate) span: Span,
 }
@@ -55,7 +55,7 @@ pub(crate) struct ExpressionStatementNode {
 /// defined inside a function body.
 #[derive(Debug)]
 pub(crate) struct ItemStatementNode {
-    pub(crate) item: ItemId,
+    pub(crate) item: ItemHandle,
     pub(crate) span: Span,
 }
 
@@ -63,10 +63,10 @@ pub(crate) struct ItemStatementNode {
 /// optional type annotation.
 #[derive(Debug)]
 pub(crate) struct LetStatementNode {
-    pub(crate) name: PatternId,
+    pub(crate) name: PatternHandle,
     pub(crate) mutable: bool,
-    pub(crate) annotation: Option<TypeAnnotationId>,
-    pub(crate) value: ExpressionId,
+    pub(crate) annotation: Option<TypeAnnotationHandle>,
+    pub(crate) value: ExpressionHandle,
     pub(crate) span: Span,
 }
 
@@ -98,7 +98,7 @@ pub(crate) struct BooleanLiteralNode {
 
 /// A reference to a binding by name.
 ///
-/// Resolved to a `BindingId` during MIR lowering.
+/// Resolved to a `BindingHandle` during MIR lowering.
 #[derive(Debug)]
 pub(crate) struct VariableNode {
     pub(crate) symbol: Symbol,
@@ -109,7 +109,7 @@ pub(crate) struct VariableNode {
 #[derive(Debug)]
 pub(crate) struct UnaryOperationNode {
     pub(crate) operator: UnOp,
-    pub(crate) rhs: ExpressionId,
+    pub(crate) rhs: ExpressionHandle,
     pub(crate) span: Span,
 }
 
@@ -117,8 +117,8 @@ pub(crate) struct UnaryOperationNode {
 #[derive(Debug)]
 pub(crate) struct BinaryOperationNode {
     pub(crate) operator: BinOp,
-    pub(crate) lhs: ExpressionId,
-    pub(crate) rhs: ExpressionId,
+    pub(crate) lhs: ExpressionHandle,
+    pub(crate) rhs: ExpressionHandle,
     pub(crate) span: Span,
 }
 
@@ -127,9 +127,9 @@ pub(crate) struct BinaryOperationNode {
 /// `else_branch` is `None` for an `if` without an `else`.
 #[derive(Debug)]
 pub(crate) struct IfExpressionNode {
-    pub(crate) condition: ExpressionId,
-    pub(crate) then_branch: BlockExpressionId,
-    pub(crate) else_branch: Option<ExpressionId>,
+    pub(crate) condition: ExpressionHandle,
+    pub(crate) then_branch: BlockExpressionHandle,
+    pub(crate) else_branch: Option<ExpressionHandle>,
     pub(crate) span: Span,
 }
 
@@ -139,14 +139,14 @@ pub(crate) struct IfExpressionNode {
 #[derive(Debug)]
 pub(crate) struct BlockExpressionNode {
     pub(crate) statements: StatementSlice,
-    pub(crate) tail: Option<ExpressionId>,
+    pub(crate) tail: Option<ExpressionHandle>,
     pub(crate) span: Span,
 }
 
 /// A function call: `callee(arguments)`.
 #[derive(Debug)]
 pub(crate) struct FunctionCallNode {
-    pub(crate) callee: ExpressionId,
+    pub(crate) callee: ExpressionHandle,
     pub(crate) arguments: ExpressionSlice,
     pub(crate) span: Span,
 }
@@ -154,15 +154,15 @@ pub(crate) struct FunctionCallNode {
 /// An assignment: `target = value`.
 #[derive(Debug)]
 pub(crate) struct AssignNode {
-    pub(crate) target: ExpressionId,
-    pub(crate) value: ExpressionId,
+    pub(crate) target: ExpressionHandle,
+    pub(crate) value: ExpressionHandle,
     pub(crate) span: Span,
 }
 
 /// `return value;`, or `return;` if `value` is `None`.
 #[derive(Debug)]
 pub(crate) struct ReturnNode {
-    pub(crate) value: Option<ExpressionId>,
+    pub(crate) value: Option<ExpressionHandle>,
     pub(crate) span: Span,
 }
 
@@ -175,9 +175,9 @@ pub(crate) struct ErrorExpressionNode {
 /// A function parameter: `name: annotation`, with an optional `mut`.
 #[derive(Debug)]
 pub(crate) struct ValidParameterNode {
-    pub(crate) name: IdentifierId,
+    pub(crate) name: IdentifierHandle,
     pub(crate) mutable: bool,
-    pub(crate) annotation: TypeAnnotationId,
+    pub(crate) annotation: TypeAnnotationHandle,
     pub(crate) span: Span,
 }
 
@@ -203,7 +203,7 @@ pub(crate) struct ErrorIdentifierNode {
 /// A named type annotation, e.g. `: Int`.
 #[derive(Debug)]
 pub(crate) struct NamedTypeAnnotationNode {
-    pub(crate) name: IdentifierId,
+    pub(crate) name: IdentifierHandle,
     pub(crate) span: Span,
 }
 
@@ -216,7 +216,7 @@ pub(crate) struct ErrorTypeAnnotationNode {
 /// A `let` pattern that binds a single name, e.g. the `x` in `let x = 1;`.
 #[derive(Debug)]
 pub(crate) struct IdentifierPatternNode {
-    pub(crate) name: IdentifierId,
+    pub(crate) name: IdentifierHandle,
     pub(crate) span: Span,
 }
 

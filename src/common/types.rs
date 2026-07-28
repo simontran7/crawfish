@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::common::string_interner::{StringInterner, Symbol};
-use crate::front_end::semantic_analysis::unification_table::{IntVarId, TypeVarId};
+use crate::front_end::semantic_analysis::unification_table::{IntVarHandle, TypeVarHandle};
 
-/// A type, interned as a [`TypeId`] by [`TypeInterner`].
+/// A type, interned as a [`TypeHandle`] by [`TypeInterner`].
 ///
 /// `Infer` variants are placeholders used during type inference, before
 /// [`UnificationTable`] resolves them to a concrete type. `Error` stands in
@@ -26,8 +26,8 @@ pub(crate) enum Ty {
     Unsigned(UnsignedIntTy),
     /// function definition type
     Func {
-        parameters: Vec<TypeId>,
-        return_value: TypeId,
+        parameters: Vec<TypeHandle>,
+        return_value: TypeHandle,
     },
     /// A type not yet resolved by inference. See [`InferTy`].
     Infer(InferTy),
@@ -60,34 +60,34 @@ pub(crate) enum UnsignedIntTy {
 /// [`UnificationTable`]: crate::front_end::semantic_analysis::unification_table::UnificationTable
 #[derive(Clone, Copy, Hash, Eq, PartialEq)]
 pub(crate) enum InferTy {
-    TyVar(TypeVarId),
-    IntVar(IntVarId),
+    TyVar(TypeVarHandle),
+    IntVar(IntVarHandle),
 }
 
-/// Interns every [`Ty`] used by a compilation as a [`TypeId`], so that
+/// Interns every [`Ty`] used by a compilation as a [`TypeHandle`], so that
 /// equal types compare equal in O(1) and can be passed around as a 4-byte
-/// handle instead of a cloned [`Ty`]. Also holds [`TypeId`]s for the
+/// handle instead of a cloned [`Ty`]. Also holds [`TypeHandle`]s for the
 /// built-in types (`unit_id`, `bool_id`, `i32_id`, etc.), interned once up
 /// front so they can be compared against directly.
 pub(crate) struct TypeInterner {
     types: Vec<Ty>,
-    ids: HashMap<Ty, TypeId>,
-    pub(crate) unit_id: TypeId,
-    pub(crate) never_id: TypeId,
-    pub(crate) bool_id: TypeId,
-    pub(crate) u32_id: TypeId,
-    pub(crate) u64_id: TypeId,
-    pub(crate) i32_id: TypeId,
-    pub(crate) i64_id: TypeId,
-    pub(crate) error_id: TypeId,
+    ids: HashMap<Ty, TypeHandle>,
+    pub(crate) unit_id: TypeHandle,
+    pub(crate) never_id: TypeHandle,
+    pub(crate) bool_id: TypeHandle,
+    pub(crate) u32_id: TypeHandle,
+    pub(crate) u64_id: TypeHandle,
+    pub(crate) i32_id: TypeHandle,
+    pub(crate) i64_id: TypeHandle,
+    pub(crate) error_id: TypeHandle,
 }
 
 /// A handle to a [`Ty`] interned in a [`TypeInterner`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct TypeId(pub(crate) u32);
+pub(crate) struct TypeHandle(pub(crate) u32);
 
 impl TypeInterner {
-    /// Creates and returns a `TypeInterner` pre-populated with [`TypeId`]s
+    /// Creates and returns a `TypeInterner` pre-populated with [`TypeHandle`]s
     /// for [`Ty::Unit`], [`Ty::Never`], [`Ty::Bool`], the fixed-width
     /// integer types, and [`Ty::Error`], cached on the fields above so
     /// callers don't need to re-intern them.
@@ -95,14 +95,14 @@ impl TypeInterner {
         let mut ti = Self {
             types: Vec::new(),
             ids: HashMap::new(),
-            unit_id: TypeId(0),
-            never_id: TypeId(0),
-            bool_id: TypeId(0),
-            u32_id: TypeId(0),
-            u64_id: TypeId(0),
-            i32_id: TypeId(0),
-            i64_id: TypeId(0),
-            error_id: TypeId(0),
+            unit_id: TypeHandle(0),
+            never_id: TypeHandle(0),
+            bool_id: TypeHandle(0),
+            u32_id: TypeHandle(0),
+            u64_id: TypeHandle(0),
+            i32_id: TypeHandle(0),
+            i64_id: TypeHandle(0),
+            error_id: TypeHandle(0),
         };
         ti.unit_id = ti.intern(Ty::Unit);
         ti.never_id = ti.intern(Ty::Never);
@@ -115,32 +115,32 @@ impl TypeInterner {
         ti
     }
 
-    /// Returns the [`TypeId`] for `ty`, interning it if it hasn't been seen
-    /// before. Two equal `Ty`s always intern to the same `TypeId`.
-    pub(crate) fn intern(&mut self, ty: Ty) -> TypeId {
+    /// Returns the [`TypeHandle`] for `ty`, interning it if it hasn't been seen
+    /// before. Two equal `Ty`s always intern to the same `TypeHandle`.
+    pub(crate) fn intern(&mut self, ty: Ty) -> TypeHandle {
         if let Some(&id) = self.ids.get(&ty) {
             return id;
         }
-        let id = TypeId(self.types.len() as u32);
+        let id = TypeHandle(self.types.len() as u32);
         self.types.push(ty.clone());
         self.ids.insert(ty, id);
         id
     }
 
     /// Returns the [`Ty`] that `id` was interned from.
-    pub(crate) fn resolve(&self, id: TypeId) -> Option<&Ty> {
+    pub(crate) fn resolve(&self, id: TypeHandle) -> Option<&Ty> {
         self.types.get(id.0 as usize)
     }
 
     /// Returns whether values of `id` carry nothing at runtime.
-    pub(crate) fn is_zero_sized(&self, id: TypeId) -> bool {
+    pub(crate) fn is_zero_sized(&self, id: TypeHandle) -> bool {
         id == self.unit_id
     }
 
-    /// Looks up the [`TypeId`] of a built-in type by name, e.g. `Bool` or
+    /// Looks up the [`TypeHandle`] of a built-in type by name, e.g. `Bool` or
     /// `I32`. Returns `None` for any name that isn't a built-in type
     /// (including user-defined types, which this interner does not handle).
-    pub(crate) fn builtin_type_id(&self, s: Symbol, si: &StringInterner) -> Option<TypeId> {
+    pub(crate) fn builtin_type_id(&self, s: Symbol, si: &StringInterner) -> Option<TypeHandle> {
         if s == si.unit_symbol {
             return Some(self.unit_id);
         }
@@ -167,7 +167,7 @@ impl TypeInterner {
 
     /// If `id` resolves to [`Ty::Func`], returns its parameter types and
     /// return type.
-    pub(crate) fn as_func(&self, id: TypeId) -> Option<(&[TypeId], TypeId)> {
+    pub(crate) fn as_func(&self, id: TypeHandle) -> Option<(&[TypeHandle], TypeHandle)> {
         match self.resolve(id)? {
             Ty::Func {
                 parameters,
@@ -179,7 +179,7 @@ impl TypeInterner {
 
     /// Renders `id` the way it appears in diagnostics, e.g. `Bool`,
     /// `(I32, I32) -> Bool`, or `Int` for an unresolved [`InferTy::IntVar`].
-    pub(crate) fn to_string(&self, id: TypeId) -> String {
+    pub(crate) fn to_string(&self, id: TypeHandle) -> String {
         match self.resolve(id).unwrap() {
             Ty::Unit => "()".to_string(),
             Ty::Never => "Never".to_string(),

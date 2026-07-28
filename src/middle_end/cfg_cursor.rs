@@ -1,12 +1,13 @@
 //! A cursor for navigating and editing a `Cfg`'s layout.
 
 use crate::common::string_interner::Symbol;
-use crate::common::types::TypeId;
+use crate::common::types::TypeHandle;
+use crate::front_end::semantic_analysis::hir::ItemBindingHandle;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::mir::{
-    BlockId, BlockIter, BlockView, BlockViewMut, Cfg, FunctionReference, FunctionReferenceId,
-    Instruction, InstructionId, InstructionView, InstructionViewMut, Signature, SignatureId,
-    ValueId, ValueOrigin, ValueView,
+    BlockHandle, BlockIter, BlockView, BlockViewMut, Cfg, FunctionReference,
+    FunctionReferenceHandle, Instruction, InstructionHandle, InstructionView, InstructionViewMut,
+    Signature, SignatureHandle, ValueHandle, ValueOrigin, ValueView,
 };
 
 /// The possible positions of a [`CfgCursor`] within a `Cfg`'s layout.
@@ -15,12 +16,12 @@ pub(crate) enum CursorPosition {
     /// Not pointing anywhere. No instructions can be inserted.
     Nowhere,
     /// Pointing at an existing instruction. New instructions are inserted before it.
-    At(InstructionId),
+    At(InstructionHandle),
     /// Before the beginning of a block. No instructions can be inserted here, but
     /// `next_instruction` moves to the block's first instruction.
-    Before(BlockId),
+    Before(BlockHandle),
     /// After the end of a block. New instructions are appended to it.
-    After(BlockId),
+    After(BlockHandle),
 }
 
 /// A cursor over a `Cfg`, tracking a position within its layout as instructions and blocks
@@ -76,12 +77,12 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Returns a view over `block_id`'s data. See [`Cfg::get_block`].
-    pub(crate) fn get_block(&self, block_id: BlockId) -> BlockView<'_> {
+    pub(crate) fn get_block(&self, block_id: BlockHandle) -> BlockView<'_> {
         self.cfg.get_block(block_id)
     }
 
     /// Returns a view over `instruction_id`'s data. See [`Cfg::get_instruction`].
-    pub(crate) fn get_instruction(&self, instruction_id: InstructionId) -> InstructionView<'_> {
+    pub(crate) fn get_instruction(&self, instruction_id: InstructionHandle) -> InstructionView<'_> {
         self.cfg.get_instruction(instruction_id)
     }
 
@@ -91,29 +92,36 @@ impl<'a> CfgCursor<'a> {
     /// [`Cfg::get_instruction_mut`].
     pub(crate) fn get_instruction_mut(
         &mut self,
-        instruction_id: InstructionId,
+        instruction_id: InstructionHandle,
     ) -> InstructionViewMut<'_> {
         self.cfg.get_instruction_mut(instruction_id)
     }
 
     /// Returns a view over `value_id`'s data. See [`Cfg::get_value`].
-    pub(crate) fn get_value(&self, value_id: ValueId) -> ValueView<'_> {
+    pub(crate) fn get_value(&self, value_id: ValueHandle) -> ValueView<'_> {
         self.cfg.get_value(value_id)
     }
 
     /// Follows `value_id`'s alias chain (if any) to the value it ultimately stands for.
     /// See [`Cfg::resolve_aliases`].
-    pub(crate) fn resolve_aliases(&self, value_id: ValueId) -> ValueId {
+    pub(crate) fn resolve_aliases(&self, value_id: ValueHandle) -> ValueHandle {
         self.cfg.resolve_aliases(value_id)
     }
 
     /// Turns `dest` into an alias of `src`. See [`Cfg::mark_as_alias`].
-    pub(crate) fn mark_as_alias(&mut self, dest: ValueId, src: ValueId) {
+    pub(crate) fn mark_as_alias(&mut self, dest: ValueHandle, src: ValueHandle) {
         self.cfg.mark_as_alias(dest, src);
     }
 
+    /// Replaces every use of a value alias with its final resolved value.
+    /// See [`Cfg::flush_aliases`]. Call once, after a batch of `mark_as_alias`
+    /// calls.
+    pub(crate) fn flush_aliases(&mut self) {
+        self.cfg.flush_aliases();
+    }
+
     /// Creates a standalone "undefined" placeholder value of type `ty`. See [`Cfg::add_undefined`].
-    pub(crate) fn add_undefined(&mut self, ty: TypeId) -> ValueId {
+    pub(crate) fn add_undefined(&mut self, ty: TypeHandle) -> ValueHandle {
         self.cfg.add_undefined(ty)
     }
 
@@ -123,9 +131,9 @@ impl<'a> CfgCursor<'a> {
     /// doesn't point there.
     pub(crate) fn block_argument(
         &self,
-        block_parameter: ValueId,
-        predecessor_edge: InstructionId,
-    ) -> ValueId {
+        block_parameter: ValueHandle,
+        predecessor_edge: InstructionHandle,
+    ) -> ValueHandle {
         let (block_id, index) = match self.get_value(block_parameter).origin() {
             ValueOrigin::Parameter(block_id, index) => (block_id, index as usize),
             ValueOrigin::InstructionResult(..) | ValueOrigin::Undefined(_) => {
@@ -137,14 +145,14 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Returns a reference to `signature_id`'s data. See [`Cfg::get_signature`].
-    pub(crate) fn get_signature(&self, signature_id: SignatureId) -> &Signature {
+    pub(crate) fn get_signature(&self, signature_id: SignatureHandle) -> &Signature {
         self.cfg.get_signature(signature_id)
     }
 
     /// Returns a reference to `function_reference_id`'s data. See [`Cfg::get_function_reference`].
     pub(crate) fn get_function_reference(
         &self,
-        function_reference_id: FunctionReferenceId,
+        function_reference_id: FunctionReferenceHandle,
     ) -> &FunctionReference {
         self.cfg.get_function_reference(function_reference_id)
     }
@@ -153,12 +161,12 @@ impl<'a> CfgCursor<'a> {
     /// `set_terminator` live directly on [`Cfg`] instead, so `BlockViewMut` itself only ever
     /// exposes parameter operations — nothing here can create a second, untracked path to
     /// editing the instruction sequence alongside `add_instruction`. See [`Cfg::get_block_mut`].
-    pub(crate) fn get_block_mut(&mut self, block_id: BlockId) -> BlockViewMut<'_> {
+    pub(crate) fn get_block_mut(&mut self, block_id: BlockHandle) -> BlockViewMut<'_> {
         self.cfg.get_block_mut(block_id)
     }
 
     /// Returns the block corresponding to the current position.
-    pub(crate) fn current_block(&self) -> Option<BlockId> {
+    pub(crate) fn current_block(&self) -> Option<BlockHandle> {
         match self.position {
             CursorPosition::Nowhere => None,
             CursorPosition::At(instruction_id) => {
@@ -169,7 +177,7 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Returns the instruction corresponding to the current position, if any.
-    pub(crate) fn current_instruction(&self) -> Option<InstructionId> {
+    pub(crate) fn current_instruction(&self) -> Option<InstructionHandle> {
         match self.position {
             CursorPosition::At(instruction_id) => Some(instruction_id),
             _ => None,
@@ -178,7 +186,7 @@ impl<'a> CfgCursor<'a> {
 
     /// Moves to `instruction_id`, which must already be in the layout. New instructions
     /// will be inserted before it.
-    pub(crate) fn seek_instruction(&mut self, instruction_id: InstructionId) {
+    pub(crate) fn seek_instruction(&mut self, instruction_id: InstructionHandle) {
         assert!(
             self.cfg
                 .get_instruction(instruction_id)
@@ -190,7 +198,7 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Moves to the position immediately after `instruction_id`, which must already be in the layout.
-    pub(crate) fn seek_after_instruction(&mut self, instruction_id: InstructionId) {
+    pub(crate) fn seek_after_instruction(&mut self, instruction_id: InstructionHandle) {
         let view = self.cfg.get_instruction(instruction_id);
         let block_id = view
             .containing_block()
@@ -203,7 +211,7 @@ impl<'a> CfgCursor<'a> {
 
     /// Moves to the position for inserting instructions at the beginning of `block_id`,
     /// without assuming any instructions have been inserted into it yet.
-    pub(crate) fn seek_first_insertion_point(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_first_insertion_point(&mut self, block_id: BlockHandle) {
         match self.cfg.get_block(block_id).first_instruction() {
             Some(instruction_id) => self.seek_instruction(instruction_id),
             None => self.seek_bottom(block_id),
@@ -211,7 +219,7 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Moves to the first instruction in `block_id`. Panics if the block is empty.
-    pub(crate) fn seek_first_instruction(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_first_instruction(&mut self, block_id: BlockHandle) {
         let instruction_id = self
             .cfg
             .get_block(block_id)
@@ -221,7 +229,7 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Moves to the last instruction in `block_id`. Panics if the block is empty.
-    pub(crate) fn seek_last_instruction(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_last_instruction(&mut self, block_id: BlockHandle) {
         let instruction_id = self
             .cfg
             .get_block(block_id)
@@ -233,14 +241,14 @@ impl<'a> CfgCursor<'a> {
     /// Moves to the top of `block_id`, which must already be in the layout. At this
     /// position, instructions cannot be inserted, but `next_instruction` moves to the
     /// block's first instruction.
-    pub(crate) fn seek_top(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_top(&mut self, block_id: BlockHandle) {
         assert!(self.cfg.is_block_linked(block_id));
         self.position = CursorPosition::Before(block_id);
     }
 
     /// Moves to the bottom of `block_id`, which must already be in the layout. Inserted
     /// instructions are appended to it.
-    pub(crate) fn seek_bottom(&mut self, block_id: BlockId) {
+    pub(crate) fn seek_bottom(&mut self, block_id: BlockHandle) {
         assert!(self.cfg.is_block_linked(block_id));
         self.position = CursorPosition::After(block_id);
     }
@@ -248,7 +256,7 @@ impl<'a> CfgCursor<'a> {
     /// Moves to the top of the next block in layout order and returns it. If the cursor
     /// wasn't pointing anywhere, moves to the top of the first block. Returns `None` (and
     /// leaves the cursor pointing nowhere) once there are no more blocks.
-    pub(crate) fn next_block(&mut self) -> Option<BlockId> {
+    pub(crate) fn next_block(&mut self) -> Option<BlockHandle> {
         let next = match self.current_block() {
             Some(block_id) => self.cfg.get_block(block_id).next(),
             None => self.cfg.entry().map(|view| view.id()),
@@ -263,7 +271,7 @@ impl<'a> CfgCursor<'a> {
     /// Moves to the bottom of the previous block in layout order and returns it. If the
     /// cursor wasn't pointing anywhere, moves to the bottom of the last block. Returns
     /// `None` (and leaves the cursor pointing nowhere) once there are no more blocks.
-    pub(crate) fn prev_block(&mut self) -> Option<BlockId> {
+    pub(crate) fn prev_block(&mut self) -> Option<BlockHandle> {
         let prev = match self.current_block() {
             Some(block_id) => self.cfg.get_block(block_id).prev(),
             None => self.cfg.exit().map(|view| view.id()),
@@ -278,7 +286,7 @@ impl<'a> CfgCursor<'a> {
     /// Moves to the next instruction in layout order and returns it. If the cursor was
     /// positioned before a block, moves to that block's first instruction. Returns `None`
     /// once there are no more instructions in the current block.
-    pub(crate) fn next_instruction(&mut self) -> Option<InstructionId> {
+    pub(crate) fn next_instruction(&mut self) -> Option<InstructionHandle> {
         let new_position = match self.position {
             CursorPosition::Nowhere | CursorPosition::After(_) => None,
             CursorPosition::At(instruction_id) => {
@@ -303,7 +311,7 @@ impl<'a> CfgCursor<'a> {
     /// Moves to the previous instruction in layout order and returns it. If the cursor was
     /// positioned after a block, moves to that block's last instruction. Returns `None`
     /// once there are no more instructions in the current block.
-    pub(crate) fn prev_instruction(&mut self) -> Option<InstructionId> {
+    pub(crate) fn prev_instruction(&mut self) -> Option<InstructionHandle> {
         let new_position = match self.position {
             CursorPosition::Nowhere | CursorPosition::Before(_) => None,
             CursorPosition::At(instruction_id) => {
@@ -344,8 +352,8 @@ impl<'a> CfgCursor<'a> {
     pub(crate) fn add_instruction(
         &mut self,
         instruction: Instruction,
-        result_tys: &[TypeId],
-    ) -> InstructionId {
+        result_tys: &[TypeHandle],
+    ) -> InstructionHandle {
         match self.position {
             CursorPosition::At(before) => {
                 self.cfg
@@ -371,7 +379,7 @@ impl<'a> CfgCursor<'a> {
 
     /// Removes the instruction under the cursor and returns it. The cursor is left
     /// pointing at the position following the removed instruction.
-    pub(crate) fn remove_instruction(&mut self) -> InstructionId {
+    pub(crate) fn remove_instruction(&mut self) -> InstructionHandle {
         let instruction_id = self
             .current_instruction()
             .expect("no instruction to remove");
@@ -382,7 +390,7 @@ impl<'a> CfgCursor<'a> {
 
     /// Allocates and returns a handle to a new block, without inserting it into the layout.
     /// See [`Cfg::create_block`].
-    pub(crate) fn create_block(&mut self) -> BlockId {
+    pub(crate) fn create_block(&mut self) -> BlockHandle {
         self.cfg.create_block()
     }
 
@@ -396,7 +404,7 @@ impl<'a> CfgCursor<'a> {
     ///
     /// Every case except the first leaves the cursor at the bottom of the new block, ready
     /// to have instructions appended to it.
-    pub(crate) fn add_block(&mut self, block_id: BlockId) {
+    pub(crate) fn add_block(&mut self, block_id: BlockHandle) {
         match self.position {
             CursorPosition::At(before) => {
                 self.cfg.split_block(block_id, before);
@@ -413,10 +421,10 @@ impl<'a> CfgCursor<'a> {
     pub(crate) fn add_binary(
         &mut self,
         operator: BinOp,
-        lhs: ValueId,
-        rhs: ValueId,
-        ty: TypeId,
-    ) -> ValueId {
+        lhs: ValueHandle,
+        rhs: ValueHandle,
+        ty: TypeHandle,
+    ) -> ValueHandle {
         let instruction_id = self.add_instruction(
             Instruction::Binary {
                 operator,
@@ -431,7 +439,12 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Builds and inserts a `Unary` instruction at the current position, returning its result value.
-    pub(crate) fn add_unary(&mut self, operator: UnOp, arg: ValueId, ty: TypeId) -> ValueId {
+    pub(crate) fn add_unary(
+        &mut self,
+        operator: UnOp,
+        arg: ValueHandle,
+        ty: TypeHandle,
+    ) -> ValueHandle {
         let instruction_id = self.add_instruction(Instruction::Unary { operator, arg }, &[ty]);
         self.cfg
             .get_instruction(instruction_id)
@@ -440,7 +453,7 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Builds and inserts an `IntegerLiteral` instruction at the current position, returning its result value.
-    pub(crate) fn add_integer_literal(&mut self, ty: TypeId, value: u128) -> ValueId {
+    pub(crate) fn add_integer_literal(&mut self, ty: TypeHandle, value: u128) -> ValueHandle {
         let instruction_id = self.add_instruction(Instruction::IntegerLiteral { value }, &[ty]);
         self.cfg
             .get_instruction(instruction_id)
@@ -449,7 +462,7 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Builds and inserts a `BooleanLiteral` instruction at the current position, returning its result value.
-    pub(crate) fn add_boolean_literal(&mut self, value: bool, bool_ty: TypeId) -> ValueId {
+    pub(crate) fn add_boolean_literal(&mut self, value: bool, bool_ty: TypeHandle) -> ValueHandle {
         let instruction_id =
             self.add_instruction(Instruction::BooleanLiteral { value }, &[bool_ty]);
         self.cfg
@@ -462,16 +475,20 @@ impl<'a> CfgCursor<'a> {
     /// `args` and allocating result values with types `result_tys`.
     pub(crate) fn add_call(
         &mut self,
-        callee: FunctionReferenceId,
-        args: &[ValueId],
-        result_tys: &[TypeId],
-    ) -> InstructionId {
+        callee: FunctionReferenceHandle,
+        args: &[ValueHandle],
+        result_tys: &[TypeHandle],
+    ) -> InstructionHandle {
         let instruction = self.cfg.new_call(callee, args);
         self.add_instruction(instruction, result_tys)
     }
 
     /// Builds and inserts a `Jump` instruction to `destination` at the current position, passing `args`.
-    pub(crate) fn add_jump(&mut self, destination: BlockId, args: &[ValueId]) -> InstructionId {
+    pub(crate) fn add_jump(
+        &mut self,
+        destination: BlockHandle,
+        args: &[ValueHandle],
+    ) -> InstructionHandle {
         let instruction = self.cfg.new_jump(destination, args);
         self.add_instruction(instruction, &[])
     }
@@ -480,12 +497,12 @@ impl<'a> CfgCursor<'a> {
     /// `then_args`/`else_args` to whichever of `then_destination`/`else_destination` is taken.
     pub(crate) fn add_branch_if(
         &mut self,
-        arg: ValueId,
-        then_destination: BlockId,
-        then_args: &[ValueId],
-        else_destination: BlockId,
-        else_args: &[ValueId],
-    ) -> InstructionId {
+        arg: ValueHandle,
+        then_destination: BlockHandle,
+        then_args: &[ValueHandle],
+        else_destination: BlockHandle,
+        else_args: &[ValueHandle],
+    ) -> InstructionHandle {
         let instruction = self.cfg.new_branch_if(
             arg,
             then_destination,
@@ -497,28 +514,29 @@ impl<'a> CfgCursor<'a> {
     }
 
     /// Builds and inserts a `Return` instruction at the current position, passing `args`.
-    pub(crate) fn add_return(&mut self, args: &[ValueId]) -> InstructionId {
+    pub(crate) fn add_return(&mut self, args: &[ValueHandle]) -> InstructionHandle {
         let instruction = self.cfg.new_return(args);
         self.add_instruction(instruction, &[])
     }
 
     /// Builds and inserts an `Unreachable` instruction at the current position.
-    pub(crate) fn add_unreachable(&mut self) -> InstructionId {
+    pub(crate) fn add_unreachable(&mut self) -> InstructionHandle {
         self.add_instruction(Instruction::Unreachable, &[])
     }
 
     /// Registers `signature` in the underlying `Cfg`.
-    pub(crate) fn add_signature(&mut self, signature: Signature) -> SignatureId {
+    pub(crate) fn add_signature(&mut self, signature: Signature) -> SignatureHandle {
         self.cfg.add_signature(signature)
     }
 
-    /// Registers a reference to a function named `name` with signature
-    /// `signature_id`.
+    /// Registers a reference to the function identified by `binding` (named
+    /// `name`, for display) with signature `signature_id`.
     pub(crate) fn add_function_reference(
         &mut self,
+        binding: ItemBindingHandle,
         name: Symbol,
-        signature: SignatureId,
-    ) -> FunctionReferenceId {
-        self.cfg.add_function_reference(name, signature)
+        signature: SignatureHandle,
+    ) -> FunctionReferenceHandle {
+        self.cfg.add_function_reference(binding, name, signature)
     }
 }

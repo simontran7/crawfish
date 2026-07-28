@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 
 use crate::common::context::CompilerContext;
-use crate::common::types::TypeId;
+use crate::common::types::TypeHandle;
 use crate::diagnostics::lowering_diagnostics::LoweringDiagnostic;
 use crate::front_end::semantic_analysis::hir::{
-    BindingKind, ExpressionId, ExpressionKind, Hir, ItemBindingId, ItemId, ItemKind,
-    LocalBindingId, ParameterSlice, StatementId, StatementKind,
+    BindingKind, ExpressionHandle, ExpressionKind, Hir, ItemBindingHandle, ItemHandle, ItemKind,
+    LocalBindingHandle, ParameterSlice, StatementHandle, StatementKind,
 };
 use crate::front_end::syntactic_analysis::ast::nodes::BinOp;
 use crate::middle_end::cfg_cursor::CfgCursor;
 use crate::middle_end::handle_list::HandleListSubAllocator;
 use crate::middle_end::mir::{
-    BlockId, Cfg, Function, FunctionReferenceId, InstructionId, Mir, Signature, ValueId,
+    BlockHandle, Cfg, Function, FunctionReferenceHandle, InstructionHandle, Mir, Signature,
+    ValueHandle,
 };
 use crate::middle_end::ssa_constructor::SsaConstructor;
 
@@ -26,8 +27,8 @@ pub(crate) struct MirLowerer<'a> {
     hir: &'a Hir,
     ctx: &'a CompilerContext,
     mir: Mir,
-    predecessors_edges_suballoc: HandleListSubAllocator<InstructionId>,
-    incomplete_alloc: HandleListSubAllocator<LocalBindingId>,
+    predecessors_edges_suballoc: HandleListSubAllocator<InstructionHandle>,
+    incomplete_alloc: HandleListSubAllocator<LocalBindingHandle>,
 }
 
 impl<'a> MirLowerer<'a> {
@@ -51,8 +52,8 @@ impl<'a> MirLowerer<'a> {
     /// [`DiagnosticSink::has_errors`][crate::diagnostics::DiagnosticSink::has_errors]
     /// once, after this returns.
     pub(crate) fn lower(mut self) -> Mir {
-        for hir_function in self.hir.functions() {
-            let mir_function = self.lower_function(hir_function);
+        for function_handle in self.hir.functions() {
+            let mir_function = self.lower_function(function_handle);
             self.mir.add_function(mir_function);
         }
         self.mir
@@ -63,21 +64,19 @@ impl<'a> MirLowerer<'a> {
     ///
     /// The [`Function`] is always returned, even when diagnostics were
     /// emitted: lowering recovers in place rather than bailing.
-    fn lower_function(&mut self, function_id: ItemId) -> Function {
+    fn lower_function(&mut self, function_handle: ItemHandle) -> Function {
         let ItemKind::Function {
             binding,
             parameters,
             body,
-        } = self.hir.items[function_id].kind
+        } = *self.hir.get_item(function_handle).kind()
         else {
-            panic!("`lower_function()` expects an HIR function node")
+            panic!("`lower_function()` expects an HIR function handle")
         };
-        let name = self.hir.item_bindings[binding].name;
-        let (parameter_types, return_type) = self
-            .ctx
-            .type_interner
-            .as_func(self.hir.item_bindings[binding].ty)
-            .unwrap();
+        let binding_view = self.hir.get_item_binding(binding);
+        let name = binding_view.name();
+        let (parameter_types, return_type) =
+            self.ctx.type_interner.as_func(binding_view.ty()).unwrap();
         let signature = Signature {
             parameters: parameter_types
                 .iter()
@@ -86,22 +85,18 @@ impl<'a> MirLowerer<'a> {
                 .collect(),
             return_type,
         };
-        let mut function = Function::new(name, signature);
+        let mut function = Function::new(binding, name, signature);
 
-        // the builder borrows this function's CFG, so it lives and dies here
-        FunctionBuilder::new(
+        let func_builder = FunctionBuilder::new(
             self.hir,
             self.ctx,
             &mut function.body,
             &mut self.predecessors_edges_suballoc,
             &mut self.incomplete_alloc,
-        )
-        .lower_body(parameters, body);
+        );
+        func_builder.lower_body(parameters, body);
 
-        // flush aliases (once per function, after all mark_as_alias calls).
-        // Runs even when diagnostics were emitted, so the Function is
-        // well-formed either way.
-        function.body.flush_aliases();
+        CfgCursor::new(&mut function.body).flush_aliases();
 
         function
     }
@@ -117,7 +112,7 @@ impl<'a> MirLowerer<'a> {
 ///
 /// Contracts inherited from semantic analysis:
 /// - Mutability of assignment targets is NOT checked there — the `Assign`
-///   arm here checks `hir.local_bindings[binding].mutable`.
+///   arm here checks `hir.get_local_binding(binding).mutable()`.
 ///   NOTE: sound only because every `let` has an initializer; when `let x;`
 ///   lands, this check moves into a definite-initialization MIR pass.
 /// - `Return` has type `never` and never-coercion doesn't exist, so a
@@ -135,27 +130,23 @@ struct FunctionBuilder<'a> {
     ctx: &'a CompilerContext,
     cursor: CfgCursor<'a>,
     ssa: SsaConstructor<'a>,
-    // source: cranelift frontend.rs `FunctionBuilder::position`
-    current: Option<BlockId>,
     // source: cranelift stack.rs `ControlStackFrame::Loop`, minus the wasm operand-stack fields
     loop_frames: Vec<LoopFrame>,
     // source: cranelift stack.rs `FuncTranslationStacks::reachable`
     reachable: bool,
     // source: memoization pattern of wasmtime's `get_or_create_interned_sig_ref` (code_translator.rs Operator::Call)
-    function_refs: HashMap<ItemBindingId, FunctionReferenceId>,
+    function_refs: HashMap<ItemBindingHandle, FunctionReferenceHandle>,
     // source: wasmtime stack.rs `block_param_vars` — representing merge values as variables so SSA construction decides whether a real block parameter is needed
     next_synthetic_variable: usize,
 }
 
 /// A loop the lowerer is currently inside.
 struct LoopFrame {
-    /// `continue` target (for `while`, the condition block). Becomes a
-    /// separate `continue_target` if `for` loops with increments are added.
-    header: BlockId,
-    /// `break` target: the block after the loop.
-    exit: BlockId,
-    /// Whether any edge into `exit` has been emitted. Always true for
-    /// `while`; earns its keep if an infinite `loop {}` is added.
+    /// `continue` target
+    header: BlockHandle,
+    /// `break` target
+    exit: BlockHandle,
+    /// Whether any edge into `exit` has been emitted.
     exit_is_branched_to: bool,
 }
 
@@ -166,15 +157,14 @@ impl<'a> FunctionBuilder<'a> {
         hir: &'a Hir,
         ctx: &'a CompilerContext,
         cfg: &'a mut Cfg,
-        predecessors_edges_suballoc: &'a mut HandleListSubAllocator<InstructionId>,
-        incomplete_alloc: &'a mut HandleListSubAllocator<LocalBindingId>,
+        predecessors_edges_suballoc: &'a mut HandleListSubAllocator<InstructionHandle>,
+        incomplete_alloc: &'a mut HandleListSubAllocator<LocalBindingHandle>,
     ) -> Self {
         Self {
             hir,
             ctx,
             cursor: CfgCursor::new(cfg),
             ssa: SsaConstructor::new(predecessors_edges_suballoc, incomplete_alloc),
-            current: None,
             loop_frames: Vec::new(),
             reachable: true,
             function_refs: HashMap::new(),
@@ -182,8 +172,7 @@ impl<'a> FunctionBuilder<'a> {
         }
     }
 
-    /// // source: model: func_translator.rs::translate_body
-    fn lower_body(mut self, parameters: ParameterSlice, body: ExpressionId) {
+    fn lower_body(mut self, parameters: ParameterSlice, body: ExpressionHandle) {
         // entry block: no predecessors, so seal immediately.
         // // source: func_translator.rs — "builder.seal_block(entry_block);
         // // Declare all predecessors known."
@@ -195,10 +184,10 @@ impl<'a> FunctionBuilder<'a> {
         // written as the initial SSA definition of its binding.
         // // source: func_translator.rs::declare_wasm_parameters —
         // // `builder.def_var(local, param_value)`
-        let parameter_bindings: Vec<LocalBindingId> =
+        let parameter_bindings: Vec<LocalBindingHandle> =
             self.hir.get_parameter_slice(parameters).to_vec();
         for binding in parameter_bindings {
-            let ty = self.hir.local_bindings[binding].ty;
+            let ty = self.hir.get_local_binding(binding).ty();
             if self.ctx.type_interner.is_zero_sized(ty) {
                 continue; // unit carries no value
             }
@@ -221,7 +210,7 @@ impl<'a> FunctionBuilder<'a> {
         }
     }
 
-    fn lower_statement(&mut self, statement: StatementId) {
+    fn lower_statement(&mut self, statement: StatementHandle) {
         // Nothing is ever emitted after a terminator.
         // // source: code_translator.rs::translate_operator — the leading
         // // `if !environ.is_reachable() { ... return }` (our tree version
@@ -230,7 +219,7 @@ impl<'a> FunctionBuilder<'a> {
             return;
         }
 
-        match self.hir.statements[statement].kind {
+        match *self.hir.get_statement(statement).kind() {
             StatementKind::Expression { expression, .. } => {
                 self.lower_expression(expression);
             }
@@ -259,15 +248,16 @@ impl<'a> FunctionBuilder<'a> {
     /// position (see struct docs), so value-position callers may `expect`.
     ///
     /// // source: model: code_translator.rs::translate_operator
-    fn lower_expression(&mut self, expression: ExpressionId) -> Option<ValueId> {
+    fn lower_expression(&mut self, expression: ExpressionHandle) -> Option<ValueHandle> {
         if !self.reachable {
             return None;
         }
 
-        let ty = self.hir.expressions[expression].ty;
-        let span = self.hir.expressions[expression].span;
+        let view = self.hir.get_expression(expression);
+        let ty = view.ty();
+        let span = view.span();
 
-        match self.hir.expressions[expression].kind {
+        match *view.kind() {
             ExpressionKind::Unit => None,
 
             ExpressionKind::Boolean(value) => Some(self.cursor.add_boolean_literal(value, ty)),
@@ -303,7 +293,7 @@ impl<'a> FunctionBuilder<'a> {
                 }
                 BindingKind::Item => {
                     let item_binding = binding.as_item().unwrap();
-                    let binding_ty = self.hir.item_bindings[item_binding].ty;
+                    let binding_ty = self.hir.get_item_binding(item_binding).ty();
                     if self.ctx.type_interner.as_func(binding_ty).is_some() {
                         // A function name in value position: only meaningful
                         // as a Call callee, which the Call arm handles
@@ -318,7 +308,7 @@ impl<'a> FunctionBuilder<'a> {
             },
 
             ExpressionKind::Assign { target, value } => {
-                let target_binding = match self.hir.expressions[target].kind {
+                let target_binding = match *self.hir.get_expression(target).kind() {
                     ExpressionKind::Variable(binding) => binding
                         .as_local()
                         .expect("semantic analysis guarantees a local assignment target"),
@@ -328,19 +318,19 @@ impl<'a> FunctionBuilder<'a> {
                 // Mutability check, deferred here by `typecheck_assign`.
                 // NOTE: sound only while every `let` has an initializer;
                 // moves into a definite-init MIR pass when `let x;` lands.
-                let binding = &self.hir.local_bindings[target_binding];
-                if !binding.mutable {
+                let binding_view = self.hir.get_local_binding(target_binding);
+                if !binding_view.mutable() {
                     self.ctx
                         .diagnostics
                         .record(LoweringDiagnostic::AssignToImmutable {
                             name: self
                                 .ctx
                                 .string_interner
-                                .resolve(binding.name)
+                                .resolve(binding_view.name())
                                 .unwrap()
                                 .to_string(),
                             assign_span: span,
-                            binding_span: binding.span,
+                            binding_span: binding_view.span(),
                         });
                     // keep lowering to surface further errors
                 }
@@ -371,7 +361,7 @@ impl<'a> FunctionBuilder<'a> {
             // // source: code_translator.rs Operator::Call (direct calls
             // // only; crawfish has no indirect calls)
             ExpressionKind::Call { callee, arguments } => {
-                let callee_binding = match self.hir.expressions[callee].kind {
+                let callee_binding = match *self.hir.get_expression(callee).kind() {
                     ExpressionKind::Variable(binding) => binding
                         .as_item()
                         .expect("only direct calls to named functions are supported"),
@@ -379,10 +369,10 @@ impl<'a> FunctionBuilder<'a> {
                 };
                 let function_ref = self.function_ref(callee_binding);
 
-                let argument_ids: Vec<ExpressionId> =
+                let argument_handles: Vec<ExpressionHandle> =
                     self.hir.get_expression_slice(arguments).to_vec();
-                let mut args = Vec::with_capacity(argument_ids.len());
-                for argument in argument_ids {
+                let mut args = Vec::with_capacity(argument_handles.len());
+                for argument in argument_handles {
                     let value = self.lower_expression(argument);
                     if !self.reachable {
                         return None;
@@ -405,9 +395,9 @@ impl<'a> FunctionBuilder<'a> {
             }
 
             ExpressionKind::Block { statements, tail } => {
-                let statement_ids: Vec<StatementId> =
+                let statement_handles: Vec<StatementHandle> =
                     self.hir.get_statement_slice(statements).to_vec();
-                for statement in statement_ids {
+                for statement in statement_handles {
                     self.lower_statement(statement);
                     if !self.reachable {
                         // statements after a `return` are dead: emit nothing
@@ -437,11 +427,11 @@ impl<'a> FunctionBuilder<'a> {
     /// // letting the SSA constructor elide trivial merges.
     fn lower_if(
         &mut self,
-        condition: ExpressionId,
-        then_branch: ExpressionId,
-        else_branch: Option<ExpressionId>,
-        ty: TypeId,
-    ) -> Option<ValueId> {
+        condition: ExpressionHandle,
+        then_branch: ExpressionHandle,
+        else_branch: Option<ExpressionHandle>,
+        ty: TypeHandle,
+    ) -> Option<ValueHandle> {
         let cond = self
             .lower_expression(condition)
             .expect("if condition must produce a boolean value");
@@ -538,9 +528,9 @@ impl<'a> FunctionBuilder<'a> {
     fn lower_short_circuit(
         &mut self,
         operator: BinOp,
-        lhs: ExpressionId,
-        rhs: ExpressionId,
-    ) -> Option<ValueId> {
+        lhs: ExpressionHandle,
+        rhs: ExpressionHandle,
+    ) -> Option<ValueHandle> {
         let bool_ty = self.ctx.type_interner.bool_id;
         let lhs_value = self.lower_expression(lhs)?;
         if !self.reachable {
@@ -624,7 +614,7 @@ impl<'a> FunctionBuilder<'a> {
     /// // test. Seal order is the whole game: body and exit seal immediately
     /// // (predecessors known up front); the header seals only after the
     /// // back-edge is declared, exercising the SSA placeholder path.
-    fn lower_while(&mut self, cond: ExpressionId, body: ExpressionId) {
+    fn lower_while(&mut self, cond: ExpressionHandle, body: ExpressionHandle) {
         // header: unsealed until the back-edge exists
         let header = self.new_block();
         let entry_jump = self.cursor.add_jump(header, &[]);
@@ -677,16 +667,17 @@ impl<'a> FunctionBuilder<'a> {
         self.reachable = true;
     }
 
-    fn function_ref(&mut self, binding: ItemBindingId) -> FunctionReferenceId {
+    fn function_ref(&mut self, binding: ItemBindingHandle) -> FunctionReferenceHandle {
         if let Some(&function_ref) = self.function_refs.get(&binding) {
             return function_ref;
         }
 
-        let name = self.hir.item_bindings[binding].name;
+        let binding_view = self.hir.get_item_binding(binding);
+        let name = binding_view.name();
         let (parameter_types, return_type) = self
             .ctx
             .type_interner
-            .as_func(self.hir.item_bindings[binding].ty)
+            .as_func(binding_view.ty())
             .expect("call callee binding must have a function type");
         // erased exactly as in `MirLowerer::lower_function`, so a callee's
         // reference here agrees with the signature it was lowered with
@@ -699,14 +690,14 @@ impl<'a> FunctionBuilder<'a> {
             parameters,
             return_type,
         });
-        let function_ref = self.cursor.add_function_reference(name, signature);
+        let function_ref = self.cursor.add_function_reference(binding, name, signature);
         self.function_refs.insert(binding, function_ref);
         function_ref
     }
 
     /// Finds the initializer expression of the constant bound by `binding`.
     // PERF: linear scan over hir.items; memoize if constants get hot.
-    fn constant_value(&self, binding: ItemBindingId) -> ExpressionId {
+    fn constant_value(&self, binding: ItemBindingHandle) -> ExpressionHandle {
         for item in self.hir.items.values() {
             if let ItemKind::Constant { binding: b, value } = item.kind {
                 if b == binding {
@@ -721,7 +712,7 @@ impl<'a> FunctionBuilder<'a> {
     /// Always use this instead of raw `create_block`: declaration must
     /// happen in creation order, and any interleaved expression lowering
     /// can create blocks of its own.
-    fn new_block(&mut self) -> BlockId {
+    fn new_block(&mut self) -> BlockHandle {
         let block = self.cursor.create_block();
         self.ssa.declare_block(block);
         block
@@ -729,21 +720,26 @@ impl<'a> FunctionBuilder<'a> {
 
     /// Appends `block` to the layout and makes it the insertion point.
     /// // source: cranelift frontend.rs `switch_to_block`
-    fn enter_block(&mut self, block: BlockId) {
+    fn enter_block(&mut self, block: BlockHandle) {
         self.cursor.add_block(block);
-        self.current = Some(block);
     }
 
-    fn current_block(&self) -> BlockId {
-        self.current
+    /// Returns the block the cursor is currently positioned in. Delegates to
+    /// [`CfgCursor::current_block`] rather than tracking a second, parallel
+    /// "current block" here — `add_block` (called by `enter_block`) already
+    /// keeps the cursor's position in sync, so a separate field would just be
+    /// a second source of truth that could drift from the cursor's.
+    fn current_block(&self) -> BlockHandle {
+        self.cursor
+            .current_block()
             .expect("no current block — enter_block must be called first")
     }
 
     /// Mints a variable id past the HIR's real bindings, for merge values
     /// (if results, short-circuit results). Never present in
     /// `hir.local_bindings`; only ever used as an SSA key.
-    fn fresh_synthetic_variable(&mut self) -> LocalBindingId {
-        let variable = LocalBindingId::new(self.next_synthetic_variable);
+    fn fresh_synthetic_variable(&mut self) -> LocalBindingHandle {
+        let variable = LocalBindingHandle::new(self.next_synthetic_variable);
         self.next_synthetic_variable += 1;
         variable
     }

@@ -15,14 +15,14 @@ use std::process::Command;
 /// the pipeline rather than a mis-asserted exit code.
 fn compile_and_run(test_name: &str, source: &str) -> i32 {
     let path = std::env::temp_dir().join(format!("crawfish_e2e_{test_name}.crw"));
-    let filename = path.to_string_lossy().to_string();
+    std::fs::write(&path, source).expect("failed to write test source file");
 
-    crawfish::driver::compile(&filename, source);
+    crawfish::driver::compile(path.clone());
 
     let executable_path = path.with_extension("");
-    let status = Command::new(&executable_path)
-        .status()
-        .unwrap_or_else(|e| panic!("failed to run compiled executable at {executable_path:?}: {e}"));
+    let status = Command::new(&executable_path).status().unwrap_or_else(|e| {
+        panic!("failed to run compiled executable at {executable_path:?}: {e}")
+    });
 
     cleanup(&path, &executable_path);
 
@@ -75,13 +75,13 @@ fn zero_sized_arguments_still_run_their_side_effects() {
 #[test]
 fn a_source_file_with_no_main_fails_to_link_instead_of_panicking() {
     let path = std::env::temp_dir().join("crawfish_e2e_no_main.crw");
-    let filename = path.to_string_lossy().to_string();
     let source = "func helper() -> I32 { 1 }";
+    std::fs::write(&path, source).expect("failed to write test source file");
 
     // Must not panic: today this is reported as a linker error rather than a
     // dedicated diagnostic (see the driver's `Error producing executable`
     // message), but the driver itself has to survive it either way.
-    crawfish::driver::compile(&filename, source);
+    crawfish::driver::compile(path.clone());
 
     let executable_path = path.with_extension("");
     assert!(

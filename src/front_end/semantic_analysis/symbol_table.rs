@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::common::string_interner::Symbol;
-use crate::front_end::semantic_analysis::hir::{BindingId, BindingKind};
+use crate::front_end::semantic_analysis::hir::{BindingHandle, BindingKind};
 
-/// A stack of [`Scope`]s used to resolve names to [`BindingId`]s during HIR
+/// A stack of [`Scope`]s used to resolve names to [`BindingHandle`]s during HIR
 /// lowering. Pushed on [`SymbolTable::enter_scope`] and popped on
 /// [`SymbolTable::exit_scope`], following the lexical structure of the
 /// program: one scope per block, function body, and the top-level module.
@@ -31,7 +31,7 @@ pub(crate) struct SymbolTable {
 #[derive(Clone, Debug)]
 pub(crate) struct Scope {
     pub(crate) kind: ScopeKind,
-    pub(crate) bindings: HashMap<Symbol, BindingId>,
+    pub(crate) bindings: HashMap<Symbol, BindingHandle>,
 }
 
 /// Distinguishes a scope that closes over its enclosing scopes from one that
@@ -63,7 +63,7 @@ pub(crate) enum LookupError {
 /// the current scope.
 #[derive(Debug)]
 pub(crate) enum DefineError {
-    AlreadyDefined { prev_binding_id: BindingId },
+    AlreadyDefined { prev_binding_id: BindingHandle },
 }
 
 impl SymbolTable {
@@ -92,7 +92,7 @@ impl SymbolTable {
     pub(crate) fn add_binding(
         &mut self,
         name: Symbol,
-        binding_id: BindingId,
+        binding_id: BindingHandle,
     ) -> Result<(), DefineError> {
         let scope = self.scopes.last_mut().unwrap();
         if let Some(&prev_binding_id) = scope.bindings.get(&name) {
@@ -102,12 +102,12 @@ impl SymbolTable {
         Ok(())
     }
 
-    /// Resolves `name` to a [`BindingId`], searching from the innermost
+    /// Resolves `name` to a [`BindingHandle`], searching from the innermost
     /// scope outwards. Once the search crosses a [`ScopeKind::FunctionBoundary`]
     /// or [`ScopeKind::ConstantBoundary`], only [`BindingKind::Item`] bindings
     /// in further-out scopes are visible; [`BindingKind::Local`] bindings are
     /// skipped.
-    pub(crate) fn find_binding(&self, name: Symbol) -> Result<BindingId, LookupError> {
+    pub(crate) fn find_binding(&self, name: Symbol) -> Result<BindingHandle, LookupError> {
         let mut boundary = None;
         for scope in self.scopes.iter().rev() {
             if let Some(&binding_id) = scope.bindings.get(&name) {

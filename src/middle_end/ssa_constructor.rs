@@ -2,22 +2,22 @@ use std::collections::HashMap;
 
 use soup::handle_map::{Handle, SideHandleMap};
 
-use crate::common::types::TypeId;
-use crate::front_end::semantic_analysis::hir::LocalBindingId;
+use crate::common::types::TypeHandle;
+use crate::front_end::semantic_analysis::hir::LocalBindingHandle;
 use crate::middle_end::cfg_cursor::CfgCursor;
 use crate::middle_end::handle_list::{HandleList, HandleListSubAllocator};
-use crate::middle_end::mir::{BlockId, InstructionId, ValueId, ValueOrigin};
+use crate::middle_end::mir::{BlockHandle, InstructionHandle, ValueHandle, ValueOrigin};
 
 pub(crate) struct SsaConstructor<'a> {
-    predecessor_edge_suballocator: &'a mut HandleListSubAllocator<InstructionId>,
-    incomplete_block_parameter_suballocator: &'a mut HandleListSubAllocator<LocalBindingId>,
-    current_defs: HashMap<(LocalBindingId, BlockId), ValueId>,
-    block_states: SideHandleMap<BlockId, BlockState>,
+    predecessor_edge_suballocator: &'a mut HandleListSubAllocator<InstructionHandle>,
+    incomplete_block_parameter_suballocator: &'a mut HandleListSubAllocator<LocalBindingHandle>,
+    current_defs: HashMap<(LocalBindingHandle, BlockHandle), ValueHandle>,
+    block_states: SideHandleMap<BlockHandle, BlockState>,
 }
 
 #[derive(Clone, Default)]
 struct BlockState {
-    predecessors: HandleList<InstructionId>,
+    predecessors: HandleList<InstructionHandle>,
     sealed: Sealed,
 }
 
@@ -26,14 +26,14 @@ enum Sealed {
     Yes,
     No {
         /// variables that have a placeholder (i.e., unfinalized) block parameter
-        incomplete_variables: HandleList<LocalBindingId>,
+        incomplete_variables: HandleList<LocalBindingHandle>,
     },
 }
 
 impl<'a> SsaConstructor<'a> {
     pub(crate) fn new(
-        predecessor_edge_suballocator: &'a mut HandleListSubAllocator<InstructionId>,
-        incomplete_block_parameter_suballocator: &'a mut HandleListSubAllocator<LocalBindingId>,
+        predecessor_edge_suballocator: &'a mut HandleListSubAllocator<InstructionHandle>,
+        incomplete_block_parameter_suballocator: &'a mut HandleListSubAllocator<LocalBindingHandle>,
     ) -> Self {
         Self {
             predecessor_edge_suballocator,
@@ -43,7 +43,7 @@ impl<'a> SsaConstructor<'a> {
         }
     }
 
-    pub(crate) fn declare_block(&mut self, block_id: BlockId) {
+    pub(crate) fn declare_block(&mut self, block_id: BlockHandle) {
         assert_eq!(
             block_id.index(),
             self.block_states.count(),
@@ -55,8 +55,8 @@ impl<'a> SsaConstructor<'a> {
     /// Records `instruction_id` (a jump or branch) as one of `block_id`'s predecessor edges.
     pub(crate) fn declare_block_predecessor(
         &mut self,
-        block_id: BlockId,
-        instruction_id: InstructionId,
+        block_id: BlockHandle,
+        instruction_id: InstructionHandle,
     ) {
         assert!(
             matches!(self.block_states[block_id].sealed, Sealed::No { .. }),
@@ -69,9 +69,9 @@ impl<'a> SsaConstructor<'a> {
 
     pub(crate) fn write_variable(
         &mut self,
-        variable: LocalBindingId,
-        block: BlockId,
-        value: ValueId,
+        variable: LocalBindingHandle,
+        block: BlockHandle,
+        value: ValueHandle,
     ) {
         self.current_defs.insert((variable, block), value);
     }
@@ -79,17 +79,17 @@ impl<'a> SsaConstructor<'a> {
     pub(crate) fn read_variable(
         &mut self,
         cursor: &mut CfgCursor,
-        variable_id: LocalBindingId,
-        ty: TypeId,
-        block_id: BlockId,
-    ) -> ValueId {
+        variable_id: LocalBindingHandle,
+        ty: TypeHandle,
+        block_id: BlockHandle,
+    ) -> ValueHandle {
         if let Some(&value_id) = self.current_defs.get(&(variable_id, block_id)) {
             return value_id;
         }
         self.read_variable_recursive(cursor, variable_id, ty, block_id)
     }
 
-    pub(crate) fn seal_block(&mut self, cursor: &mut CfgCursor, block_id: BlockId) {
+    pub(crate) fn seal_block(&mut self, cursor: &mut CfgCursor, block_id: BlockHandle) {
         if let Sealed::No {
             incomplete_variables,
         } = self.block_states[block_id].sealed
@@ -112,10 +112,10 @@ impl<'a> SsaConstructor<'a> {
     fn read_variable_recursive(
         &mut self,
         cursor: &mut CfgCursor,
-        variable_id: LocalBindingId,
-        ty: TypeId,
-        block_id: BlockId,
-    ) -> ValueId {
+        variable_id: LocalBindingHandle,
+        ty: TypeHandle,
+        block_id: BlockHandle,
+    ) -> ValueHandle {
         let value_id = match &mut self.block_states[block_id].sealed {
             // case 1: incomplete CFG
             Sealed::No {
@@ -165,10 +165,10 @@ impl<'a> SsaConstructor<'a> {
     fn collect_block_arguments(
         &mut self,
         cursor: &mut CfgCursor,
-        variable: LocalBindingId,
-        ty: TypeId,
-        block_id: BlockId,
-    ) -> Vec<(InstructionId, ValueId)> {
+        variable: LocalBindingHandle,
+        ty: TypeHandle,
+        block_id: BlockHandle,
+    ) -> Vec<(InstructionHandle, ValueHandle)> {
         let mut block_args = Vec::new();
         let predecessor_edges = self.block_states[block_id]
             .predecessors
@@ -190,12 +190,12 @@ impl<'a> SsaConstructor<'a> {
     fn finalize_block_parameter(
         &mut self,
         cursor: &mut CfgCursor,
-        block_parameter: ValueId,
-        ty: TypeId,
-        block_id: BlockId,
-        block_args: &[(InstructionId, ValueId)],
-    ) -> ValueId {
-        let mut common_value: Option<ValueId> = None;
+        block_parameter: ValueHandle,
+        ty: TypeHandle,
+        block_id: BlockHandle,
+        block_args: &[(InstructionHandle, ValueHandle)],
+    ) -> ValueHandle {
+        let mut common_value: Option<ValueHandle> = None;
 
         for &(_, block_arg) in block_args {
             let resolved_block_arg = cursor.resolve_aliases(block_arg);
@@ -259,8 +259,8 @@ mod tests {
         let mut predecessor_alloc = HandleListSubAllocator::new();
         let mut incomplete_alloc = HandleListSubAllocator::new();
         let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
-        let i32_ty = TypeId(0);
-        let x_var = LocalBindingId::new(0);
+        let i32_ty = TypeHandle(0);
+        let x_var = LocalBindingHandle::new(0);
 
         let mut cursor = CfgCursor::new(&mut cfg);
         let block = cursor.create_block();
@@ -279,8 +279,8 @@ mod tests {
         let mut predecessor_alloc = HandleListSubAllocator::new();
         let mut incomplete_alloc = HandleListSubAllocator::new();
         let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
-        let i32_ty = TypeId(0);
-        let x_var = LocalBindingId::new(0);
+        let i32_ty = TypeHandle(0);
+        let x_var = LocalBindingHandle::new(0);
 
         let mut cursor = CfgCursor::new(&mut cfg);
 
@@ -316,9 +316,9 @@ mod tests {
         let mut predecessor_alloc = HandleListSubAllocator::new();
         let mut incomplete_alloc = HandleListSubAllocator::new();
         let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
-        let i32_ty = TypeId(0);
-        let bool_ty = TypeId(1);
-        let x_var = LocalBindingId::new(0);
+        let i32_ty = TypeHandle(0);
+        let bool_ty = TypeHandle(1);
+        let x_var = LocalBindingHandle::new(0);
 
         let mut cursor = CfgCursor::new(&mut cfg);
 
@@ -364,9 +364,9 @@ mod tests {
         let mut predecessor_alloc = HandleListSubAllocator::new();
         let mut incomplete_alloc = HandleListSubAllocator::new();
         let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
-        let i32_ty = TypeId(0);
-        let bool_ty = TypeId(1);
-        let x_var = LocalBindingId::new(0);
+        let i32_ty = TypeHandle(0);
+        let bool_ty = TypeHandle(1);
+        let x_var = LocalBindingHandle::new(0);
 
         let mut cursor = CfgCursor::new(&mut cfg);
 
@@ -414,9 +414,9 @@ mod tests {
         let mut predecessor_alloc = HandleListSubAllocator::new();
         let mut incomplete_alloc = HandleListSubAllocator::new();
         let mut ssa = SsaConstructor::new(&mut predecessor_alloc, &mut incomplete_alloc);
-        let i32_ty = TypeId(0);
-        let bool_ty = TypeId(1);
-        let x_var = LocalBindingId::new(0);
+        let i32_ty = TypeHandle(0);
+        let bool_ty = TypeHandle(1);
+        let x_var = LocalBindingHandle::new(0);
 
         let mut cursor = CfgCursor::new(&mut cfg);
 

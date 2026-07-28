@@ -11,33 +11,37 @@ use inkwell::values::{
 };
 
 use crate::common::context::CompilerContext;
-use crate::common::string_interner::Symbol;
-use crate::common::types::TypeId;
+use crate::common::types::TypeHandle;
+use crate::front_end::semantic_analysis::hir::ItemBindingHandle;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
-use crate::middle_end::mir::{BlockId, Function, InstructionId, InstructionRef, Mir, ValueId};
+use crate::middle_end::mir::{
+    BlockHandle, Function, InstructionHandle, InstructionRef, Mir, ValueHandle,
+};
 
 /// Lowers a [`Mir`] to an LLVM [`Module`].
 ///
 /// Two passes per function, following the standard block-parameters-to-phis
-/// scheme: [`LlvmCodegen::declare_blocks`] creates every LLVM basic block and
-/// a phi per block parameter (binding the entry block's parameters directly
+/// scheme:
+/// 1. Create every LLVM basic block and a phi per block parameter (binding the entry block's parameters directly
 /// to the function's real arguments instead, since they aren't a merge
-/// point), then [`LlvmCodegen::emit_instructions`] walks every instruction,
-/// patching a `Jump`/`BranchIf` target's phis with the branch's block
-/// arguments right before building the branch itself.
-///
-/// Every function is declared before any body is defined, so a forward or
-/// mutually recursive call always has something to reference.
+/// point)
+/// 2. Walk every instruction, patching a `Jump`/`BranchIf` target's phis
+/// with the branch's block arguments right before building the branch itself.
 pub(crate) struct LlvmCodegen<'ctx, 'a> {
     llvm_context: &'ctx Context,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     ctx: &'a CompilerContext,
     mir: &'a Mir,
-    /// Every declared function, keyed by its crawfish name — this is how a
-    /// `Call` instruction's callee (itself just a name) finds the
-    /// `FunctionValue` to call.
-    functions: HashMap<Symbol, FunctionValue<'ctx>>,
+    /// Every declared function, keyed by its `ItemBindingHandle` — this is how a
+    /// `Call` instruction's callee finds the `FunctionValue` to call.
+    ///
+    /// Keyed by binding rather than by crawfish name: two functions nested in
+    /// different outer functions can share a name (name uniqueness is only
+    /// enforced within a single scope), so a `Symbol`-keyed map would collide
+    /// and silently merge their bodies. `ItemBindingHandle` is unique across the
+    /// whole program.
+    functions: HashMap<ItemBindingHandle, FunctionValue<'ctx>>,
 }
 
 impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
@@ -99,17 +103,17 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
                 .resolve(function.name)
                 .expect("function name symbol not interned");
             let fn_value = self.module.add_function(name, fn_type, None);
-            self.functions.insert(function.name, fn_value);
+            self.functions.insert(function.binding, fn_value);
         }
     }
 
-    /// Maps a crawfish scalar [`TypeId`] to its LLVM representation.
+    /// Maps a crawfish scalar [`TypeHandle`] to its LLVM representation.
     ///
     /// Zero-sized types (unit) never reach here: they're erased from
     /// signatures, block parameters, and call arguments during MIR lowering
     /// (see [`crate::middle_end::lowerer`]), so the only types a value can
     /// actually have at this point are the scalar ones below.
-    fn llvm_type(&self, ty: TypeId) -> BasicTypeEnum<'ctx> {
+    fn llvm_type(&self, ty: TypeHandle) -> BasicTypeEnum<'ctx> {
         if ty == self.ctx.type_interner.i32_id {
             self.llvm_context.i32_type().into()
         } else if ty == self.ctx.type_interner.bool_id {
@@ -122,18 +126,18 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     /// Defines `function`'s body: every LLVM basic block and phi first, then
     /// every instruction.
     fn define_function(&mut self, function: &Function) {
-        let fn_value = self.functions[&function.name];
+        let fn_value = self.functions[&function.binding];
 
         // Pass 1: create every block, and a phi per block parameter — except
         // the entry block's, which are the function's real arguments, not a
         // merge point.
-        let mut blocks: HashMap<BlockId, BasicBlock<'ctx>> = HashMap::new();
+        let mut blocks: HashMap<BlockHandle, BasicBlock<'ctx>> = HashMap::new();
         for block_id in function.body.blocks() {
             blocks.insert(block_id, self.llvm_context.append_basic_block(fn_value, ""));
         }
 
-        let mut values: HashMap<ValueId, BasicValueEnum<'ctx>> = HashMap::new();
-        let mut phis: HashMap<ValueId, PhiValue<'ctx>> = HashMap::new();
+        let mut values: HashMap<ValueHandle, BasicValueEnum<'ctx>> = HashMap::new();
+        let mut phis: HashMap<ValueHandle, PhiValue<'ctx>> = HashMap::new();
 
         let entry_id = function
             .body
@@ -186,10 +190,10 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     fn emit_instruction(
         &self,
         function: &Function,
-        instruction_id: InstructionId,
-        blocks: &HashMap<BlockId, BasicBlock<'ctx>>,
-        values: &mut HashMap<ValueId, BasicValueEnum<'ctx>>,
-        phis: &HashMap<ValueId, PhiValue<'ctx>>,
+        instruction_id: InstructionHandle,
+        blocks: &HashMap<BlockHandle, BasicBlock<'ctx>>,
+        values: &mut HashMap<ValueHandle, BasicValueEnum<'ctx>>,
+        phis: &HashMap<ValueHandle, PhiValue<'ctx>>,
     ) {
         let view = function.body.get_instruction(instruction_id);
         let results = view.results();
@@ -260,7 +264,7 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
 
             InstructionRef::Call { callee, args } => {
                 let function_reference = function.body.get_function_reference(callee);
-                let callee_value = self.functions[&function_reference.name];
+                let callee_value = self.functions[&function_reference.binding];
                 let argument_values: Vec<BasicMetadataValueEnum> =
                     args.iter().map(|&arg| values[&arg].into()).collect();
                 let call_site = self
@@ -329,10 +333,10 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     fn patch_phis(
         &self,
         function: &Function,
-        destination: BlockId,
-        args: &[ValueId],
-        values: &HashMap<ValueId, BasicValueEnum<'ctx>>,
-        phis: &HashMap<ValueId, PhiValue<'ctx>>,
+        destination: BlockHandle,
+        args: &[ValueHandle],
+        values: &HashMap<ValueHandle, BasicValueEnum<'ctx>>,
+        phis: &HashMap<ValueHandle, PhiValue<'ctx>>,
     ) {
         let current_block = self
             .builder

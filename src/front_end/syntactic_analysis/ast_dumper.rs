@@ -4,9 +4,9 @@ use std::str;
 use crate::common::context::CompilerContext;
 use crate::front_end::syntactic_analysis::ast::Ast;
 use crate::front_end::syntactic_analysis::ast::handles::{
-    ExpressionId, ExpressionKind, IdentifierId, IdentifierKind, ItemId, ItemKind, ParameterId,
-    ParameterKind, PatternId, PatternKind, StatementId, StatementKind, TypeAnnotationId,
-    TypeAnnotationKind,
+    ExpressionHandle, ExpressionKind, IdentifierHandle, IdentifierKind, ItemHandle, ItemKind,
+    ParameterHandle, ParameterKind, PatternHandle, PatternKind, StatementHandle, StatementKind,
+    TypeAnnotationHandle, TypeAnnotationKind,
 };
 use crate::front_end::syntactic_analysis::ast::nodes::{
     AssignNode, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode,
@@ -74,10 +74,10 @@ impl<'a> AstDumper<'a> {
         Ok(s)
     }
 
-    /// Dispatches on [`ItemId::kind`] to the matching `dump_*` method. Every
+    /// Dispatches on [`ItemHandle::kind`] to the matching `dump_*` method. Every
     /// `dump_*(&mut self, s: &mut String, id: ..., add_comma: bool)` method
     /// for a tagged handle type follows this same dispatch pattern.
-    fn dump_item(&mut self, s: &mut String, id: ItemId, add_comma: bool) -> fmt::Result {
+    fn dump_item(&mut self, s: &mut String, id: ItemHandle, add_comma: bool) -> fmt::Result {
         match id.kind() {
             ItemKind::FunctionDefinition => {
                 let node = &self.ast.function_definitions[id.index().into()];
@@ -175,7 +175,12 @@ impl<'a> AstDumper<'a> {
         self.close_node(s, add_comma)
     }
 
-    fn dump_statement(&mut self, s: &mut String, id: StatementId, add_comma: bool) -> fmt::Result {
+    fn dump_statement(
+        &mut self,
+        s: &mut String,
+        id: StatementHandle,
+        add_comma: bool,
+    ) -> fmt::Result {
         self.write_indent(s)?;
         match id.kind() {
             StatementKind::ExpressionStatement => {
@@ -297,7 +302,7 @@ impl<'a> AstDumper<'a> {
     fn dump_expression(
         &mut self,
         s: &mut String,
-        id: ExpressionId,
+        id: ExpressionHandle,
         add_comma: bool,
     ) -> fmt::Result {
         match id.kind() {
@@ -590,7 +595,12 @@ impl<'a> AstDumper<'a> {
         self.close_node(s, add_comma)
     }
 
-    fn dump_parameter(&mut self, s: &mut String, id: ParameterId, add_comma: bool) -> fmt::Result {
+    fn dump_parameter(
+        &mut self,
+        s: &mut String,
+        id: ParameterHandle,
+        add_comma: bool,
+    ) -> fmt::Result {
         match id.kind() {
             ParameterKind::Valid => {
                 let node = &self.ast.valid_parameters[id.index().into()];
@@ -606,7 +616,7 @@ impl<'a> AstDumper<'a> {
     fn dump_identifier(
         &mut self,
         s: &mut String,
-        id: IdentifierId,
+        id: IdentifierHandle,
         add_comma: bool,
     ) -> fmt::Result {
         match id.kind() {
@@ -693,7 +703,7 @@ impl<'a> AstDumper<'a> {
     fn dump_type_annotation(
         &mut self,
         s: &mut String,
-        id: TypeAnnotationId,
+        id: TypeAnnotationHandle,
         add_comma: bool,
     ) -> fmt::Result {
         match id.kind() {
@@ -739,7 +749,7 @@ impl<'a> AstDumper<'a> {
         self.close_node(s, add_comma)
     }
 
-    fn dump_pattern(&mut self, s: &mut String, id: PatternId, add_comma: bool) -> fmt::Result {
+    fn dump_pattern(&mut self, s: &mut String, id: PatternHandle, add_comma: bool) -> fmt::Result {
         match id.kind() {
             PatternKind::Identifier => {
                 let node = &self.ast.identifier_patterns[id.index().into()];
