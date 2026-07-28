@@ -2,7 +2,7 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 
 use crate::{common::span::Span, front_end::lexical_analysis::token::TokenKind};
 
-/// Possible delimiter errors encountered during token tree construction.
+/// Delimiter issues encountered during token tree parsing.
 #[derive(Debug, Clone)]
 pub(crate) enum DelimiterDiagnostic {
     /// An opening delimiter was not closed.
@@ -33,7 +33,6 @@ impl DelimiterDiagnostic {
                     )
                     .finish()
             }
-
             Self::Unexpected { span, found } => {
                 Report::build(ReportKind::Error, filename, span.start() as usize)
                     .with_code("E0002")
@@ -45,7 +44,6 @@ impl DelimiterDiagnostic {
                     )
                     .finish()
             }
-
             Self::Mismatched {
                 expected,
                 found,

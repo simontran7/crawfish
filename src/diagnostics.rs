@@ -63,10 +63,6 @@ pub(crate) struct DiagnosticSink {
 
 impl Diagnostic {
     /// Returns how severe this diagnostic is.
-    ///
-    /// Every diagnostic the compiler raises today is an error. Once a stage
-    /// gains a lint, this should delegate to the inner type, so the warning
-    /// variants live next to the diagnostics they describe.
     pub(crate) fn severity(&self) -> Severity {
         match self {
             Self::Delimiter(_) | Self::Syntactic(_) | Self::Semantic(_) | Self::Lowering(_) => {

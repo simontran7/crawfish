@@ -1,2 +1,2 @@
 pub(crate) mod llvm_codegen;
-pub(crate) mod target;
+pub(crate) mod linker;

@@ -7,13 +7,16 @@ use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;
 use crate::front_end::syntactic_analysis::parser::Parser;
 
 use crate::back_end::llvm_codegen::LlvmCodegen;
-use crate::back_end::target;
+use crate::back_end::linker;
 use crate::middle_end::lowerer::MirLowerer;
+use crate::middle_end::mir::Mir;
 use crate::middle_end::mir_dumper::MirDumper;
 
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
+use inkwell::OptimizationLevel;
 use inkwell::context::Context;
+use inkwell::targets::{InitializationConfig, Target};
 
 /// Compiles `path`, printing any diagnostics to stderr, and returns the path
 /// to the produced executable on success.
@@ -29,39 +32,88 @@ use inkwell::context::Context;
 /// crawfish::driver::compile("example.crw".into());
 /// ```
 pub fn compile(path: PathBuf) -> Option<PathBuf> {
-    run_pipeline(path, true)
+    let unit = compile_to_mir(path)?;
+    let llvm_context = Context::create();
+    let module = LlvmCodegen::new(&unit.mir, &unit.ctx, &llvm_context, &unit.filename).compile();
+    #[cfg(debug_assertions)]
+    println!("{}", module.print_to_string().to_string());
+
+    // ahead-of-time: object code + link, producing a real, standalone
+    // executable — not a JIT, matching how rustc/Zig/Go all deliver a build
+    let executable_path = unit.path.with_extension("");
+    let link_result = linker::compile_to_executable(&module, &executable_path);
+    unit.ctx.diagnostics.render(&unit.filename, &unit.source);
+    match link_result {
+        Ok(()) => Some(executable_path),
+        Err(e) => {
+            eprintln!("Error producing executable: {e}");
+            None
+        }
+    }
 }
 
 /// Checks `path` for diagnostics without producing an executable.
 pub fn check(path: PathBuf) {
-    run_pipeline(path, false);
+    let Some(unit) = compile_to_mir(path) else {
+        return;
+    };
+    unit.ctx.diagnostics.render(&unit.filename, &unit.source);
+    let (errors, warnings) = unit.ctx.diagnostics.counts();
+    println!("\x1b[1;31mCompiler Errors: {errors}\x1b[0m");
+    println!("\x1b[1;33mWarnings: {warnings}\x1b[0m");
 }
 
-/// Compiles `path`, runs the resulting executable, and removes it once it
-/// finishes — `run` is for immediate feedback, not for producing a build
-/// artifact, so nothing should be left behind. Forwards the executable's exit
-/// code; exits with status 1 if compilation didn't produce an executable.
+/// Compiles `path` and JIT-executes the result directly in this process,
+/// forwarding `main`'s return value as the process exit code.
+///
+/// `run` is for immediate feedback, so unlike [`compile`] it never touches
+/// disk: no executable file, no linker invocation, and no OS-level
+/// first-launch security check paid on every call — those turned out to
+/// dominate wall-clock time far more than the compiler itself.
 pub fn run(path: PathBuf) {
-    let Some(executable_path) = compile(path) else {
+    let Some(unit) = compile_to_mir(path) else {
         std::process::exit(1);
     };
-    let canonical_path = executable_path.canonicalize().unwrap_or_else(|e| {
-        eprintln!("Error locating executable {executable_path:?}: {e}");
-        std::process::exit(1);
-    });
-    let status = Command::new(&canonical_path).status().unwrap_or_else(|e| {
-        eprintln!("Error running executable {canonical_path:?}: {e}");
-        std::process::exit(1);
-    });
-    let _ = std::fs::remove_file(&executable_path);
-    std::process::exit(status.code().unwrap_or(1));
+    let llvm_context = Context::create();
+    let module = LlvmCodegen::new(&unit.mir, &unit.ctx, &llvm_context, &unit.filename).compile();
+    #[cfg(debug_assertions)]
+    println!("{}", module.print_to_string().to_string());
+    unit.ctx.diagnostics.render(&unit.filename, &unit.source);
+
+    Target::initialize_native(&InitializationConfig::default())
+        .expect("failed to initialize native target for JIT execution");
+    let execution_engine = module
+        .create_jit_execution_engine(OptimizationLevel::None)
+        .unwrap_or_else(|e| {
+            eprintln!("Error creating JIT execution engine: {e}");
+            std::process::exit(1);
+        });
+    let exit_code = unsafe {
+        let main_fn = execution_engine
+            .get_function::<unsafe extern "C" fn() -> i32>("main")
+            .unwrap_or_else(|e| {
+                eprintln!("Error locating `main`: {e:?}");
+                std::process::exit(1);
+            });
+        main_fn.call()
+    };
+    std::process::exit(exit_code);
 }
 
-/// Runs the front end and middle end on `path`, then either stops (`emit_code
-/// = false`, for [`check`]) or continues through codegen and linking
-/// (`emit_code = true`, for [`compile`]), returning the executable's path on
-/// full success.
-fn run_pipeline(path: PathBuf, emit_code: bool) -> Option<PathBuf> {
+/// Everything [`compile_to_mir`] produces: the lowered [`Mir`] plus the
+/// state needed to continue into codegen or render diagnostics.
+struct CompileUnit {
+    mir: Mir,
+    ctx: CompilerContext,
+    path: PathBuf,
+    filename: String,
+    source: String,
+}
+
+/// Runs the front end and middle end on `path`, returning a [`CompileUnit`].
+/// Returns `None` — having already rendered diagnostics — if any stage
+/// reported an error; exits directly if `path` itself couldn't be read.
+fn compile_to_mir(path: PathBuf) -> Option<CompileUnit> {
     let mut ctx = CompilerContext::new();
 
     let filename = path.to_string_lossy().to_string();
@@ -106,7 +158,7 @@ fn run_pipeline(path: PathBuf, emit_code: bool) -> Option<PathBuf> {
         Err(e) => eprintln!("Error dumping HIR: {}", e),
     };
 
-    // mir lowering + mir transformation passes + llvm lowering
+    // mir lowering + mir transformation passes
     //
     // Every function is lowered before anything consumes the result, so later
     // MIR passes can look across function boundaries (inlining, whole-program
@@ -122,29 +174,11 @@ fn run_pipeline(path: PathBuf, emit_code: bool) -> Option<PathBuf> {
         Err(e) => eprintln!("Error dumping MIR: {}", e),
     };
 
-    if !emit_code {
-        ctx.diagnostics.render(&filename, &source);
-        let (errors, warnings) = ctx.diagnostics.counts();
-        println!("\x1b[1;31mCompiler Errors: {errors}\x1b[0m");
-        println!("\x1b[1;33mWarnings: {warnings}\x1b[0m");
-        return None;
-    }
-
-    let llvm_context = Context::create();
-    let module = LlvmCodegen::new(&mir, &ctx, &llvm_context, &filename).compile();
-    #[cfg(debug_assertions)]
-    println!("{}", module.print_to_string().to_string());
-
-    // ahead-of-time: object code + link, producing a real, standalone
-    // executable — not a JIT, matching how rustc/Zig/Go all deliver a build
-    let executable_path = path.with_extension("");
-    let link_result = target::compile_to_executable(&module, &executable_path);
-    ctx.diagnostics.render(&filename, &source);
-    match link_result {
-        Ok(()) => Some(executable_path),
-        Err(e) => {
-            eprintln!("Error producing executable: {e}");
-            None
-        }
-    }
+    Some(CompileUnit {
+        mir,
+        ctx,
+        path,
+        filename,
+        source,
+    })
 }

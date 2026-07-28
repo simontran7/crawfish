@@ -17,12 +17,6 @@ use crate::middle_end::mir::{
 use crate::middle_end::ssa_constructor::SsaConstructor;
 
 /// Lowers every HIR function to [`Mir`].
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let mir = MirLowerer::new(&hir, &ctx).lower();
-/// ```
 pub(crate) struct MirLowerer<'a> {
     hir: &'a Hir,
     ctx: &'a CompilerContext,
@@ -43,27 +37,17 @@ impl<'a> MirLowerer<'a> {
         }
     }
 
-    /// Lowers every function in the HIR, emitting any diagnostics into
-    /// [`CompilerContext::diagnostics`].
-    ///
-    /// Every function is lowered, even once one of them has raised a
-    /// diagnostic, so a single bad body doesn't hide problems in its
-    /// siblings. The caller checks
-    /// [`DiagnosticSink::has_errors`][crate::diagnostics::DiagnosticSink::has_errors]
-    /// once, after this returns.
+    /// Lowers every function in the HIR, emitting any diagnostics into [`CompilerContext::diagnostics`].
     pub(crate) fn lower(mut self) -> Mir {
         for function_handle in self.hir.functions() {
             let mir_function = self.lower_function(function_handle);
             self.mir.add_function(mir_function);
         }
+        self.mir.builtin_println = self.hir.builtin_println;
         self.mir
     }
 
-    /// Lowers the HIR function pointed by `function_id` to its MIR
-    /// [`Function`].
-    ///
-    /// The [`Function`] is always returned, even when diagnostics were
-    /// emitted: lowering recovers in place rather than bailing.
+    /// Lowers the HIR function pointed by `function_handle` to its MIR [`Function`].
     fn lower_function(&mut self, function_handle: ItemHandle) -> Function {
         let ItemKind::Function {
             binding,
@@ -103,12 +87,6 @@ impl<'a> MirLowerer<'a> {
 }
 
 /// Fills in one [`Function`]'s [`Cfg`][crate::middle_end::mir::Cfg].
-///
-/// Separate from [`MirLowerer`] because `cursor` holds a `&mut` into the
-/// function being built, so this cannot outlive a single function — which is
-/// also why it sits beside `ssa` as a field rather than behind an accessor:
-/// field disjointness is what lets `self.ssa.seal_block(&mut self.cursor, ..)`
-/// borrow both at once.
 ///
 /// Contracts inherited from semantic analysis:
 /// - Mutability of assignment targets is NOT checked there — the `Assign`
@@ -531,7 +509,7 @@ impl<'a> FunctionBuilder<'a> {
         lhs: ExpressionHandle,
         rhs: ExpressionHandle,
     ) -> Option<ValueHandle> {
-        let bool_ty = self.ctx.type_interner.bool_id;
+        let bool_ty = self.ctx.type_interner.bool_handle;
         let lhs_value = self.lower_expression(lhs)?;
         if !self.reachable {
             return None;

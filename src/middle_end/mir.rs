@@ -10,12 +10,12 @@ use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::handle_list::{HandleList, HandleListSubAllocator};
 
 /// Every function in the source file, lowered to MIR.
-///
-/// Holding them all at once is what lets a later pass look across function
-/// boundaries (inlining, whole-program analysis); the LLVM lowering that
-/// consumes this walks it one [`Function`] at a time.
 pub(crate) struct Mir {
     functions: Vec<Function>,
+    /// Carried over from [`crate::front_end::semantic_analysis::hir::Hir::builtin_println`]
+    /// — there's no MIR [`Function`] for it (no crawfish-source body), so
+    /// codegen needs this handle to recognize calls to it directly.
+    pub(crate) builtin_println: Option<ItemBindingHandle>,
 }
 
 impl Mir {
@@ -23,6 +23,7 @@ impl Mir {
     pub(crate) fn new() -> Self {
         Self {
             functions: Vec::new(),
+            builtin_println: None,
         }
     }
 
@@ -39,11 +40,6 @@ impl Mir {
 
 /// A single MIR function.
 pub(crate) struct Function {
-    /// Identifies this function uniquely across the whole program — unlike
-    /// `name`, which is only unique within the scope it was declared in (two
-    /// functions nested in different outer functions can share a `name`).
-    /// Backends must key any function-identity map (e.g. LLVM `FunctionValue`
-    /// lookup) by `binding`, not `name`.
     pub(crate) binding: ItemBindingHandle,
     pub(crate) name: Symbol,
     pub(crate) signature: Signature,

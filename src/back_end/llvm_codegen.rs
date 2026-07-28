@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
+use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::module::Module;
+use inkwell::module::{Linkage, Module};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PhiValue,
@@ -68,10 +69,88 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     /// Lowers every function in the `Mir` and returns the finished module.
     pub(crate) fn compile(mut self) -> Module<'ctx> {
         self.declare_functions();
+        self.declare_builtin_println();
+        self.declare_main_entry_point();
         for function in self.mir.functions() {
             self.define_function(function);
         }
         self.module
+    }
+
+    /// Synthesizes the real C-ABI `i32 main(void)` entry point, wrapping
+    /// crawfish's own `main` (renamed to `__crawfish_main` by
+    /// [`LlvmCodegen::declare_functions`]) — the same indirection Rust's
+    /// `std::rt::lang_start` uses to wrap the user's `fn main()`.
+    ///
+    /// This is what lets crawfish's `main` return `Unit` (no explicit exit
+    /// code needed — defaults to a real `0`) or `I32` (an explicit exit
+    /// code) without ever emitting a `void main(void)` symbol: a C runtime
+    /// expecting `int main(...)` reads whatever garbage is left in the
+    /// return register from a genuinely `void`-returning function, which is
+    /// undefined behavior, not just "returns 0."
+    fn declare_main_entry_point(&mut self) {
+        let Some(inner_main) = self.module.get_function("__crawfish_main") else {
+            return; // no `main` in this program; let the linker report it, as before
+        };
+
+        let entry_point_type = self.llvm_context.i32_type().fn_type(&[], false);
+        let entry_point = self.module.add_function("main", entry_point_type, None);
+        let entry = self.llvm_context.append_basic_block(entry_point, "entry");
+        self.builder.position_at_end(entry);
+
+        let call_site = self.builder.build_call(inner_main, &[], "").unwrap();
+        let exit_code = match call_site.try_as_basic_value().basic() {
+            Some(value) => value.into_int_value(),
+            None => self.llvm_context.i32_type().const_zero(),
+        };
+        self.builder.build_return(Some(&exit_code)).unwrap();
+    }
+
+    /// Declares the `println` builtin, if [`Mir::builtin_println`] is set:
+    /// a `void __crawfish_println_i32(i32)` wrapper that formats its
+    /// argument through a libc `printf` call, registered into
+    /// [`LlvmCodegen::functions`] under `println`'s binding. There's no MIR
+    /// [`Function`] for it to go through [`LlvmCodegen::declare_functions`],
+    /// so it's declared and defined here in one step; the normal `Call`
+    /// codegen path (`InstructionRef::Call`) then needs no special-casing —
+    /// it just finds this wrapper in [`LlvmCodegen::functions`] like any
+    /// other callee.
+    fn declare_builtin_println(&mut self) {
+        let Some(binding) = self.mir.builtin_println else {
+            return;
+        };
+
+        let ptr_type = self.llvm_context.ptr_type(AddressSpace::default());
+        let printf_type = self
+            .llvm_context
+            .i32_type()
+            .fn_type(&[ptr_type.into()], true);
+        let printf = self
+            .module
+            .add_function("printf", printf_type, Some(Linkage::External));
+
+        let wrapper_type = self
+            .llvm_context
+            .void_type()
+            .fn_type(&[self.llvm_context.i32_type().into()], false);
+        let wrapper = self
+            .module
+            .add_function("__crawfish_println_i32", wrapper_type, None);
+        let entry = self.llvm_context.append_basic_block(wrapper, "entry");
+        self.builder.position_at_end(entry);
+
+        let format_string = self
+            .builder
+            .build_global_string_ptr("%d\n", "println_fmt")
+            .unwrap()
+            .as_pointer_value();
+        let argument = wrapper.get_nth_param(0).unwrap();
+        self.builder
+            .build_call(printf, &[format_string.into(), argument.into()], "")
+            .unwrap();
+        self.builder.build_return(None).unwrap();
+
+        self.functions.insert(binding, wrapper);
     }
 
     /// Declares every function's signature up front, before any body is
@@ -102,7 +181,11 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
                 .string_interner
                 .resolve(function.name)
                 .expect("function name symbol not interned");
-            let fn_value = self.module.add_function(name, fn_type, None);
+            // `main` is renamed so `declare_main_entry_point` can synthesize
+            // the real ABI-correct `i32 main(void)` the C runtime expects,
+            // without constraining what crawfish's own `main` may return.
+            let llvm_name = if name == "main" { "__crawfish_main" } else { name };
+            let fn_value = self.module.add_function(llvm_name, fn_type, None);
             self.functions.insert(function.binding, fn_value);
         }
     }
@@ -114,9 +197,9 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     /// (see [`crate::middle_end::lowerer`]), so the only types a value can
     /// actually have at this point are the scalar ones below.
     fn llvm_type(&self, ty: TypeHandle) -> BasicTypeEnum<'ctx> {
-        if ty == self.ctx.type_interner.i32_id {
+        if ty == self.ctx.type_interner.i32_handle {
             self.llvm_context.i32_type().into()
-        } else if ty == self.ctx.type_interner.bool_id {
+        } else if ty == self.ctx.type_interner.bool_handle {
             self.llvm_context.bool_type().into()
         } else {
             panic!("no LLVM representation for type {ty:?}")

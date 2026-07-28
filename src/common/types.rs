@@ -67,19 +67,19 @@ pub(crate) enum InferTy {
 /// Interns every [`Ty`] used by a compilation as a [`TypeHandle`], so that
 /// equal types compare equal in O(1) and can be passed around as a 4-byte
 /// handle instead of a cloned [`Ty`]. Also holds [`TypeHandle`]s for the
-/// built-in types (`unit_id`, `bool_id`, `i32_id`, etc.), interned once up
-/// front so they can be compared against directly.
+/// built-in types (`unit_handle`, `bool_handle`, `i32_handle`, etc.), interned
+/// once up front so they can be compared against directly.
 pub(crate) struct TypeInterner {
     types: Vec<Ty>,
-    ids: HashMap<Ty, TypeHandle>,
-    pub(crate) unit_id: TypeHandle,
-    pub(crate) never_id: TypeHandle,
-    pub(crate) bool_id: TypeHandle,
-    pub(crate) u32_id: TypeHandle,
-    pub(crate) u64_id: TypeHandle,
-    pub(crate) i32_id: TypeHandle,
-    pub(crate) i64_id: TypeHandle,
-    pub(crate) error_id: TypeHandle,
+    handles: HashMap<Ty, TypeHandle>,
+    pub(crate) unit_handle: TypeHandle,
+    pub(crate) never_handle: TypeHandle,
+    pub(crate) bool_handle: TypeHandle,
+    pub(crate) u32_handle: TypeHandle,
+    pub(crate) u64_handle: TypeHandle,
+    pub(crate) i32_handle: TypeHandle,
+    pub(crate) i64_handle: TypeHandle,
+    pub(crate) error_handle: TypeHandle,
 }
 
 /// A handle to a [`Ty`] interned in a [`TypeInterner`].
@@ -94,36 +94,36 @@ impl TypeInterner {
     pub(crate) fn new() -> Self {
         let mut ti = Self {
             types: Vec::new(),
-            ids: HashMap::new(),
-            unit_id: TypeHandle(0),
-            never_id: TypeHandle(0),
-            bool_id: TypeHandle(0),
-            u32_id: TypeHandle(0),
-            u64_id: TypeHandle(0),
-            i32_id: TypeHandle(0),
-            i64_id: TypeHandle(0),
-            error_id: TypeHandle(0),
+            handles: HashMap::new(),
+            unit_handle: TypeHandle(0),
+            never_handle: TypeHandle(0),
+            bool_handle: TypeHandle(0),
+            u32_handle: TypeHandle(0),
+            u64_handle: TypeHandle(0),
+            i32_handle: TypeHandle(0),
+            i64_handle: TypeHandle(0),
+            error_handle: TypeHandle(0),
         };
-        ti.unit_id = ti.intern(Ty::Unit);
-        ti.never_id = ti.intern(Ty::Never);
-        ti.bool_id = ti.intern(Ty::Bool);
-        ti.u32_id = ti.intern(Ty::Unsigned(UnsignedIntTy::U32));
-        ti.u64_id = ti.intern(Ty::Unsigned(UnsignedIntTy::U64));
-        ti.i32_id = ti.intern(Ty::Signed(SignedIntTy::I32));
-        ti.i64_id = ti.intern(Ty::Signed(SignedIntTy::I64));
-        ti.error_id = ti.intern(Ty::Error);
+        ti.unit_handle = ti.intern(Ty::Unit);
+        ti.never_handle = ti.intern(Ty::Never);
+        ti.bool_handle = ti.intern(Ty::Bool);
+        ti.u32_handle = ti.intern(Ty::Unsigned(UnsignedIntTy::U32));
+        ti.u64_handle = ti.intern(Ty::Unsigned(UnsignedIntTy::U64));
+        ti.i32_handle = ti.intern(Ty::Signed(SignedIntTy::I32));
+        ti.i64_handle = ti.intern(Ty::Signed(SignedIntTy::I64));
+        ti.error_handle = ti.intern(Ty::Error);
         ti
     }
 
     /// Returns the [`TypeHandle`] for `ty`, interning it if it hasn't been seen
     /// before. Two equal `Ty`s always intern to the same `TypeHandle`.
     pub(crate) fn intern(&mut self, ty: Ty) -> TypeHandle {
-        if let Some(&id) = self.ids.get(&ty) {
+        if let Some(&id) = self.handles.get(&ty) {
             return id;
         }
         let id = TypeHandle(self.types.len() as u32);
         self.types.push(ty.clone());
-        self.ids.insert(ty, id);
+        self.handles.insert(ty, id);
         id
     }
 
@@ -134,7 +134,7 @@ impl TypeInterner {
 
     /// Returns whether values of `id` carry nothing at runtime.
     pub(crate) fn is_zero_sized(&self, id: TypeHandle) -> bool {
-        id == self.unit_id
+        id == self.unit_handle
     }
 
     /// Looks up the [`TypeHandle`] of a built-in type by name, e.g. `Bool` or
@@ -142,25 +142,25 @@ impl TypeInterner {
     /// (including user-defined types, which this interner does not handle).
     pub(crate) fn builtin_type_id(&self, s: Symbol, si: &StringInterner) -> Option<TypeHandle> {
         if s == si.unit_symbol {
-            return Some(self.unit_id);
+            return Some(self.unit_handle);
         }
         if s == si.never_symbol {
-            return Some(self.never_id);
+            return Some(self.never_handle);
         }
         if s == si.bool_symbol {
-            return Some(self.bool_id);
+            return Some(self.bool_handle);
         }
         if s == si.i32_symbol {
-            return Some(self.i32_id);
+            return Some(self.i32_handle);
         }
         if s == si.i64_symbol {
-            return Some(self.i64_id);
+            return Some(self.i64_handle);
         }
         if s == si.u32_symbol {
-            return Some(self.u32_id);
+            return Some(self.u32_handle);
         }
         if s == si.u64_symbol {
-            return Some(self.u64_id);
+            return Some(self.u64_handle);
         }
         None
     }

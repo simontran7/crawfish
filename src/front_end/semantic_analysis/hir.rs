@@ -30,6 +30,13 @@ pub(crate) struct Hir {
 
     pub(crate) local_bindings: HandleMap<LocalBindingHandle, LocalBinding>,
     pub(crate) item_bindings: HandleMap<ItemBindingHandle, ItemBinding>,
+
+    /// The synthetic item binding for the `println` builtin, registered by
+    /// [`crate::front_end::semantic_analysis::semantic_analyzer::SemanticAnalyzer::register_builtin_println`].
+    /// No crawfish-source body backs it, so it's never among
+    /// [`Hir::items`]/`ItemKind::Function` — codegen recognizes it by this
+    /// handle and lowers calls to it directly to a libc `printf` call.
+    pub(crate) builtin_println: Option<ItemBindingHandle>,
 }
 
 /// The root of the HIR: the top-level items of a source file.
@@ -285,6 +292,7 @@ impl Hir {
             parameter_children: Vec::new(),
             local_bindings: HandleMap::new(),
             item_bindings: HandleMap::new(),
+            builtin_println: None,
         }
     }
 

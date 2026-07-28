@@ -139,6 +139,7 @@ definite-initialization MIR pass.
 
 ### Miscellaneous
 
+- [ ] Every diagnostic the compiler raises today is an error. Once a stage gains a lint, `.severity()` should delegate to the inner type, so the warning variants live next to the diagnostics they describe.
 - [ ] user website
 - [ ] web playground
 - [ ] Add release binaries (https://github.com/andrewrk/poop/blob/main/.github/workflows/ci.yml)
