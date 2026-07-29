@@ -6,18 +6,11 @@ use crate::diagnostics::DiagnosticSink;
 pub struct CompilerContext {
     pub(crate) string_interner: StringInterner,
     pub(crate) type_interner: TypeInterner,
-    /// Every diagnostic raised by every stage, in emission order.
-    ///
-    /// Lives here so a stage can report a problem without threading it back
-    /// through its return type, mirroring rustc's `DiagCtxt` on `Session`.
-    /// [`DiagnosticSink`] is interior-mutable, so emitting only needs the
-    /// shared `&CompilerContext` a stage already holds.
     pub(crate) diagnostics: DiagnosticSink,
 }
 
 impl CompilerContext {
-    /// Creates and returns a new `CompilerContext` with fresh, empty interners
-    /// and no diagnostics.
+    /// Creates and returns a new `CompilerContext`.
     pub fn new() -> Self {
         Self {
             string_interner: StringInterner::new(),

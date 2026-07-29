@@ -6,8 +6,8 @@ use crate::front_end::semantic_analysis::semantic_analyzer::SemanticAnalyzer;
 use crate::front_end::syntactic_analysis::ast_dumper::AstDumper;
 use crate::front_end::syntactic_analysis::parser::Parser;
 
-use crate::back_end::llvm_codegen::LlvmCodegen;
 use crate::back_end::linker;
+use crate::back_end::llvm_codegen::LlvmCodegen;
 use crate::middle_end::lowerer::MirLowerer;
 use crate::middle_end::mir::Mir;
 use crate::middle_end::mir_dumper::MirDumper;

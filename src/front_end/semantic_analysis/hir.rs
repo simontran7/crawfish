@@ -5,50 +5,43 @@ use soup::handle_map::HandleMap;
 
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
-use crate::common::types::TypeHandle;
+use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 
 /// The complete HIR for a source file, produced by type-checking and
 /// lowering the AST.
 ///
-/// Owns every [`Item`], [`Statement`], and [`Expression`] in the
-/// program, the flattened child lists referenced by [`ItemSlice`],
-/// [`StatementSlice`], [`ExpressionSlice`], and [`ParameterSlice`], and the
-/// binding tables ([`LocalBinding`] and [`ItemBinding`]) resolved from names
-/// during type-checking.
+/// Owns every [`Definition`], [`Statement`], and [`Expression`] in the
+/// program, the flattened child lists referenced by [`DefinitionIdSpan`],
+/// [`StatementIdSpan`], [`ExpressionIdSpan`], and
+/// [`ParameterIdSpan`], and the binding tables ([`LocalBinding`] and
+/// [`DefinitionBinding`]) resolved from names during type-checking.
 pub(crate) struct Hir {
     pub(crate) source_file: SourceFileNode,
 
-    pub(crate) items: HandleMap<ItemHandle, Item>,
-    pub(crate) statements: HandleMap<StatementHandle, Statement>,
-    pub(crate) expressions: HandleMap<ExpressionHandle, Expression>,
+    pub(crate) definitions: HandleMap<DefinitionId, Definition>,
+    pub(crate) statements: HandleMap<StatementId, Statement>,
+    pub(crate) expressions: HandleMap<ExpressionId, Expression>,
 
-    pub(crate) item_children: Vec<ItemHandle>,
-    pub(crate) statement_children: Vec<StatementHandle>,
-    pub(crate) expression_children: Vec<ExpressionHandle>,
-    pub(crate) parameter_children: Vec<LocalBindingHandle>,
+    pub(crate) definition_children_ids: Vec<DefinitionId>,
+    pub(crate) statement_children_ids: Vec<StatementId>,
+    pub(crate) expression_children_ids: Vec<ExpressionId>,
+    pub(crate) parameter_children_ids: Vec<LocalBindingId>,
 
-    pub(crate) local_bindings: HandleMap<LocalBindingHandle, LocalBinding>,
-    pub(crate) item_bindings: HandleMap<ItemBindingHandle, ItemBinding>,
-
-    /// The synthetic item binding for the `println` builtin, registered by
-    /// [`crate::front_end::semantic_analysis::semantic_analyzer::SemanticAnalyzer::register_builtin_println`].
-    /// No crawfish-source body backs it, so it's never among
-    /// [`Hir::items`]/`ItemKind::Function` — codegen recognizes it by this
-    /// handle and lowers calls to it directly to a libc `printf` call.
-    pub(crate) builtin_println: Option<ItemBindingHandle>,
+    pub(crate) local_bindings: HandleMap<LocalBindingId, LocalBinding>,
+    pub(crate) definition_bindings: HandleMap<DefinitionBindingId, DefinitionBinding>,
 }
 
-/// The root of the HIR: the top-level items of a source file.
+/// The root of the HIR: the top-level definitions of a source file.
 pub(crate) struct SourceFileNode {
-    pub(crate) items: ItemSlice,
+    pub(crate) definition_id_span: DefinitionIdSpan,
     pub(crate) span: Span,
 }
 
-/// A top-level item, with its [`ItemKind`] and source span.
+/// A definition, with its [`DefinitionKind`] and source span.
 #[derive(Debug)]
-pub(crate) struct Item {
-    pub(crate) kind: ItemKind,
+pub(crate) struct Definition {
+    pub(crate) kind: DefinitionKind,
     pub(crate) span: Span,
 }
 
@@ -60,28 +53,28 @@ pub(crate) struct Statement {
     pub(crate) span: Span,
 }
 
-/// A type-checked expression: its [`ExpressionKind`], resolved [`TypeHandle`],
+/// A type-checked expression: its [`ExpressionKind`], resolved [`TypeId`],
 /// and source span.
 #[derive(Debug)]
 pub(crate) struct Expression {
     pub(crate) kind: ExpressionKind,
-    pub(crate) ty: TypeHandle,
+    pub(crate) ty: TypeId,
     pub(crate) span: Span,
 }
 
-/// The kind of a top-level item.
+/// The kind of a top-level definition.
 #[derive(Debug)]
-pub(crate) enum ItemKind {
+pub(crate) enum DefinitionKind {
     /// A function definition: `func name(parameters) -> ReturnType { body }`.
     Function {
-        binding: ItemBindingHandle,
-        parameters: ParameterSlice,
-        body: ExpressionHandle,
+        definition_binding_id: DefinitionBindingId,
+        parameter_id_span: ParameterIdSpan,
+        body_id: ExpressionId,
     },
     /// A top-level constant: `const name: Type = value;`.
     Constant {
-        binding: ItemBindingHandle,
-        value: ExpressionHandle,
+        definition_binding_id: DefinitionBindingId,
+        value_id: ExpressionId,
     },
 }
 
@@ -92,20 +85,20 @@ pub(crate) enum StatementKind {
     /// `has_semicolon` distinguishes the two: a tail expression has no
     /// semicolon and becomes the block's value.
     Expression {
-        expression: ExpressionHandle,
+        expression_id: ExpressionId,
         has_semicolon: bool,
     },
     /// A `let` binding: `let pattern = value;`.
     ///
     /// Named `pattern` for the destructuring patterns the language will grow; until then
-    /// every `let` binds exactly one name, so the field is a single [`LocalBindingHandle`].
+    /// every `let` binds exactly one name, so the field is a single [`LocalBindingId`].
     Let {
-        pattern: LocalBindingHandle,
-        value: ExpressionHandle,
+        pattern_id: LocalBindingId,
+        value_id: ExpressionId,
     },
-    /// A nested item declaration, e.g. a `func` or `const` defined inside a
+    /// A nested definition declaration, e.g. a `func` or `const` defined inside a
     /// block.
-    Item { item: ItemHandle },
+    Definition { definition_id: DefinitionId },
 }
 
 /// The kind of a type-checked expression.
@@ -117,159 +110,160 @@ pub(crate) enum ExpressionKind {
     Integer(u128),
     /// A `true` or `false` literal.
     Boolean(bool),
-    /// A reference to a local or item binding.
-    Variable(BindingHandle),
+    /// A reference to a local or definition binding.
+    Variable(BindingId),
     /// A unary operation, e.g. `not x` or `-x`.
-    Prefix {
+    Unary {
         operator: UnOp,
-        rhs: ExpressionHandle,
+        operand_id: ExpressionId,
     },
     /// A binary operation, e.g. `x + y` or `x and y`.
-    Infix {
+    Binary {
         operator: BinOp,
-        lhs: ExpressionHandle,
-        rhs: ExpressionHandle,
+        lhs_id: ExpressionId,
+        rhs_id: ExpressionId,
     },
     /// `if condition { then_branch } else { else_branch }`. `else_branch`
     /// is `None` for an `if` without an `else`.
     If {
-        condition: ExpressionHandle,
-        then_branch: ExpressionHandle,
-        else_branch: Option<ExpressionHandle>,
+        condition_id: ExpressionId,
+        then_branch_id: ExpressionId,
+        else_branch_id: Option<ExpressionId>,
     },
     /// `{ statements; tail }`. `tail` is the block's value, if it has one.
     Block {
-        statements: StatementSlice,
-        tail: Option<ExpressionHandle>,
+        statement_id_span: StatementIdSpan,
+        tail_id: Option<ExpressionId>,
     },
     /// A function call: `callee(arguments)`.
     Call {
-        callee: ExpressionHandle,
-        arguments: ExpressionSlice,
+        callee_id: ExpressionId,
+        argument_id_span: ExpressionIdSpan,
     },
     /// An assignment: `target = value`.
     Assign {
-        target: ExpressionHandle,
-        value: ExpressionHandle,
+        target_id: ExpressionId,
+        value_id: ExpressionId,
     },
     /// `return value;`, or `return;` if `value` is `None`.
-    Return { value: Option<ExpressionHandle> },
+    Return { value_id: Option<ExpressionId> },
 }
 
 // Opaque, 4-byte handles into the tables in `Hir`.
-soup::handle_impl!(pub(crate) ItemHandle);
-soup::handle_impl!(pub(crate) StatementHandle);
-soup::handle_impl!(pub(crate) ExpressionHandle);
+soup::handle_impl!(pub(crate) DefinitionId);
+soup::handle_impl!(pub(crate) StatementId);
+soup::handle_impl!(pub(crate) ExpressionId);
 
-/// A run of [`ItemHandle`]s in [`Hir::item_children`], used by
+/// A run of [`DefinitionId`]s in [`Hir::definition_children_ids`], used by
 /// [`SourceFileNode`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ItemSlice {
+pub(crate) struct DefinitionIdSpan {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`StatementHandle`]s in [`Hir::statement_children`], used by
+/// A run of [`StatementId`]s in [`Hir::statement_children_ids`], used by
 /// [`ExpressionKind::Block`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StatementSlice {
+pub(crate) struct StatementIdSpan {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`ExpressionHandle`]s in [`Hir::expression_children`], used by
+/// A run of [`ExpressionId`]s in [`Hir::expression_children_ids`], used by
 /// [`ExpressionKind::Call`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ExpressionSlice {
+pub(crate) struct ExpressionIdSpan {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`LocalBindingHandle`]s in [`Hir::parameter_children`], used by
-/// [`ItemKind::Function`].
+/// A run of [`LocalBindingId`]s in [`Hir::parameter_children_ids`], used by
+/// [`DefinitionKind::Function`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ParameterSlice {
+pub(crate) struct ParameterIdSpan {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
 /// Resolved information about a local binding (a `let` pattern or function
-/// parameter), keyed by [`LocalBindingHandle`].
+/// parameter), keyed by [`LocalBindingId`].
 #[derive(Debug)]
 pub(crate) struct LocalBinding {
     pub(crate) name: Symbol,
     pub(crate) mutable: bool,
-    pub(crate) annotation: Option<TypeHandle>,
-    pub(crate) ty: TypeHandle,
+    pub(crate) annotation: Option<TypeId>,
+    pub(crate) ty: TypeId,
     pub(crate) span: Span,
 }
 
-/// Resolved information about a top-level item (`func` or `const`), keyed
-/// by [`ItemBindingHandle`].
+/// Resolved information about a top-level definition (`func` or `const`), keyed
+/// by [`DefinitionBindingId`].
 #[derive(Debug)]
-pub(crate) struct ItemBinding {
+pub(crate) struct DefinitionBinding {
     pub(crate) name: Symbol,
-    pub(crate) ty: TypeHandle,
+    pub(crate) ty: TypeId,
     pub(crate) span: Span,
 }
 
 /// A handle into [`Hir::local_bindings`].
-pub(crate) type LocalBindingHandle = TypedBindingHandle<LocalBinding, { BindingKind::Local as u8 }>;
-/// A handle into [`Hir::item_bindings`].
-pub(crate) type ItemBindingHandle = TypedBindingHandle<ItemBinding, { BindingKind::Item as u8 }>;
+pub(crate) type LocalBindingId = TypedBindingId<LocalBinding, { BindingKind::Local as u8 }>;
+/// A handle into [`Hir::definition_bindings`].
+pub(crate) type DefinitionBindingId =
+    TypedBindingId<DefinitionBinding, { BindingKind::Definition as u8 }>;
 
 // Clone/Copy/PartialEq/Eq/Handle are all manual (no derive) because derive
 // adds unwanted bounds like `T: Clone`, but T is purely a phantom marker
 // (the real data is just a `u32`).
 
 /// A 4-byte handle into a [`HandleMap`] for `T`, distinguished by `KIND` so
-/// that [`LocalBindingHandle`] and [`ItemBindingHandle`] cannot be confused
+/// that [`LocalBindingId`] and [`DefinitionBindingId`] cannot be confused
 /// even though both are backed by a `u32`.
-pub(crate) struct TypedBindingHandle<T, const KIND: u8>(u32, PhantomData<T>);
+pub(crate) struct TypedBindingId<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A reference to either a [`LocalBindingHandle`] or an [`ItemBindingHandle`],
+/// A reference to either a [`LocalBindingId`] or an [`DefinitionBindingId`],
 /// packed into a single `u32`. The high bit stores the [`BindingKind`] and
 /// the low 31 bits store the index within the corresponding table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BindingHandle(u32);
+pub(crate) struct BindingId(u32);
 
-/// Which table a [`BindingHandle`] indexes into.
+/// Which table a [`BindingId`] indexes into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum BindingKind {
     Local = 0,
-    Item,
+    Definition,
 }
 
-/// A read-only view over an item, returned by [`Hir::get_item`].
-pub(crate) struct ItemView<'a> {
-    item_handle: ItemHandle,
+/// A read-only view over an definition, returned by [`Hir::get_definition`].
+pub(crate) struct DefinitionView<'a> {
+    definition_id: DefinitionId,
     hir: &'a Hir,
 }
 
 /// A read-only view over a statement, returned by [`Hir::get_statement`].
 pub(crate) struct StatementView<'a> {
-    statement_handle: StatementHandle,
+    statement_id: StatementId,
     hir: &'a Hir,
 }
 
 /// A read-only view over an expression, returned by [`Hir::get_expression`].
 pub(crate) struct ExpressionView<'a> {
-    expression_handle: ExpressionHandle,
+    expression_id: ExpressionId,
     hir: &'a Hir,
 }
 
 /// A read-only view over a local binding, returned by
 /// [`Hir::get_local_binding`].
 pub(crate) struct LocalBindingView<'a> {
-    local_binding_handle: LocalBindingHandle,
+    local_binding_id: LocalBindingId,
     hir: &'a Hir,
 }
 
-/// A read-only view over an item binding, returned by
-/// [`Hir::get_item_binding`].
-pub(crate) struct ItemBindingView<'a> {
-    item_binding_handle: ItemBindingHandle,
+/// A read-only view over an definition binding, returned by
+/// [`Hir::get_definition_binding`].
+pub(crate) struct DefinitionBindingView<'a> {
+    definition_binding_id: DefinitionBindingId,
     hir: &'a Hir,
 }
 
@@ -280,146 +274,158 @@ impl Hir {
     pub(crate) fn new(source_size: usize) -> Self {
         Self {
             source_file: SourceFileNode {
-                items: ItemSlice { start: 0, len: 0 },
+                definition_id_span: DefinitionIdSpan { start: 0, len: 0 },
                 span: Span::new(0_u32, source_size as u32),
             },
-            items: HandleMap::new(),
+            definitions: HandleMap::new(),
             statements: HandleMap::new(),
             expressions: HandleMap::new(),
-            item_children: Vec::new(),
-            statement_children: Vec::new(),
-            expression_children: Vec::new(),
-            parameter_children: Vec::new(),
+            definition_children_ids: Vec::new(),
+            statement_children_ids: Vec::new(),
+            expression_children_ids: Vec::new(),
+            parameter_children_ids: Vec::new(),
             local_bindings: HandleMap::new(),
-            item_bindings: HandleMap::new(),
-            builtin_println: None,
+            definition_bindings: HandleMap::new(),
         }
     }
 
-    /// Returns the [`ItemHandle`]s covered by `s`, indexing into
-    /// [`Hir::item_children`]. Every `get_*_slice` accessor below follows
+    /// Returns the [`DefinitionId`]s covered by `s`, indexing into
+    /// [`Hir::definition_children_ids`]. Every `get_*` accessor below follows
     /// this same indexing pattern for its own child-node pool.
-    pub(crate) fn get_item_slice(&self, s: ItemSlice) -> &[ItemHandle] {
-        &self.item_children[s.start as usize..(s.start + s.len) as usize]
+    pub(crate) fn get_definition_ids(&self, definition_id_span: DefinitionIdSpan) -> &[DefinitionId] {
+        &self.definition_children_ids
+            [definition_id_span.start as usize..(definition_id_span.start + definition_id_span.len) as usize]
     }
 
-    /// Returns the [`StatementHandle`]s covered by `s`. See
-    /// [`Hir::get_item_slice`].
-    pub(crate) fn get_statement_slice(&self, s: StatementSlice) -> &[StatementHandle] {
-        &self.statement_children[s.start as usize..(s.start + s.len) as usize]
+    /// Returns the [`StatementId`]s covered by `statement_id_span`. See
+    /// [`Hir::get_definition_ids`].
+    pub(crate) fn get_statement_ids(&self, statement_id_span: StatementIdSpan) -> &[StatementId] {
+        &self.statement_children_ids
+            [statement_id_span.start as usize..(statement_id_span.start + statement_id_span.len) as usize]
     }
 
-    /// Returns the [`ExpressionHandle`]s covered by `s`. See
-    /// [`Hir::get_item_slice`].
-    pub(crate) fn get_expression_slice(&self, s: ExpressionSlice) -> &[ExpressionHandle] {
-        &self.expression_children[s.start as usize..(s.start + s.len) as usize]
+    /// Returns the [`ExpressionId`]s covered by `expression_id_span`. See
+    /// [`Hir::get_definition_ids`].
+    pub(crate) fn get_expression_ids(&self, expression_id_span: ExpressionIdSpan) -> &[ExpressionId] {
+        &self.expression_children_ids
+            [expression_id_span.start as usize..(expression_id_span.start + expression_id_span.len) as usize]
     }
 
-    /// Returns the [`LocalBindingHandle`]s covered by `s`. See
-    /// [`Hir::get_item_slice`].
-    pub(crate) fn get_parameter_slice(&self, s: ParameterSlice) -> &[LocalBindingHandle] {
-        &self.parameter_children[s.start as usize..(s.start + s.len) as usize]
+    /// Returns the [`LocalBindingId`]s covered by `parameter_id_span`. See
+    /// [`Hir::get_definition_ids`].
+    pub(crate) fn get_parameter_binding_ids(&self, parameter_id_span: ParameterIdSpan) -> &[LocalBindingId] {
+        &self.parameter_children_ids
+            [parameter_id_span.start as usize..(parameter_id_span.start + parameter_id_span.len) as usize]
     }
 
     /// Returns every `func` in the program, in declaration order.
     ///
-    /// Reads [`Hir::items`] directly rather than walking down from
-    /// [`SourceFileNode::items`], because that table is flat: a `func` nested inside another
+    /// Reads [`Hir::definitions`] directly rather than walking down from
+    /// [`SourceFileNode::definitions`], because that table is flat: a `func` nested inside another
     /// function's body is added to it just like a top-level one, and is only *reachable* from
-    /// the tree via a [`StatementKind::Item`]. Iterating the table therefore finds nested
+    /// the tree via a [`StatementKind::Definition`]. Iterating the table therefore finds nested
     /// functions for free, and keeps finding them if new places to declare one are added later.
-    pub(crate) fn functions(&self) -> impl Iterator<Item = ItemHandle> + '_ {
-        self.items
+    pub(crate) fn functions_ids(&self) -> impl Iterator<Item = DefinitionId> + '_ {
+        self.definitions
             .iter()
-            .filter(|(_, node)| matches!(node.kind, ItemKind::Function { .. }))
-            .map(|(item, _)| item)
+            .filter(|(_, definition)| matches!(definition.kind, DefinitionKind::Function { .. }))
+            .map(|(definition_id, _)| definition_id)
     }
 
-    /// Adds an [`Item`] to [`Hir::items`] and returns its handle.
-    pub(crate) fn add_item(&mut self, kind: ItemKind, span: Span) -> ItemHandle {
-        self.items.add(Item { kind, span })
+    /// Adds an [`Definition`] to [`Hir::definitions`] and returns its handle.
+    pub(crate) fn add_definition(&mut self, kind: DefinitionKind, span: Span) -> DefinitionId {
+        self.definitions.add(Definition { kind, span })
     }
 
     /// Adds a [`Statement`] to [`Hir::statements`] and returns its
     /// handle.
-    pub(crate) fn add_statement(&mut self, kind: StatementKind, span: Span) -> StatementHandle {
+    pub(crate) fn add_statement(&mut self, kind: StatementKind, span: Span) -> StatementId {
         self.statements.add(Statement { kind, span })
     }
 
     /// Adds an [`Expression`] (with its already-resolved or
-    /// not-yet-resolved [`TypeHandle`]) to [`Hir::expressions`] and returns its
+    /// not-yet-resolved [`TypeId`]) to [`Hir::expressions`] and returns its
     /// handle.
     pub(crate) fn add_expression(
         &mut self,
         kind: ExpressionKind,
-        ty: TypeHandle,
+        ty: TypeId,
         span: Span,
-    ) -> ExpressionHandle {
+    ) -> ExpressionId {
         self.expressions.add(Expression { kind, ty, span })
     }
 
-    /// Appends `items` to the [`Hir::item_children`] pool and returns an
-    /// [`ItemSlice`] over the appended range. Every `add_*_slice` method
-    /// below follows this same append-and-slice pattern for its own
+    /// Appends `definitions` to the [`Hir::definition_children_ids`] pool and returns an
+    /// [`DefinitionIdSpan`] over the appended range. Every `add_*_slice`
+    /// method below follows this same append-and-slice pattern for its own
     /// child-node pool.
-    pub(crate) fn add_item_slice(&mut self, items: &[ItemHandle]) -> ItemSlice {
-        let start = self.item_children.len() as u32;
-        self.item_children.extend_from_slice(items);
-        ItemSlice {
-            start,
-            len: items.len() as u32,
-        }
-    }
-
-    /// Appends `statements` to the [`Hir::statement_children`] pool and
-    /// returns a [`StatementSlice`] over the appended range. See
-    /// [`Hir::add_item_slice`].
-    pub(crate) fn add_statement_slice(&mut self, statements: &[StatementHandle]) -> StatementSlice {
-        let start = self.statement_children.len() as u32;
-        self.statement_children.extend_from_slice(statements);
-        StatementSlice {
-            start,
-            len: statements.len() as u32,
-        }
-    }
-
-    /// Appends `expressions` to the [`Hir::expression_children`] pool and
-    /// returns an [`ExpressionSlice`] over the appended range. See
-    /// [`Hir::add_item_slice`].
-    pub(crate) fn add_expression_slice(
+    pub(crate) fn add_definition_ids(
         &mut self,
-        expressions: &[ExpressionHandle],
-    ) -> ExpressionSlice {
-        let start = self.expression_children.len() as u32;
-        self.expression_children.extend_from_slice(expressions);
-        ExpressionSlice {
+        definition_ids: &[DefinitionId],
+    ) -> DefinitionIdSpan {
+        let start = self.definition_children_ids.len() as u32;
+        self.definition_children_ids.extend_from_slice(definition_ids);
+        DefinitionIdSpan {
             start,
-            len: expressions.len() as u32,
+            len: definition_ids.len() as u32,
         }
     }
 
-    /// Appends `params` to the [`Hir::parameter_children`] pool and returns
-    /// a [`ParameterSlice`] over the appended range. See
-    /// [`Hir::add_item_slice`].
-    pub(crate) fn add_parameter_slice(&mut self, params: &[LocalBindingHandle]) -> ParameterSlice {
-        let start = self.parameter_children.len() as u32;
-        self.parameter_children.extend_from_slice(params);
-        ParameterSlice {
+    /// Appends `statements` to the [`Hir::statement_children_ids`] pool and
+    /// returns a [`StatementIdSpan`] over the appended range. See
+    /// [`Hir::add_definition_slice`].
+    pub(crate) fn add_statement_ids(
+        &mut self,
+        statement_ids: &[StatementId],
+    ) -> StatementIdSpan {
+        let start = self.statement_children_ids.len() as u32;
+        self.statement_children_ids.extend_from_slice(statement_ids);
+        StatementIdSpan {
             start,
-            len: params.len() as u32,
+            len: statement_ids.len() as u32,
+        }
+    }
+
+    /// Appends `expressions` to the [`Hir::expression_children_ids`] pool and
+    /// returns an [`ExpressionIdSpan`] over the appended range. See
+    /// [`Hir::add_definition_slice`].
+    pub(crate) fn add_expression_ids(
+        &mut self,
+        expression_ids: &[ExpressionId],
+    ) -> ExpressionIdSpan {
+        let start = self.expression_children_ids.len() as u32;
+        self.expression_children_ids.extend_from_slice(expression_ids);
+        ExpressionIdSpan {
+            start,
+            len: expression_ids.len() as u32,
+        }
+    }
+
+    /// Appends `params` to the [`Hir::parameter_children_ids`] pool and returns
+    /// a [`ParameterIdSpan`] over the appended range. See
+    /// [`Hir::add_definition_slice`].
+    pub(crate) fn add_parameter_ids(
+        &mut self,
+        parameter_ids: &[LocalBindingId],
+    ) -> ParameterIdSpan {
+        let start = self.parameter_children_ids.len() as u32;
+        self.parameter_children_ids.extend_from_slice(parameter_ids);
+        ParameterIdSpan {
+            start,
+            len: parameter_ids.len() as u32,
         }
     }
 
     /// Adds a [`LocalBinding`] to [`Hir::local_bindings`] for a function
-    /// parameter or `let` binding and returns its [`LocalBindingHandle`].
+    /// parameter or `let` binding and returns its [`LocalBindingId`].
     pub(crate) fn add_local_binding(
         &mut self,
         name: Symbol,
         mutable: bool,
-        annotation: Option<TypeHandle>,
-        ty: TypeHandle,
+        annotation: Option<TypeId>,
+        ty: TypeId,
         span: Span,
-    ) -> LocalBindingHandle {
+    ) -> LocalBindingId {
         self.local_bindings.add(LocalBinding {
             name,
             mutable,
@@ -429,177 +435,178 @@ impl Hir {
         })
     }
 
-    /// Adds an [`ItemBinding`] to [`Hir::item_bindings`] for a top-level or
-    /// nested `func`/`const` item and returns its [`ItemBindingHandle`].
-    pub(crate) fn add_item_binding(
+    /// Adds an [`DefinitionBinding`] to [`Hir::definition_bindings`] for a top-level or
+    /// nested `func`/`const` definition and returns its [`DefinitionBindingId`].
+    pub(crate) fn add_definition_binding(
         &mut self,
         name: Symbol,
-        ty: TypeHandle,
+        ty: TypeId,
         span: Span,
-    ) -> ItemBindingHandle {
-        self.item_bindings.add(ItemBinding { name, ty, span })
+    ) -> DefinitionBindingId {
+        self.definition_bindings
+            .add(DefinitionBinding { name, ty, span })
     }
 
-    /// Returns a view over `item_handle` for item-local queries.
-    pub(crate) fn get_item(&self, item_handle: ItemHandle) -> ItemView<'_> {
-        ItemView {
-            item_handle,
+    /// Returns a view over `definition_id` for definition-local queries.
+    pub(crate) fn get_definition(&self, definition_id: DefinitionId) -> DefinitionView<'_> {
+        DefinitionView {
+            definition_id,
             hir: self,
         }
     }
 
-    /// Returns a view over `statement_handle` for statement-local queries.
-    pub(crate) fn get_statement(&self, statement_handle: StatementHandle) -> StatementView<'_> {
+    /// Returns a view over `statement_id` for statement-local queries.
+    pub(crate) fn get_statement(&self, statement_id: StatementId) -> StatementView<'_> {
         StatementView {
-            statement_handle,
+            statement_id,
             hir: self,
         }
     }
 
-    /// Returns a view over `expression_handle` for expression-local
+    /// Returns a view over `expression_id` for expression-local
     /// queries.
-    pub(crate) fn get_expression(&self, expression_handle: ExpressionHandle) -> ExpressionView<'_> {
+    pub(crate) fn get_expression(&self, expression_id: ExpressionId) -> ExpressionView<'_> {
         ExpressionView {
-            expression_handle,
+            expression_id,
             hir: self,
         }
     }
 
-    /// Returns a view over `local_binding_handle` for local-binding
+    /// Returns a view over `local_binding_id` for local-binding
     /// queries.
     pub(crate) fn get_local_binding(
         &self,
-        local_binding_handle: LocalBindingHandle,
+        local_binding_id: LocalBindingId,
     ) -> LocalBindingView<'_> {
         LocalBindingView {
-            local_binding_handle,
+            local_binding_id,
             hir: self,
         }
     }
 
-    /// Returns a view over `item_binding_handle` for item-binding queries.
-    pub(crate) fn get_item_binding(
+    /// Returns a view over `definition_binding_id` for definition-binding queries.
+    pub(crate) fn get_definition_binding(
         &self,
-        item_binding_handle: ItemBindingHandle,
-    ) -> ItemBindingView<'_> {
-        ItemBindingView {
-            item_binding_handle,
+        definition_binding_id: DefinitionBindingId,
+    ) -> DefinitionBindingView<'_> {
+        DefinitionBindingView {
+            definition_binding_id,
             hir: self,
         }
     }
 }
 
-impl<'a> ItemView<'a> {
-    /// Returns this item's handle.
-    pub(crate) fn id(&self) -> ItemHandle {
-        self.item_handle
+impl<'a> DefinitionView<'a> {
+    /// Returns this definition's handle.
+    pub(crate) fn id(&self) -> DefinitionId {
+        self.definition_id
     }
 
-    /// Returns this item's kind.
-    pub(crate) fn kind(&self) -> &'a ItemKind {
-        &self.hir.items[self.item_handle].kind
+    /// Returns this definition's kind.
+    pub(crate) fn kind(&self) -> &'a DefinitionKind {
+        &self.hir.definitions[self.definition_id].kind
     }
 
-    /// Returns this item's source span.
+    /// Returns this definition's source span.
     pub(crate) fn span(&self) -> Span {
-        self.hir.items[self.item_handle].span
+        self.hir.definitions[self.definition_id].span
     }
 }
 
 impl<'a> StatementView<'a> {
     /// Returns this statement's handle.
-    pub(crate) fn id(&self) -> StatementHandle {
-        self.statement_handle
+    pub(crate) fn id(&self) -> StatementId {
+        self.statement_id
     }
 
     /// Returns this statement's kind.
     pub(crate) fn kind(&self) -> &'a StatementKind {
-        &self.hir.statements[self.statement_handle].kind
+        &self.hir.statements[self.statement_id].kind
     }
 
     /// Returns this statement's source span.
     pub(crate) fn span(&self) -> Span {
-        self.hir.statements[self.statement_handle].span
+        self.hir.statements[self.statement_id].span
     }
 }
 
 impl<'a> ExpressionView<'a> {
     /// Returns this expression's handle.
-    pub(crate) fn id(&self) -> ExpressionHandle {
-        self.expression_handle
+    pub(crate) fn id(&self) -> ExpressionId {
+        self.expression_id
     }
 
     /// Returns this expression's kind.
     pub(crate) fn kind(&self) -> &'a ExpressionKind {
-        &self.hir.expressions[self.expression_handle].kind
+        &self.hir.expressions[self.expression_id].kind
     }
 
     /// Returns this expression's resolved type.
-    pub(crate) fn ty(&self) -> TypeHandle {
-        self.hir.expressions[self.expression_handle].ty
+    pub(crate) fn ty(&self) -> TypeId {
+        self.hir.expressions[self.expression_id].ty
     }
 
     /// Returns this expression's source span.
     pub(crate) fn span(&self) -> Span {
-        self.hir.expressions[self.expression_handle].span
+        self.hir.expressions[self.expression_id].span
     }
 }
 
 impl<'a> LocalBindingView<'a> {
     /// Returns this local binding's handle.
-    pub(crate) fn id(&self) -> LocalBindingHandle {
-        self.local_binding_handle
+    pub(crate) fn id(&self) -> LocalBindingId {
+        self.local_binding_id
     }
 
     /// Returns this local binding's name.
     pub(crate) fn name(&self) -> Symbol {
-        self.hir.local_bindings[self.local_binding_handle].name
+        self.hir.local_bindings[self.local_binding_id].name
     }
 
     /// Returns whether this local binding was declared `mut`.
     pub(crate) fn mutable(&self) -> bool {
-        self.hir.local_bindings[self.local_binding_handle].mutable
+        self.hir.local_bindings[self.local_binding_id].mutable
     }
 
     /// Returns this local binding's explicit type annotation, if any.
-    pub(crate) fn annotation(&self) -> Option<TypeHandle> {
-        self.hir.local_bindings[self.local_binding_handle].annotation
+    pub(crate) fn annotation(&self) -> Option<TypeId> {
+        self.hir.local_bindings[self.local_binding_id].annotation
     }
 
     /// Returns this local binding's resolved type.
-    pub(crate) fn ty(&self) -> TypeHandle {
-        self.hir.local_bindings[self.local_binding_handle].ty
+    pub(crate) fn ty(&self) -> TypeId {
+        self.hir.local_bindings[self.local_binding_id].ty
     }
 
     /// Returns this local binding's source span.
     pub(crate) fn span(&self) -> Span {
-        self.hir.local_bindings[self.local_binding_handle].span
+        self.hir.local_bindings[self.local_binding_id].span
     }
 }
 
-impl<'a> ItemBindingView<'a> {
-    /// Returns this item binding's handle.
-    pub(crate) fn id(&self) -> ItemBindingHandle {
-        self.item_binding_handle
+impl<'a> DefinitionBindingView<'a> {
+    /// Returns this definition binding's handle.
+    pub(crate) fn id(&self) -> DefinitionBindingId {
+        self.definition_binding_id
     }
 
-    /// Returns this item binding's name.
+    /// Returns this definition binding's name.
     pub(crate) fn name(&self) -> Symbol {
-        self.hir.item_bindings[self.item_binding_handle].name
+        self.hir.definition_bindings[self.definition_binding_id].name
     }
 
-    /// Returns this item binding's resolved type.
-    pub(crate) fn ty(&self) -> TypeHandle {
-        self.hir.item_bindings[self.item_binding_handle].ty
+    /// Returns this definition binding's resolved type.
+    pub(crate) fn ty(&self) -> TypeId {
+        self.hir.definition_bindings[self.definition_binding_id].ty
     }
 
-    /// Returns this item binding's source span.
+    /// Returns this definition binding's source span.
     pub(crate) fn span(&self) -> Span {
-        self.hir.item_bindings[self.item_binding_handle].span
+        self.hir.definition_bindings[self.definition_binding_id].span
     }
 }
 
-impl<T, const KIND: u8> TypedBindingHandle<T, KIND> {
+impl<T, const KIND: u8> TypedBindingId<T, KIND> {
     pub(crate) const ERROR: Self = Self(u32::MAX, PhantomData);
 
     pub(crate) const fn new(index: usize) -> Self {
@@ -615,7 +622,7 @@ impl<T, const KIND: u8> TypedBindingHandle<T, KIND> {
     }
 }
 
-impl<T, const KIND: u8> soup::handle_map::Handle for TypedBindingHandle<T, KIND> {
+impl<T, const KIND: u8> soup::handle_map::Handle for TypedBindingId<T, KIND> {
     fn new(index: usize) -> Self {
         Self(index as u32, PhantomData)
     }
@@ -624,40 +631,40 @@ impl<T, const KIND: u8> soup::handle_map::Handle for TypedBindingHandle<T, KIND>
     }
 }
 
-impl<T, const KIND: u8> Clone for TypedBindingHandle<T, KIND> {
+impl<T, const KIND: u8> Clone for TypedBindingId<T, KIND> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, const KIND: u8> Copy for TypedBindingHandle<T, KIND> {}
-impl<T, const KIND: u8> PartialEq for TypedBindingHandle<T, KIND> {
+impl<T, const KIND: u8> Copy for TypedBindingId<T, KIND> {}
+impl<T, const KIND: u8> PartialEq for TypedBindingId<T, KIND> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-impl<T, const KIND: u8> Eq for TypedBindingHandle<T, KIND> {}
-impl<T, const KIND: u8> std::hash::Hash for TypedBindingHandle<T, KIND> {
+impl<T, const KIND: u8> Eq for TypedBindingId<T, KIND> {}
+impl<T, const KIND: u8> std::hash::Hash for TypedBindingId<T, KIND> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
     }
 }
-impl<T, const KIND: u8> From<usize> for TypedBindingHandle<T, KIND> {
+impl<T, const KIND: u8> From<usize> for TypedBindingId<T, KIND> {
     fn from(index: usize) -> Self {
         Self::new(index)
     }
 }
-impl<T, const KIND: u8> From<TypedBindingHandle<T, KIND>> for usize {
-    fn from(id: TypedBindingHandle<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedBindingId<T, KIND>> for usize {
+    fn from(id: TypedBindingId<T, KIND>) -> Self {
         id.index()
     }
 }
-impl<T, const KIND: u8> fmt::Debug for TypedBindingHandle<T, KIND> {
+impl<T, const KIND: u8> fmt::Debug for TypedBindingId<T, KIND> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BindingHandle({})", self.0)
+        write!(f, "BindingId({})", self.0)
     }
 }
 
-impl BindingHandle {
+impl BindingId {
     const INDEX_BITS: u32 = 31;
     const KIND_MASK: u32 = 0b1 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
@@ -672,15 +679,15 @@ impl BindingHandle {
     ///
     /// # Panics
     ///
-    /// Panics if this is [`BindingHandle::ERROR`].
+    /// Panics if this is [`BindingId::ERROR`].
     pub(crate) fn kind(self) -> BindingKind {
         assert!(
             !self.is_error(),
-            "called `kind()` on an error BindingHandle"
+            "called `kind()` on an error BindingId"
         );
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => BindingKind::Local,
-            _ => BindingKind::Item,
+            _ => BindingKind::Definition,
         }
     }
 
@@ -688,30 +695,30 @@ impl BindingHandle {
     ///
     /// # Panics
     ///
-    /// Panics if this is [`BindingHandle::ERROR`].
+    /// Panics if this is [`BindingId::ERROR`].
     pub(crate) fn index(self) -> usize {
         assert!(
             !self.is_error(),
-            "called `index()` on an error BindingHandle"
+            "called `index()` on an error BindingId"
         );
         (self.0 & Self::INDEX_MASK) as usize
     }
 
-    /// Returns this handle as a [`LocalBindingHandle`], or `None` if it
+    /// Returns this handle as a [`LocalBindingId`], or `None` if it
     /// doesn't refer to a local binding.
-    pub(crate) fn as_local(self) -> Option<LocalBindingHandle> {
+    pub(crate) fn as_local(self) -> Option<LocalBindingId> {
         if !self.is_error() && self.kind() == BindingKind::Local {
-            Some(LocalBindingHandle::new(self.index()))
+            Some(LocalBindingId::new(self.index()))
         } else {
             None
         }
     }
 
-    /// Returns this handle as an [`ItemBindingHandle`], or `None` if it
-    /// doesn't refer to an item binding.
-    pub(crate) fn as_item(self) -> Option<ItemBindingHandle> {
-        if !self.is_error() && self.kind() == BindingKind::Item {
-            Some(ItemBindingHandle::new(self.index()))
+    /// Returns this handle as an [`DefinitionBindingId`], or `None` if it
+    /// doesn't refer to an definition binding.
+    pub(crate) fn as_definition(self) -> Option<DefinitionBindingId> {
+        if !self.is_error() && self.kind() == BindingKind::Definition {
+            Some(DefinitionBindingId::new(self.index()))
         } else {
             None
         }
@@ -726,8 +733,8 @@ impl BindingHandle {
     }
 }
 
-impl<T, const KIND: u8> From<TypedBindingHandle<T, KIND>> for BindingHandle {
-    fn from(typed: TypedBindingHandle<T, KIND>) -> Self {
+impl<T, const KIND: u8> From<TypedBindingId<T, KIND>> for BindingId {
+    fn from(typed: TypedBindingId<T, KIND>) -> Self {
         Self::new(KIND, typed.index())
     }
 }

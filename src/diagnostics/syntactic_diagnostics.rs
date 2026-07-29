@@ -5,7 +5,7 @@ use crate::common::span::Span;
 /// A syntax error raised while parsing tokens into an [`Ast`](crate::front_end::syntactic_analysis::ast::Ast).
 #[derive(Debug, Clone)]
 pub(crate) enum SyntacticDiagnostic {
-    InvalidTopLevelItem {
+    InvalidTopLevelDefinition {
         span: Span,
         found: String,
     },
@@ -56,10 +56,13 @@ impl SyntacticDiagnostic {
                     )
                     .finish()
             }
-            Self::InvalidTopLevelItem { span, found } => {
+            Self::InvalidTopLevelDefinition { span, found } => {
                 Report::build(ReportKind::Error, filename, span.start() as usize)
                     .with_code("E0103")
-                    .with_message(format!("expected a top-level item, found `{}`", found))
+                    .with_message(format!(
+                        "expected a top-level definition, found `{}`",
+                        found
+                    ))
                     .with_label(
                         Label::new((filename, span.into()))
                             .with_message("only `func` and `const` are allowed at the top-level")

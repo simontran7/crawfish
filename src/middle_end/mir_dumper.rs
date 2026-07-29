@@ -6,7 +6,7 @@ use soup::handle_map::Handle;
 
 use crate::common::context::CompilerContext;
 use crate::middle_end::mir::{
-    BlockHandle, Function, InstructionHandle, InstructionRef, Mir, ValueHandle,
+    BlockId, Function, InstructionId, InstructionRef, Mir, SsaValueId,
 };
 
 /// Dumps every [`Function`] in a [`Mir`], blank-line separated.
@@ -46,7 +46,7 @@ pub(crate) trait FunctionWriter {
         &mut self,
         dumper: &FunctionDumper,
         out: &mut String,
-        block: BlockHandle,
+        block: BlockId,
         indent: usize,
     ) -> fmt::Result {
         dumper.block_header(out, block, indent)
@@ -56,7 +56,7 @@ pub(crate) trait FunctionWriter {
         &mut self,
         dumper: &FunctionDumper,
         out: &mut String,
-        instruction: InstructionHandle,
+        instruction: InstructionId,
         indent: usize,
     ) -> fmt::Result {
         dumper.instruction(out, instruction, indent)
@@ -115,7 +115,7 @@ impl<'a> FunctionDumper<'a> {
         let parameters = self
             .function
             .signature
-            .parameters
+            .parameter_type_ids
             .iter()
             .map(|&ty| self.ctx.type_interner.to_string(ty))
             .collect::<Vec<_>>()
@@ -123,7 +123,7 @@ impl<'a> FunctionDumper<'a> {
         let return_type = self
             .ctx
             .type_interner
-            .to_string(self.function.signature.return_type);
+            .to_string(self.function.signature.return_type_id);
         writeln!(out, "function {name}({parameters}) -> {return_type} {{")?;
 
         // Instructions indent 4; block headers sit outdented 4 from that.
@@ -153,7 +153,7 @@ impl<'a> FunctionDumper<'a> {
                 "",
                 indent.saturating_sub(4)
             )?;
-            let mut targets: Vec<ValueHandle> = aliases.keys().copied().collect();
+            let mut targets: Vec<SsaValueId> = aliases.keys().copied().collect();
             targets.sort_by_key(|value| value.index());
             for target in targets {
                 self.write_value_aliases(out, &mut aliases, target, indent)?;
@@ -167,8 +167,8 @@ impl<'a> FunctionDumper<'a> {
         &self,
         writer: &mut FW,
         out: &mut String,
-        aliases: &mut HashMap<ValueHandle, Vec<ValueHandle>>,
-        block: BlockHandle,
+        aliases: &mut HashMap<SsaValueId, Vec<SsaValueId>>,
+        block: BlockId,
         indent: usize,
     ) -> fmt::Result {
         writer.write_block_header(self, out, block, indent)?;
@@ -190,7 +190,7 @@ impl<'a> FunctionDumper<'a> {
     pub(crate) fn block_header(
         &self,
         out: &mut String,
-        block: BlockHandle,
+        block: BlockId,
         indent: usize,
     ) -> fmt::Result {
         write!(out, "{:1$}Block{2}", "", indent - 4, block.index())?;
@@ -218,7 +218,7 @@ impl<'a> FunctionDumper<'a> {
     pub(crate) fn instruction(
         &self,
         out: &mut String,
-        instruction: InstructionHandle,
+        instruction: InstructionId,
         indent: usize,
     ) -> fmt::Result {
         write!(out, "{:indent$}", "")?;
@@ -231,17 +231,17 @@ impl<'a> FunctionDumper<'a> {
         }
 
         match view.as_ref() {
-            InstructionRef::Binary { operator, args } => {
+            InstructionRef::Binary { operator, operands } => {
                 write!(
                     out,
                     "Binary {:?} v{}, v{}",
                     operator,
-                    args[0].index(),
-                    args[1].index()
+                    operands[0].index(),
+                    operands[1].index()
                 )?;
             }
-            InstructionRef::Unary { operator, arg } => {
-                write!(out, "Unary {:?} v{}", operator, arg.index())?;
+            InstructionRef::Unary { operator, operand } => {
+                write!(out, "Unary {:?} v{}", operator, operand.index())?;
             }
             InstructionRef::IntegerLiteral { value } => {
                 write!(out, "IntegerLiteral {value}")?;
@@ -262,13 +262,13 @@ impl<'a> FunctionDumper<'a> {
                 self.block_call(out, destination, args)?;
             }
             InstructionRef::BranchIf {
-                arg,
+                operand,
                 then_destination,
                 then_args,
                 else_destination,
                 else_args,
             } => {
-                write!(out, "BranchIf v{}, ", arg.index())?;
+                write!(out, "BranchIf v{}, ", operand.index())?;
                 self.block_call(out, then_destination, then_args)?;
                 write!(out, ", ")?;
                 self.block_call(out, else_destination, else_args)?;
@@ -289,8 +289,8 @@ impl<'a> FunctionDumper<'a> {
     fn block_call(
         &self,
         out: &mut String,
-        block: BlockHandle,
-        args: &[ValueHandle],
+        block: BlockId,
+        args: &[SsaValueId],
     ) -> fmt::Result {
         write!(out, "Block{}", block.index())?;
         if !args.is_empty() {
@@ -302,8 +302,8 @@ impl<'a> FunctionDumper<'a> {
     /// Builds the reverse alias map: immediate target → every value aliased
     /// directly to it.
     /// // source: cranelift write.rs `alias_map`
-    fn alias_map(&self) -> HashMap<ValueHandle, Vec<ValueHandle>> {
-        let mut map: HashMap<ValueHandle, Vec<ValueHandle>> = HashMap::new();
+    fn alias_map(&self) -> HashMap<SsaValueId, Vec<SsaValueId>> {
+        let mut map: HashMap<SsaValueId, Vec<SsaValueId>> = HashMap::new();
         for value in self.function.body.values() {
             if let Some(target) = self.function.body.get_value(value).alias_target() {
                 map.entry(target).or_default().push(value);
@@ -319,8 +319,8 @@ impl<'a> FunctionDumper<'a> {
     fn write_value_aliases(
         &self,
         out: &mut String,
-        aliases: &mut HashMap<ValueHandle, Vec<ValueHandle>>,
-        target: ValueHandle,
+        aliases: &mut HashMap<SsaValueId, Vec<SsaValueId>>,
+        target: SsaValueId,
         indent: usize,
     ) -> fmt::Result {
         let mut todo_stack = vec![target];
@@ -343,7 +343,7 @@ impl<'a> FunctionDumper<'a> {
     }
 }
 
-fn join_values(values: &[ValueHandle]) -> String {
+fn join_values(values: &[SsaValueId]) -> String {
     values
         .iter()
         .map(|value| format!("v{}", value.index()))

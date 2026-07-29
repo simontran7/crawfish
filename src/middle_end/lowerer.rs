@@ -1,18 +1,16 @@
 use std::collections::HashMap;
 
 use crate::common::context::CompilerContext;
-use crate::common::types::TypeHandle;
+use crate::common::types::TypeId;
 use crate::diagnostics::lowering_diagnostics::LoweringDiagnostic;
 use crate::front_end::semantic_analysis::hir::{
-    BindingKind, ExpressionHandle, ExpressionKind, Hir, ItemBindingHandle, ItemHandle, ItemKind,
-    LocalBindingHandle, ParameterSlice, StatementHandle, StatementKind,
+    BindingKind, DefinitionBindingId, DefinitionId, DefinitionKind, ExpressionId,
+    ExpressionKind, Hir, LocalBindingId, ParameterIdSpan, StatementId, StatementKind,
 };
 use crate::front_end::syntactic_analysis::ast::nodes::BinOp;
-use crate::middle_end::cfg_cursor::CfgCursor;
-use crate::middle_end::handle_list::HandleListSubAllocator;
+use crate::middle_end::cfg_cursor::CursorPosition;
 use crate::middle_end::mir::{
-    BlockHandle, Cfg, Function, FunctionReferenceHandle, InstructionHandle, Mir, Signature,
-    ValueHandle,
+    BlockId, Cfg, Function, FunctionReferenceId, Mir, Signature, SsaValueId,
 };
 use crate::middle_end::ssa_constructor::SsaConstructor;
 
@@ -21,8 +19,6 @@ pub(crate) struct MirLowerer<'a> {
     hir: &'a Hir,
     ctx: &'a CompilerContext,
     mir: Mir,
-    predecessors_edges_suballoc: HandleListSubAllocator<InstructionHandle>,
-    incomplete_alloc: HandleListSubAllocator<LocalBindingHandle>,
 }
 
 impl<'a> MirLowerer<'a> {
@@ -32,247 +28,197 @@ impl<'a> MirLowerer<'a> {
             hir,
             ctx,
             mir: Mir::new(),
-            predecessors_edges_suballoc: HandleListSubAllocator::new(),
-            incomplete_alloc: HandleListSubAllocator::new(),
         }
     }
 
     /// Lowers every function in the HIR, emitting any diagnostics into [`CompilerContext::diagnostics`].
     pub(crate) fn lower(mut self) -> Mir {
-        for function_handle in self.hir.functions() {
-            let mir_function = self.lower_function(function_handle);
-            self.mir.add_function(mir_function);
+        for function_id in self.hir.functions_ids() {
+            let function = self.lower_function(function_id);
+            self.mir.add_function(function);
         }
-        self.mir.builtin_println = self.hir.builtin_println;
         self.mir
     }
 
-    /// Lowers the HIR function pointed by `function_handle` to its MIR [`Function`].
-    fn lower_function(&mut self, function_handle: ItemHandle) -> Function {
-        let ItemKind::Function {
-            binding,
-            parameters,
-            body,
-        } = *self.hir.get_item(function_handle).kind()
+    /// Resolves `function_handle`'s binding/name/signature, then builds and
+    /// lowers its body into a finished Mir [`Function`].
+    fn lower_function(&mut self, function_id: DefinitionId) -> Function {
+        let DefinitionKind::Function {
+            definition_binding_id,
+            parameter_id_span,
+            body_id,
+        } = *self.hir.get_definition(function_id).kind()
         else {
-            panic!("`lower_function()` expects an HIR function handle")
+            panic!("`MirLowerer::lower_function()` expects an HIR function handle")
         };
-        let binding_view = self.hir.get_item_binding(binding);
-        let name = binding_view.name();
-        let (parameter_types, return_type) =
-            self.ctx.type_interner.as_func(binding_view.ty()).unwrap();
+        let definition_binding_view = self.hir.get_definition_binding(definition_binding_id);
+        let name = definition_binding_view.name();
+        let (parameter_type_ids, return_type_id) =
+            self.ctx.type_interner.as_func(definition_binding_view.ty()).unwrap();
         let signature = Signature {
-            parameters: parameter_types
+            parameter_type_ids: parameter_type_ids
                 .iter()
                 .copied()
                 .filter(|&ty| !self.ctx.type_interner.is_zero_sized(ty))
                 .collect(),
-            return_type,
+            return_type_id: return_type_id,
         };
-        let mut function = Function::new(binding, name, signature);
 
-        let func_builder = FunctionBuilder::new(
-            self.hir,
-            self.ctx,
-            &mut function.body,
-            &mut self.predecessors_edges_suballoc,
-            &mut self.incomplete_alloc,
-        );
-        func_builder.lower_body(parameters, body);
-
-        CfgCursor::new(&mut function.body).flush_aliases();
-
-        function
+        Function {
+            definition_binding_id,
+            name,
+            signature,
+            body: CfgBuilder::new(self.hir, self.ctx).lower(parameter_id_span, body_id),
+        }
     }
 }
 
-/// Fills in one [`Function`]'s [`Cfg`][crate::middle_end::mir::Cfg].
-///
-/// Contracts inherited from semantic analysis:
-/// - Mutability of assignment targets is NOT checked there — the `Assign`
-///   arm here checks `hir.get_local_binding(binding).mutable()`.
-///   NOTE: sound only because every `let` has an initializer; when `let x;`
-///   lands, this check moves into a definite-initialization MIR pass.
-/// - `Return` has type `never` and never-coercion doesn't exist, so a
-///   diverging expression only occurs in statement position; value-position
-///   lowering may `expect` values after type checking passed.
-/// - Constant initializers can't reference locals (`ConstantBoundary`), so
-///   constant references lower by re-lowering the initializer inline.
-/// - Zero-sized types carry no value in MIR (see
-///   [`FunctionBuilder::is_zero_sized`]; unit is the only one today):
-///   such expressions lower to `None`, such variables never enter SSA, and
-///   such parameters are skipped.
-///   (v1 limitation: zero-sized call *arguments* are unsupported.)
-struct FunctionBuilder<'a> {
+struct CfgBuilder<'a> {
     hir: &'a Hir,
     ctx: &'a CompilerContext,
-    cursor: CfgCursor<'a>,
-    ssa: SsaConstructor<'a>,
-    // source: cranelift stack.rs `ControlStackFrame::Loop`, minus the wasm operand-stack fields
+    cfg: Cfg,
+    cursor: CursorPosition,
+    ssa: SsaConstructor,
     loop_frames: Vec<LoopFrame>,
-    // source: cranelift stack.rs `FuncTranslationStacks::reachable`
-    reachable: bool,
-    // source: memoization pattern of wasmtime's `get_or_create_interned_sig_ref` (code_translator.rs Operator::Call)
-    function_refs: HashMap<ItemBindingHandle, FunctionReferenceHandle>,
-    // source: wasmtime stack.rs `block_param_vars` — representing merge values as variables so SSA construction decides whether a real block parameter is needed
+    function_refs: HashMap<DefinitionBindingId, FunctionReferenceId>,
     next_synthetic_variable: usize,
 }
 
 /// A loop the lowerer is currently inside.
 struct LoopFrame {
     /// `continue` target
-    header: BlockHandle,
+    header_id: BlockId,
     /// `break` target
-    exit: BlockHandle,
+    exit_id: BlockId,
     /// Whether any edge into `exit` has been emitted.
     exit_is_branched_to: bool,
 }
 
-impl<'a> FunctionBuilder<'a> {
-    /// Creates a builder positioned over `cfg`, the CFG of the function about
-    /// to be lowered.
-    fn new(
-        hir: &'a Hir,
-        ctx: &'a CompilerContext,
-        cfg: &'a mut Cfg,
-        predecessors_edges_suballoc: &'a mut HandleListSubAllocator<InstructionHandle>,
-        incomplete_alloc: &'a mut HandleListSubAllocator<LocalBindingHandle>,
-    ) -> Self {
+impl<'a> CfgBuilder<'a> {
+    /// Creates a lowerer with a fresh, empty `Cfg`.
+    fn new(hir: &'a Hir, ctx: &'a CompilerContext) -> Self {
         Self {
             hir,
             ctx,
-            cursor: CfgCursor::new(cfg),
-            ssa: SsaConstructor::new(predecessors_edges_suballoc, incomplete_alloc),
+            cfg: Cfg::new(),
+            cursor: CursorPosition::new(),
+            ssa: SsaConstructor::new(),
             loop_frames: Vec::new(),
-            reachable: true,
             function_refs: HashMap::new(),
             next_synthetic_variable: hir.local_bindings.count(),
         }
     }
 
-    fn lower_body(mut self, parameters: ParameterSlice, body: ExpressionHandle) {
-        // entry block: no predecessors, so seal immediately.
-        // // source: func_translator.rs — "builder.seal_block(entry_block);
-        // // Declare all predecessors known."
-        let entry = self.new_block();
-        self.enter_block(entry);
-        self.ssa.seal_block(&mut self.cursor, entry);
+    fn reachable(&self) -> bool {
+        match self.cursor.current_block(&self.cfg) {
+            Some(block) => !self
+                .cfg
+                .get_block(block)
+                .last_instruction()
+                .is_some_and(|id| self.cfg.get_instruction(id).is_terminator()),
+            None => true,
+        }
+    }
 
-        // parameters: "user" block parameters on the entry block, each one
-        // written as the initial SSA definition of its binding.
-        // // source: func_translator.rs::declare_wasm_parameters —
-        // // `builder.def_var(local, param_value)`
-        let parameter_bindings: Vec<LocalBindingHandle> =
-            self.hir.get_parameter_slice(parameters).to_vec();
-        for binding in parameter_bindings {
-            let ty = self.hir.get_local_binding(binding).ty();
-            if self.ctx.type_interner.is_zero_sized(ty) {
-                continue; // unit carries no value
+    /// lowers the body, and returns the finished [`Cfg`].
+    fn lower(mut self, parameter_id_span: ParameterIdSpan, body_id: ExpressionId) -> Cfg {
+        // create an entry block
+        let entry_block_id = self.cfg.create_block();
+        self.cursor.add_block(&mut self.cfg, entry_block_id);
+
+        // declare and seal the entry
+        self.ssa.declare_block(entry_block_id);
+        self.ssa.seal_block(&mut self.cfg, entry_block_id);
+
+        // turns the function's HIR parameter list into the entry block's MIR parameters
+        for &parameter_binding_id in self.hir.get_parameter_binding_ids(parameter_id_span) {
+            let parameter_binding_view = self.hir.get_local_binding(parameter_binding_id);
+            if self
+                .ctx
+                .type_interner
+                .is_zero_sized(parameter_binding_view.ty())
+            {
+                continue;
             }
-            let value = self.cursor.get_block_mut(entry).append_parameter(ty);
-            self.ssa.write_variable(binding, entry, value);
+            let ssa_value_id = self
+                .cfg
+                .get_block_mut(entry_block_id)
+                .append_parameter(parameter_binding_view.ty());
+            self.ssa.write_variable(parameter_binding_id, entry_block_id, ssa_value_id);
         }
 
-        // body
-        let tail_value = self.lower_expression(body);
+        // lower the tail expression
+        let tail_ssa_value_id = self.lower_expression(body_id);
 
-        // implicit return of the body's tail value.
-        // // source: func_translator.rs::parse_function_body — the trailing
-        // // `if environ.is_reachable() { builder.ins().return_(&returns) }`
-        if self.reachable {
-            match tail_value {
-                Some(value) => self.cursor.add_return(&[value]),
-                None => self.cursor.add_return(&[]),
+        // if there are no returns on every path, create an implicit return of the tail value
+        if self.reachable() {
+            match tail_ssa_value_id {
+                Some(tail_ssa_value_id) => self.cursor.add_return(&mut self.cfg, &[tail_ssa_value_id]),
+                None => self.cursor.add_return(&mut self.cfg, &[]),
             };
-            self.reachable = false;
         }
+
+        // update aliases
+        self.cfg.flush_aliases();
+
+        self.cfg
     }
 
-    fn lower_statement(&mut self, statement: StatementHandle) {
-        // Nothing is ever emitted after a terminator.
-        // // source: code_translator.rs::translate_operator — the leading
-        // // `if !environ.is_reachable() { ... return }` (our tree version
-        // // needs no translate_unreachable_operator: no End/Else bookkeeping)
-        if !self.reachable {
-            return;
-        }
-
-        match *self.hir.get_statement(statement).kind() {
-            StatementKind::Expression { expression, .. } => {
-                self.lower_expression(expression);
-            }
-            StatementKind::Let { pattern, value } => {
-                let value = self.lower_expression(value);
-                if self.reachable {
-                    // unit-typed lets write nothing: unit variables never
-                    // enter SSA and reads of them lower to None.
-                    if let Some(value) = value {
-                        self.ssa
-                            .write_variable(pattern, self.current_block(), value);
-                    }
-                }
-            }
-            StatementKind::Item { .. } => {
-                // no-op: nested `func`s are lowered as separate MIR Functions
-                // by the pipeline driver (they're in hir.items and can't
-                // capture, per FunctionBoundary); nested `const`s are inlined
-                // at each use site by the Variable arm.
-            }
-        }
-    }
-
-    /// `None` means "unit-typed" or "diverged"; callers distinguish via
-    /// `self.reachable`. In crawfish, divergence only occurs in statement
-    /// position (see struct docs), so value-position callers may `expect`.
-    ///
-    /// // source: model: code_translator.rs::translate_operator
-    fn lower_expression(&mut self, expression: ExpressionHandle) -> Option<ValueHandle> {
-        if !self.reachable {
-            return None;
-        }
-
-        let view = self.hir.get_expression(expression);
-        let ty = view.ty();
-        let span = view.span();
-
-        match *view.kind() {
+    fn lower_expression(&mut self, expression_id: ExpressionId) -> Option<SsaValueId> {
+        let expression_view = self.hir.get_expression(expression_id);
+        match *expression_view.kind() {
             ExpressionKind::Unit => None,
-
-            ExpressionKind::Boolean(value) => Some(self.cursor.add_boolean_literal(value, ty)),
-
-            ExpressionKind::Integer(value) => Some(self.cursor.add_integer_literal(ty, value)),
-
-            ExpressionKind::Prefix { operator, rhs } => {
-                let arg = self.lower_expression(rhs)?;
-                Some(self.cursor.add_unary(operator, arg, ty))
+            ExpressionKind::Boolean(value) => Some(self.cursor.add_boolean_literal(
+                &mut self.cfg,
+                value,
+                expression_view.ty(),
+            )),
+            ExpressionKind::Integer(value) => Some(self.cursor.add_integer_literal(
+                &mut self.cfg,
+                expression_view.ty(),
+                value,
+            )),
+            ExpressionKind::Unary { operator, operand_id } => {
+                let operand_id: SsaValueId = self.lower_expression(operand_id)?;
+                Some(
+                    self.cursor
+                        .add_unary(&mut self.cfg, operator, operand_id, expression_view.ty()),
+                )
             }
-
-            ExpressionKind::Infix { operator, lhs, rhs } => match operator {
-                // `and`/`or` are control flow, not Binary instructions:
-                // `a and b` must not evaluate `b` when `a` is false.
-                BinOp::And | BinOp::Or => self.lower_short_circuit(operator, lhs, rhs),
+            ExpressionKind::Binary { operator, lhs_id, rhs_id } => match operator {
+                // `and`/`or` are control flow, not Binary instructions
+                // (e.g., `a and b` must not evaluate `b` when `a` is false)
+                BinOp::And | BinOp::Or => self.lower_short_circuit(operator, lhs_id, rhs_id),
                 _ => {
-                    let lhs = self.lower_expression(lhs)?;
-                    let rhs = self.lower_expression(rhs)?;
-                    Some(self.cursor.add_binary(operator, lhs, rhs, ty))
+                    let lhs_id = self.lower_expression(lhs_id)?;
+                    let rhs_id = self.lower_expression(rhs_id)?;
+                    Some(self.cursor.add_binary(
+                        &mut self.cfg,
+                        operator,
+                        lhs_id,
+                        rhs_id,
+                        expression_view.ty(),
+                    ))
                 }
             },
-
-            ExpressionKind::Variable(binding) => match binding.kind() {
-                // // source: code_translator.rs Operator::LocalGet →
-                // // builder.use_var
+            ExpressionKind::Variable(binding_id) => match binding_id.kind() {
                 BindingKind::Local => {
-                    if self.ctx.type_interner.is_zero_sized(ty) {
+                    if self.ctx.type_interner.is_zero_sized(expression_view.ty()) {
                         return None;
                     }
-                    let local = binding.as_local().unwrap();
-                    let block = self.current_block();
-                    Some(self.ssa.read_variable(&mut self.cursor, local, ty, block))
+                    let local_binding_id = binding_id.as_local().unwrap();
+                    let block_id = self
+                        .cursor
+                        .current_block(&self.cfg).unwrap();
+                    Some(
+                        self.ssa
+                            .read_variable(&mut self.cfg, local_binding_id, expression_view.ty(), block_id),
+                    )
                 }
-                BindingKind::Item => {
-                    let item_binding = binding.as_item().unwrap();
-                    let binding_ty = self.hir.get_item_binding(item_binding).ty();
-                    if self.ctx.type_interner.as_func(binding_ty).is_some() {
+                BindingKind::Definition => {
+                    let definition_binding_id = binding_id.as_definition().unwrap();
+                    let binding_view = self.hir.get_definition_binding(definition_binding_id);
+                    if self.ctx.type_interner.as_func(binding_view.ty()).is_some() {
                         // A function name in value position: only meaningful
                         // as a Call callee, which the Call arm handles
                         // without coming through here.
@@ -280,14 +226,14 @@ impl<'a> FunctionBuilder<'a> {
                     }
                     // Constant reference: re-lower its initializer inline.
                     // Safe: ConstantBoundary forbids local references.
-                    let value = self.constant_value(item_binding);
-                    self.lower_expression(value)
+                    let initializer_id = self.constant_value(definition_binding_id);
+                    self.lower_expression(initializer_id)
                 }
             },
 
-            ExpressionKind::Assign { target, value } => {
-                let target_binding = match *self.hir.get_expression(target).kind() {
-                    ExpressionKind::Variable(binding) => binding
+            ExpressionKind::Assign { target_id, value_id } => {
+                let local_binding_id = match *self.hir.get_expression(target_id).kind() {
+                    ExpressionKind::Variable(binding_id) => binding_id
                         .as_local()
                         .expect("semantic analysis guarantees a local assignment target"),
                     _ => unreachable!("semantic analysis rejects non-place assignment targets"),
@@ -296,100 +242,137 @@ impl<'a> FunctionBuilder<'a> {
                 // Mutability check, deferred here by `typecheck_assign`.
                 // NOTE: sound only while every `let` has an initializer;
                 // moves into a definite-init MIR pass when `let x;` lands.
-                let binding_view = self.hir.get_local_binding(target_binding);
-                if !binding_view.mutable() {
+                let local_binding_view = self.hir.get_local_binding(local_binding_id);
+                if !local_binding_view.mutable() {
                     self.ctx
                         .diagnostics
                         .record(LoweringDiagnostic::AssignToImmutable {
                             name: self
                                 .ctx
                                 .string_interner
-                                .resolve(binding_view.name())
+                                .resolve(local_binding_view.name())
                                 .unwrap()
                                 .to_string(),
-                            assign_span: span,
-                            binding_span: binding_view.span(),
+                            assign_span: expression_view.span(),
+                            binding_span: local_binding_view.span(),
                         });
                     // keep lowering to surface further errors
                 }
 
-                let value = self.lower_expression(value);
-                if self.reachable {
-                    if let Some(value) = value {
-                        self.ssa
-                            .write_variable(target_binding, self.current_block(), value);
+                let value_id = self.lower_expression(value_id);
+                if self.reachable() {
+                    if let Some(value_id) = value_id {
+                        self.ssa.write_variable(
+                            local_binding_id,
+                            self.cursor
+                                .current_block(&self.cfg)
+                                .expect("no current block"),
+                            value_id,
+                        );
                     }
                 }
                 None // assignment evaluates to unit
             }
 
-            ExpressionKind::Return { value } => {
-                let value = value.and_then(|v| self.lower_expression(v));
-                if !self.reachable {
+            ExpressionKind::Return { value_id } => {
+                let value_id = value_id.and_then(|v| self.lower_expression(v));
+                if !self.reachable() {
                     return None; // the returned expression itself diverged
                 }
-                match value {
-                    Some(value) => self.cursor.add_return(&[value]),
-                    None => self.cursor.add_return(&[]),
+                match value_id {
+                    Some(value_id) => self.cursor.add_return(&mut self.cfg, &[value_id]),
+                    None => self.cursor.add_return(&mut self.cfg, &[]),
                 };
-                self.reachable = false;
                 None
             }
 
-            // // source: code_translator.rs Operator::Call (direct calls
-            // // only; crawfish has no indirect calls)
-            ExpressionKind::Call { callee, arguments } => {
-                let callee_binding = match *self.hir.get_expression(callee).kind() {
-                    ExpressionKind::Variable(binding) => binding
-                        .as_item()
+            ExpressionKind::Call { callee_id, argument_id_span } => {
+                let definition_binding_id = match *self.hir.get_expression(callee_id).kind() {
+                    ExpressionKind::Variable(binding_id) => binding_id
+                        .as_definition()
                         .expect("only direct calls to named functions are supported"),
                     _ => unreachable!("semantic analysis guarantees a callable callee"),
                 };
-                let function_ref = self.function_ref(callee_binding);
+                let function_ref = self.function_ref(definition_binding_id);
 
-                let argument_handles: Vec<ExpressionHandle> =
-                    self.hir.get_expression_slice(arguments).to_vec();
-                let mut args = Vec::with_capacity(argument_handles.len());
-                for argument in argument_handles {
-                    let value = self.lower_expression(argument);
-                    if !self.reachable {
+                let mut argument_ids = Vec::new();
+                for &argument_id in self.hir.get_expression_ids(argument_id_span) {
+                    let argument_value_id = self.lower_expression(argument_id);
+                    if !self.reachable() {
                         return None;
                     }
                     // A zero-sized argument still ran, for its side effects,
                     // but carries no value to pass. Dropping it here matches
                     // the callee, whose signature and entry block both skip
                     // zero-sized parameters, so the arity still lines up.
-                    if let Some(value) = value {
-                        args.push(value);
+                    if let Some(argument_value_id) = argument_value_id {
+                        argument_ids.push(argument_value_id);
                     }
                 }
 
-                let call = if self.ctx.type_interner.is_zero_sized(ty) {
-                    self.cursor.add_call(function_ref, &args, &[])
+                let call = if self.ctx.type_interner.is_zero_sized(expression_view.ty()) {
+                    self.cursor
+                        .add_call(&mut self.cfg, function_ref, &argument_ids, &[])
                 } else {
-                    self.cursor.add_call(function_ref, &args, &[ty])
+                    self.cursor.add_call(
+                        &mut self.cfg,
+                        function_ref,
+                        &argument_ids,
+                        &[expression_view.ty()],
+                    )
                 };
-                self.cursor.get_instruction(call).first_result()
+                self.cfg.get_instruction(call).first_result()
             }
 
-            ExpressionKind::Block { statements, tail } => {
-                let statement_handles: Vec<StatementHandle> =
-                    self.hir.get_statement_slice(statements).to_vec();
-                for statement in statement_handles {
-                    self.lower_statement(statement);
-                    if !self.reachable {
-                        // statements after a `return` are dead: emit nothing
-                        return None;
+            ExpressionKind::Block { statement_id_span, tail_id } => {
+                for &statement_id in self.hir.get_statement_ids(statement_id_span) {
+                    self.lower_statement(statement_id);
+                    if !self.reachable() {
+                        return None; // statements after a `return` are dead, so emit nothing
                     }
                 }
-                tail.and_then(|tail| self.lower_expression(tail))
+                tail_id.and_then(|tail_id| self.lower_expression(tail_id))
             }
 
             ExpressionKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => self.lower_if(condition, then_branch, else_branch, ty),
+                condition_id,
+                then_branch_id,
+                else_branch_id,
+            } => self.lower_if(condition_id, then_branch_id, else_branch_id, expression_view.ty()),
+        }
+    }
+
+    fn lower_statement(&mut self, statement_id: StatementId) {
+        if !self.reachable() {
+            return;
+        }
+
+        match *self.hir.get_statement(statement_id).kind() {
+            StatementKind::Expression { expression_id, .. } => {
+                self.lower_expression(expression_id);
+            }
+            StatementKind::Let { pattern_id, value_id } => {
+                let value_id = self.lower_expression(value_id);
+                if self.reachable() {
+                    // unit-typed lets write nothing: unit variables never
+                    // enter SSA and reads of them lower to None.
+                    if let Some(value_id) = value_id {
+                        self.ssa.write_variable(
+                            pattern_id,
+                            self.cursor
+                                .current_block(&self.cfg)
+                                .expect("no current block"),
+                            value_id,
+                        );
+                    }
+                }
+            }
+            StatementKind::Definition { .. } => {
+                // no-op: nested `func`s are lowered as separate MIR Functions
+                // by the pipeline driver (they're in hir.definitions and can't
+                // capture, per FunctionBoundary); nested `const`s are inlined
+                // at each use site by the Variable arm.
+            }
         }
     }
 
@@ -405,75 +388,94 @@ impl<'a> FunctionBuilder<'a> {
     /// // letting the SSA constructor elide trivial merges.
     fn lower_if(
         &mut self,
-        condition: ExpressionHandle,
-        then_branch: ExpressionHandle,
-        else_branch: Option<ExpressionHandle>,
-        ty: TypeHandle,
-    ) -> Option<ValueHandle> {
-        let cond = self
-            .lower_expression(condition)
+        condition_id: ExpressionId,
+        then_branch_id: ExpressionId,
+        else_branch_id: Option<ExpressionId>,
+        ty: TypeId,
+    ) -> Option<SsaValueId> {
+        let condition_id = self
+            .lower_expression(condition_id)
             .expect("if condition must produce a boolean value");
-        if !self.reachable {
+        if !self.reachable() {
             return None;
         }
 
         let produces_value = !self.ctx.type_interner.is_zero_sized(ty);
-        let result_variable = produces_value.then(|| self.fresh_synthetic_variable());
+        let result_variable_id = produces_value.then(|| self.fresh_synthetic_variable());
 
         // Create+declare in one place so nested constructs (which create
         // their own blocks mid-arm) can't violate the SSA constructor's
         // declare-in-creation-order invariant.
-        let then_block = self.new_block();
-        let else_block = else_branch.map(|_| self.new_block());
-        let merge = self.new_block();
+        let then_block_id = self.cfg.create_block();
+        self.ssa.declare_block(then_block_id);
+        let else_block_id = else_branch_id.map(|_| {
+            let block_id = self.cfg.create_block();
+            self.ssa.declare_block(block_id);
+            block_id
+        });
+        let merge_id = self.cfg.create_block();
+        self.ssa.declare_block(merge_id);
 
         // No else: the branch's false edge targets the merge directly.
         // // source: code_translator.rs Operator::If, the `NoElse` fast path
         // // — minus the placeholder/patching machinery we don't need.
-        let else_target = else_block.unwrap_or(merge);
-        let branch = self
-            .cursor
-            .add_branch_if(cond, then_block, &[], else_target, &[]);
+        let else_target_id = else_block_id.unwrap_or(merge_id);
+        let branch_id = self.cursor.add_branch_if(
+            &mut self.cfg,
+            condition_id,
+            then_block_id,
+            &[],
+            else_target_id,
+            &[],
+        );
 
         let mut merge_has_predecessor = false;
 
         // then arm — sole predecessor is the branch, so seal immediately.
-        self.enter_block(then_block);
-        self.ssa.declare_block_predecessor(then_block, branch);
-        self.ssa.seal_block(&mut self.cursor, then_block);
-        self.reachable = true;
-        let then_value = self.lower_expression(then_branch);
+        self.cursor.add_block(&mut self.cfg, then_block_id);
+        self.ssa.declare_block_predecessor(then_block_id, branch_id);
+        self.ssa.seal_block(&mut self.cfg, then_block_id);
+        let then_value_id = self.lower_expression(then_branch_id);
         // // source: cranelift's `consequent_ends_reachable`, as a local
-        let then_ends_reachable = self.reachable;
+        let then_ends_reachable = self.reachable();
         if then_ends_reachable {
-            if let (Some(variable), Some(value)) = (result_variable, then_value) {
-                self.ssa
-                    .write_variable(variable, self.current_block(), value);
+            if let (Some(variable_id), Some(value_id)) = (result_variable_id, then_value_id) {
+                self.ssa.write_variable(
+                    variable_id,
+                    self.cursor
+                        .current_block(&self.cfg)
+                        .expect("no current block"),
+                    value_id,
+                );
             }
-            let jump = self.cursor.add_jump(merge, &[]);
-            self.ssa.declare_block_predecessor(merge, jump);
+            let jump_id = self.cursor.add_jump(&mut self.cfg, merge_id, &[]);
+            self.ssa.declare_block_predecessor(merge_id, jump_id);
             merge_has_predecessor = true;
         }
 
         // else arm
-        if let (Some(block), Some(expression)) = (else_block, else_branch) {
-            self.enter_block(block);
-            self.ssa.declare_block_predecessor(block, branch);
-            self.ssa.seal_block(&mut self.cursor, block);
-            self.reachable = true;
-            let else_value = self.lower_expression(expression);
-            if self.reachable {
-                if let (Some(variable), Some(value)) = (result_variable, else_value) {
-                    self.ssa
-                        .write_variable(variable, self.current_block(), value);
+        if let (Some(block_id), Some(expression_id)) = (else_block_id, else_branch_id) {
+            self.cursor.add_block(&mut self.cfg, block_id);
+            self.ssa.declare_block_predecessor(block_id, branch_id);
+            self.ssa.seal_block(&mut self.cfg, block_id);
+            let else_value_id = self.lower_expression(expression_id);
+            if self.reachable() {
+                if let (Some(variable_id), Some(value_id)) = (result_variable_id, else_value_id) {
+                    self.ssa.write_variable(
+                        variable_id,
+                        self.cursor
+                            .current_block(&self.cfg)
+                            .expect("no current block"),
+                        value_id,
+                    );
                 }
-                let jump = self.cursor.add_jump(merge, &[]);
-                self.ssa.declare_block_predecessor(merge, jump);
+                let jump_id = self.cursor.add_jump(&mut self.cfg, merge_id, &[]);
+                self.ssa.declare_block_predecessor(merge_id, jump_id);
                 merge_has_predecessor = true;
             }
         } else {
             // no else: register the branch's false edge into the merge
-            self.ssa.declare_block_predecessor(merge, branch);
+            self.ssa.declare_block_predecessor(merge_id, branch_id);
             merge_has_predecessor = true;
         }
 
@@ -486,17 +488,13 @@ impl<'a> FunctionBuilder<'a> {
             // // source: cranelift's `exit_is_branched_to` +
             // // `head_is_reachable` logic in translate_unreachable_operator's
             // // Operator::End arm, radically simplified by tree structure
-            self.reachable = false;
             return None;
         }
 
-        self.enter_block(merge);
-        self.ssa.seal_block(&mut self.cursor, merge);
-        self.reachable = true;
-        result_variable.map(|variable| {
-            self.ssa
-                .read_variable(&mut self.cursor, variable, ty, merge)
-        })
+        self.cursor.add_block(&mut self.cfg, merge_id);
+        self.ssa.seal_block(&mut self.cfg, merge_id);
+        result_variable_id
+            .map(|variable_id| self.ssa.read_variable(&mut self.cfg, variable_id, ty, merge_id))
     }
 
     /// Lowers `lhs and rhs` / `lhs or rhs` with short-circuit evaluation:
@@ -506,83 +504,99 @@ impl<'a> FunctionBuilder<'a> {
     fn lower_short_circuit(
         &mut self,
         operator: BinOp,
-        lhs: ExpressionHandle,
-        rhs: ExpressionHandle,
-    ) -> Option<ValueHandle> {
-        let bool_ty = self.ctx.type_interner.bool_handle;
-        let lhs_value = self.lower_expression(lhs)?;
-        if !self.reachable {
+        lhs_id: ExpressionId,
+        rhs_id: ExpressionId,
+    ) -> Option<SsaValueId> {
+        let bool_ty = self.ctx.type_interner.bool_id;
+        let lhs_value_id = self.lower_expression(lhs_id)?;
+        if !self.reachable() {
             return None;
         }
 
         // Seed the result with lhs: it's the answer whenever rhs is skipped.
-        let result = self.fresh_synthetic_variable();
-        self.ssa
-            .write_variable(result, self.current_block(), lhs_value);
+        let result_id = self.fresh_synthetic_variable();
+        self.ssa.write_variable(
+            result_id,
+            self.cursor
+                .current_block(&self.cfg)
+                .expect("no current block"),
+            lhs_value_id,
+        );
 
-        let rhs_block = self.new_block();
-        let merge = self.new_block();
+        let rhs_block_id = self.cfg.create_block();
+        self.ssa.declare_block(rhs_block_id);
+        let merge_id = self.cfg.create_block();
+        self.ssa.declare_block(merge_id);
 
-        let branch = match operator {
+        let branch_id = match operator {
             // and: evaluate rhs only when lhs is true
-            BinOp::And => self
-                .cursor
-                .add_branch_if(lhs_value, rhs_block, &[], merge, &[]),
+            BinOp::And => self.cursor.add_branch_if(
+                &mut self.cfg,
+                lhs_value_id,
+                rhs_block_id,
+                &[],
+                merge_id,
+                &[],
+            ),
             // or: evaluate rhs only when lhs is false
-            BinOp::Or => self
-                .cursor
-                .add_branch_if(lhs_value, merge, &[], rhs_block, &[]),
+            BinOp::Or => self.cursor.add_branch_if(
+                &mut self.cfg,
+                lhs_value_id,
+                merge_id,
+                &[],
+                rhs_block_id,
+                &[],
+            ),
             _ => unreachable!("only `and`/`or` short-circuit"),
         };
-        self.ssa.declare_block_predecessor(merge, branch);
+        self.ssa.declare_block_predecessor(merge_id, branch_id);
 
-        self.enter_block(rhs_block);
-        self.ssa.declare_block_predecessor(rhs_block, branch);
-        self.ssa.seal_block(&mut self.cursor, rhs_block);
-        self.reachable = true;
-        if let Some(rhs_value) = self.lower_expression(rhs) {
-            self.ssa
-                .write_variable(result, self.current_block(), rhs_value);
+        self.cursor.add_block(&mut self.cfg, rhs_block_id);
+        self.ssa.declare_block_predecessor(rhs_block_id, branch_id);
+        self.ssa.seal_block(&mut self.cfg, rhs_block_id);
+        if let Some(rhs_value_id) = self.lower_expression(rhs_id) {
+            self.ssa.write_variable(
+                result_id,
+                self.cursor
+                    .current_block(&self.cfg)
+                    .expect("no current block"),
+                rhs_value_id,
+            );
         }
-        if self.reachable {
-            let jump = self.cursor.add_jump(merge, &[]);
-            self.ssa.declare_block_predecessor(merge, jump);
+        if self.reachable() {
+            let jump_id = self.cursor.add_jump(&mut self.cfg, merge_id, &[]);
+            self.ssa.declare_block_predecessor(merge_id, jump_id);
         }
 
-        self.enter_block(merge);
-        self.ssa.seal_block(&mut self.cursor, merge);
-        self.reachable = true;
+        self.cursor.add_block(&mut self.cfg, merge_id);
+        self.ssa.seal_block(&mut self.cfg, merge_id);
         Some(
             self.ssa
-                .read_variable(&mut self.cursor, result, bool_ty, merge),
+                .read_variable(&mut self.cfg, result_id, bool_ty, merge_id),
         )
-    }
-
-    fn innermost_loop_mut(&mut self) -> Option<&mut LoopFrame> {
-        self.loop_frames.last_mut()
     }
 
     fn lower_break(&mut self) {
         let frame = self
-            .innermost_loop_mut()
+            .loop_frames
+            .last_mut()
             .expect("`break` outside a loop should be rejected before lowering");
-        let exit = frame.exit;
+        let exit_id = frame.exit_id;
         frame.exit_is_branched_to = true;
 
-        let jump = self.cursor.add_jump(exit, &[]);
-        self.ssa.declare_block_predecessor(exit, jump);
-        self.reachable = false;
+        let jump_id = self.cursor.add_jump(&mut self.cfg, exit_id, &[]);
+        self.ssa.declare_block_predecessor(exit_id, jump_id);
     }
 
     fn lower_continue(&mut self) {
-        let header = self
-            .innermost_loop_mut()
+        let header_id = self
+            .loop_frames
+            .last_mut()
             .expect("`continue` outside a loop should be rejected before lowering")
-            .header;
+            .header_id;
 
-        let jump = self.cursor.add_jump(header, &[]);
-        self.ssa.declare_block_predecessor(header, jump);
-        self.reachable = false;
+        let jump_id = self.cursor.add_jump(&mut self.cfg, header_id, &[]);
+        self.ssa.declare_block_predecessor(header_id, jump_id);
     }
 
     /// Lowers `while cond { body }`.
@@ -592,132 +606,110 @@ impl<'a> FunctionBuilder<'a> {
     /// // test. Seal order is the whole game: body and exit seal immediately
     /// // (predecessors known up front); the header seals only after the
     /// // back-edge is declared, exercising the SSA placeholder path.
-    fn lower_while(&mut self, cond: ExpressionHandle, body: ExpressionHandle) {
+    fn lower_while(&mut self, cond_id: ExpressionId, body_id: ExpressionId) {
         // header: unsealed until the back-edge exists
-        let header = self.new_block();
-        let entry_jump = self.cursor.add_jump(header, &[]);
-        self.enter_block(header);
-        self.ssa.declare_block_predecessor(header, entry_jump);
+        let header_id = self.cfg.create_block();
+        self.ssa.declare_block(header_id);
+        let entry_jump_id = self.cursor.add_jump(&mut self.cfg, header_id, &[]);
+        self.cursor.add_block(&mut self.cfg, header_id);
+        self.ssa.declare_block_predecessor(header_id, entry_jump_id);
         // do NOT seal header here — the back-edge hasn't been emitted yet
 
         // condition lives in the header. Lowered BEFORE creating body/exit:
         // the condition may itself create blocks (nested if, and/or), and
         // the SSA constructor requires declare-in-creation-order.
-        let cond_value = self
-            .lower_expression(cond)
+        let cond_id = self
+            .lower_expression(cond_id)
             .expect("loop condition must produce a boolean value");
 
-        let body_block = self.new_block();
-        let exit = self.new_block();
-        let branch = self
+        let body_block_id = self.cfg.create_block();
+        self.ssa.declare_block(body_block_id);
+        let exit_id = self.cfg.create_block();
+        self.ssa.declare_block(exit_id);
+        let branch_id = self
             .cursor
-            .add_branch_if(cond_value, body_block, &[], exit, &[]);
+            .add_branch_if(&mut self.cfg, cond_id, body_block_id, &[], exit_id, &[]);
 
         self.loop_frames.push(LoopFrame {
-            header,
-            exit,
+            header_id,
+            exit_id,
             exit_is_branched_to: true, // the branch above already targets exit
         });
 
         // body: sole predecessor is the branch, seal immediately
-        self.enter_block(body_block);
-        self.ssa.declare_block_predecessor(body_block, branch);
-        self.ssa.seal_block(&mut self.cursor, body_block);
-        self.reachable = true;
-        self.lower_expression(body);
+        self.cursor.add_block(&mut self.cfg, body_block_id);
+        self.ssa.declare_block_predecessor(body_block_id, branch_id);
+        self.ssa.seal_block(&mut self.cfg, body_block_id);
+        self.lower_expression(body_id);
 
         // back-edge (only if the body's end is still reachable)
-        if self.reachable {
-            let back_edge = self.cursor.add_jump(header, &[]);
-            self.ssa.declare_block_predecessor(header, back_edge);
+        if self.reachable() {
+            let back_edge_id = self.cursor.add_jump(&mut self.cfg, header_id, &[]);
+            self.ssa.declare_block_predecessor(header_id, back_edge_id);
         }
 
         // header's predecessor set is now complete
-        self.ssa.seal_block(&mut self.cursor, header);
+        self.ssa.seal_block(&mut self.cfg, header_id);
 
         self.loop_frames.pop();
 
         // exit: a `while` can run zero iterations, so code after it is
         // always reachable
-        self.enter_block(exit);
-        self.ssa.declare_block_predecessor(exit, branch);
-        self.ssa.seal_block(&mut self.cursor, exit);
-        self.reachable = true;
+        self.cursor.add_block(&mut self.cfg, exit_id);
+        self.ssa.declare_block_predecessor(exit_id, branch_id);
+        self.ssa.seal_block(&mut self.cfg, exit_id);
     }
 
-    fn function_ref(&mut self, binding: ItemBindingHandle) -> FunctionReferenceHandle {
-        if let Some(&function_ref) = self.function_refs.get(&binding) {
-            return function_ref;
+    fn function_ref(&mut self, binding_id: DefinitionBindingId) -> FunctionReferenceId {
+        if let Some(&function_ref_id) = self.function_refs.get(&binding_id) {
+            return function_ref_id;
         }
 
-        let binding_view = self.hir.get_item_binding(binding);
+        let binding_view = self.hir.get_definition_binding(binding_id);
         let name = binding_view.name();
-        let (parameter_types, return_type) = self
+        let (parameter_type_ids, return_type_id) = self
             .ctx
             .type_interner
             .as_func(binding_view.ty())
             .expect("call callee binding must have a function type");
         // erased exactly as in `MirLowerer::lower_function`, so a callee's
         // reference here agrees with the signature it was lowered with
-        let parameters = parameter_types
+        let parameter_type_ids = parameter_type_ids
             .iter()
             .copied()
             .filter(|&ty| !self.ctx.type_interner.is_zero_sized(ty))
             .collect();
-        let signature = self.cursor.add_signature(Signature {
-            parameters,
-            return_type,
+        let signature_id = self.cfg.add_signature(Signature {
+            parameter_type_ids,
+            return_type_id,
         });
-        let function_ref = self.cursor.add_function_reference(binding, name, signature);
-        self.function_refs.insert(binding, function_ref);
-        function_ref
+        let function_ref_id = self.cfg.add_function_reference(binding_id, name, signature_id);
+        self.function_refs.insert(binding_id, function_ref_id);
+        function_ref_id
     }
 
-    /// Finds the initializer expression of the constant bound by `binding`.
-    // PERF: linear scan over hir.items; memoize if constants get hot.
-    fn constant_value(&self, binding: ItemBindingHandle) -> ExpressionHandle {
-        for item in self.hir.items.values() {
-            if let ItemKind::Constant { binding: b, value } = item.kind {
-                if b == binding {
-                    return value;
+    /// Finds the initializer expression of the constant bound by `definition_binding_id`.
+    // PERF: linear scan over hir.definitions; memoize if constants get hot.
+    fn constant_value(&self, definition_binding_id: DefinitionBindingId) -> ExpressionId {
+        for definition in self.hir.definitions.values() {
+            if let DefinitionKind::Constant {
+                definition_binding_id: b,
+                value_id,
+            } = definition.kind
+            {
+                if b == definition_binding_id {
+                    return value_id;
                 }
             }
         }
-        panic!("no constant item found for binding")
-    }
-
-    /// Creates a block and immediately declares it to the SSA constructor.
-    /// Always use this instead of raw `create_block`: declaration must
-    /// happen in creation order, and any interleaved expression lowering
-    /// can create blocks of its own.
-    fn new_block(&mut self) -> BlockHandle {
-        let block = self.cursor.create_block();
-        self.ssa.declare_block(block);
-        block
-    }
-
-    /// Appends `block` to the layout and makes it the insertion point.
-    /// // source: cranelift frontend.rs `switch_to_block`
-    fn enter_block(&mut self, block: BlockHandle) {
-        self.cursor.add_block(block);
-    }
-
-    /// Returns the block the cursor is currently positioned in. Delegates to
-    /// [`CfgCursor::current_block`] rather than tracking a second, parallel
-    /// "current block" here — `add_block` (called by `enter_block`) already
-    /// keeps the cursor's position in sync, so a separate field would just be
-    /// a second source of truth that could drift from the cursor's.
-    fn current_block(&self) -> BlockHandle {
-        self.cursor
-            .current_block()
-            .expect("no current block — enter_block must be called first")
+        panic!("no constant definition found for binding")
     }
 
     /// Mints a variable id past the HIR's real bindings, for merge values
     /// (if results, short-circuit results). Never present in
     /// `hir.local_bindings`; only ever used as an SSA key.
-    fn fresh_synthetic_variable(&mut self) -> LocalBindingHandle {
-        let variable = LocalBindingHandle::new(self.next_synthetic_variable);
+    fn fresh_synthetic_variable(&mut self) -> LocalBindingId {
+        let variable = LocalBindingId::new(self.next_synthetic_variable);
         self.next_synthetic_variable += 1;
         variable
     }

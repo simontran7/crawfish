@@ -5,7 +5,7 @@ use soup::handle_map::Handle;
 
 /// A 4-byte handle to a growable, mutable list of `H`s living in a [`HandleListSubAllocator`].
 /// Used wherever MIR needs a variable-length run of handles of the same type (e.g., block
-/// parameters, call/branch arguments, and instruction results for `ValueHandle`; predecessor
+/// parameters, call/branch arguments, and instruction results for `SsaValueId`; predecessor
 /// instructions or deferred variables for other handle types).
 ///
 /// `start` is the index in the allocator's backing storage `HandleListSubAllocator::data` where
@@ -28,13 +28,13 @@ use soup::handle_map::Handle;
 /// # Examples
 ///
 /// ```rust,ignore
-/// let mut allocator = HandleListSubAllocator::<ValueHandle>::new();
-/// let mut list = HandleList::<ValueHandle>::from(&mut allocator, &[ValueHandle::new(1), ValueHandle::new(2)]);
-/// list.add_last(&mut allocator, ValueHandle::new(3));
-/// assert_eq!(list.to_slice(&allocator), &[ValueHandle::new(1), ValueHandle::new(2), ValueHandle::new(3)]);
+/// let mut allocator = HandleListSubAllocator::<SsaValueId>::new();
+/// let mut list = HandleList::<SsaValueId>::from(&mut allocator, &[SsaValueId::new(1), SsaValueId::new(2)]);
+/// list.add_last(&mut allocator, SsaValueId::new(3));
+/// assert_eq!(list.to_slice(&allocator), &[SsaValueId::new(1), SsaValueId::new(2), SsaValueId::new(3)]);
 /// ```
 ///
-/// (`ValueHandle` above is just an example instantiation — it's defined in [`crate::middle_end::mir`],
+/// (`SsaValueId` above is just an example instantiation — it's defined in [`crate::middle_end::mir`],
 /// not here. This module only owns the generic list machinery.)
 #[derive(Clone, Copy)]
 pub(crate) struct HandleList<H> {
@@ -323,19 +323,19 @@ impl SizeClass {
 mod tests {
     use super::*;
 
-    soup::handle_impl!(pub(crate) TestHandle);
+    soup::handle_impl!(pub(crate) TestId);
 
-    fn ids(values: &[u32]) -> Vec<TestHandle> {
+    fn ids(values: &[u32]) -> Vec<TestId> {
         values
             .iter()
-            .map(|&v| TestHandle::new(v as usize))
+            .map(|&v| TestId::new(v as usize))
             .collect()
     }
 
     #[test]
     fn new_list_is_empty() {
-        let allocator = HandleListSubAllocator::<TestHandle>::new();
-        let list = HandleList::<TestHandle>::new();
+        let allocator = HandleListSubAllocator::<TestId>::new();
+        let list = HandleList::<TestId>::new();
         assert!(list.is_empty(&allocator));
         assert_eq!(list.count(&allocator), 0);
         assert_eq!(list.to_slice(&allocator), &[]);
@@ -343,25 +343,25 @@ mod tests {
 
     #[test]
     fn from_empty_slice_is_empty_without_allocating() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let list = HandleList::<TestHandle>::from(&mut allocator, &[]);
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let list = HandleList::<TestId>::from(&mut allocator, &[]);
         assert!(list.is_empty(&allocator));
         assert!(allocator.data.is_empty());
     }
 
     #[test]
     fn from_slice_copies_elements() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
         let values = ids(&[10, 20, 30]);
-        let list = HandleList::<TestHandle>::from(&mut allocator, &values);
+        let list = HandleList::<TestId>::from(&mut allocator, &values);
         assert_eq!(list.count(&allocator), 3);
         assert_eq!(list.to_slice(&allocator), values.as_slice());
     }
 
     #[test]
     fn add_last_grows_across_size_class_boundaries() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let mut list = HandleList::<TestHandle>::new();
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let mut list = HandleList::<TestId>::new();
         let values = ids(&[0, 1, 2, 3, 4, 5, 6, 7]);
         // Size class 0 holds 3 elements and class 1 holds 7, so this push sequence crosses
         // both boundaries (at the 4th and 8th elements).
@@ -374,24 +374,24 @@ mod tests {
 
     #[test]
     fn get_returns_none_out_of_bounds() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let list = HandleList::<TestHandle>::from(&mut allocator, &ids(&[10, 20]));
-        assert_eq!(list.get(&allocator, 1), Some(TestHandle::new(20)));
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let list = HandleList::<TestId>::from(&mut allocator, &ids(&[10, 20]));
+        assert_eq!(list.get(&allocator, 1), Some(TestId::new(20)));
         assert_eq!(list.get(&allocator, 2), None);
     }
 
     #[test]
     fn to_mut_slice_allows_in_place_mutation() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let list = HandleList::<TestHandle>::from(&mut allocator, &ids(&[10, 20, 30]));
-        list.to_mut_slice(&mut allocator)[1] = TestHandle::new(99);
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let list = HandleList::<TestId>::from(&mut allocator, &ids(&[10, 20, 30]));
+        list.to_mut_slice(&mut allocator)[1] = TestId::new(99);
         assert_eq!(list.to_slice(&allocator), ids(&[10, 99, 30]).as_slice());
     }
 
     #[test]
     fn remove_shifts_later_elements_and_preserves_order() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let mut list = HandleList::<TestHandle>::from(&mut allocator, &ids(&[0, 1, 2, 3]));
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let mut list = HandleList::<TestId>::from(&mut allocator, &ids(&[0, 1, 2, 3]));
 
         list.remove(1, &mut allocator);
         assert_eq!(list.to_slice(&allocator), ids(&[0, 2, 3]).as_slice());
@@ -406,15 +406,15 @@ mod tests {
     #[test]
     #[should_panic(expected = "index out of bounds")]
     fn remove_panics_out_of_bounds() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let mut list = HandleList::<TestHandle>::from(&mut allocator, &ids(&[0, 1]));
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let mut list = HandleList::<TestId>::from(&mut allocator, &ids(&[0, 1]));
         list.remove(2, &mut allocator);
     }
 
     #[test]
     fn clear_last_shrinks_from_the_end() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let mut list = HandleList::<TestHandle>::from(&mut allocator, &ids(&[0, 1, 2]));
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let mut list = HandleList::<TestId>::from(&mut allocator, &ids(&[0, 1, 2]));
 
         list.clear_last(&mut allocator);
         assert_eq!(list.to_slice(&allocator), ids(&[0, 1]).as_slice());
@@ -427,15 +427,15 @@ mod tests {
     #[test]
     #[should_panic(expected = "empty list")]
     fn clear_last_panics_on_empty_list() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let mut list = HandleList::<TestHandle>::new();
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let mut list = HandleList::<TestId>::new();
         list.clear_last(&mut allocator);
     }
 
     #[test]
     fn clear_frees_the_block_for_reuse() {
-        let mut allocator = HandleListSubAllocator::<TestHandle>::new();
-        let mut a = HandleList::<TestHandle>::from(&mut allocator, &ids(&[0, 1, 2]));
+        let mut allocator = HandleListSubAllocator::<TestId>::new();
+        let mut a = HandleList::<TestId>::from(&mut allocator, &ids(&[0, 1, 2]));
         let original_start = a.start;
 
         a.clear(&mut allocator);
@@ -444,7 +444,7 @@ mod tests {
         // A second same-size-class list should be handed the block `a` just freed, instead
         // of growing the allocator's backing storage.
         let len_before = allocator.data.len();
-        let b = HandleList::<TestHandle>::from(&mut allocator, &ids(&[9, 8, 7]));
+        let b = HandleList::<TestId>::from(&mut allocator, &ids(&[9, 8, 7]));
         assert_eq!(b.start, original_start);
         assert_eq!(allocator.data.len(), len_before);
     }

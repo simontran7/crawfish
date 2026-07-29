@@ -1,22 +1,21 @@
 use std::collections::HashMap;
 
-use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::module::{Linkage, Module};
+use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PhiValue,
 };
 
 use crate::common::context::CompilerContext;
-use crate::common::types::TypeHandle;
-use crate::front_end::semantic_analysis::hir::ItemBindingHandle;
+use crate::common::types::TypeId;
+use crate::front_end::semantic_analysis::hir::DefinitionBindingId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::mir::{
-    BlockHandle, Function, InstructionHandle, InstructionRef, Mir, ValueHandle,
+    BlockId, Function, InstructionId, InstructionRef, Mir, SsaValueId,
 };
 
 /// Lowers a [`Mir`] to an LLVM [`Module`].
@@ -34,15 +33,7 @@ pub(crate) struct LlvmCodegen<'ctx, 'a> {
     builder: Builder<'ctx>,
     ctx: &'a CompilerContext,
     mir: &'a Mir,
-    /// Every declared function, keyed by its `ItemBindingHandle` — this is how a
-    /// `Call` instruction's callee finds the `FunctionValue` to call.
-    ///
-    /// Keyed by binding rather than by crawfish name: two functions nested in
-    /// different outer functions can share a name (name uniqueness is only
-    /// enforced within a single scope), so a `Symbol`-keyed map would collide
-    /// and silently merge their bodies. `ItemBindingHandle` is unique across the
-    /// whole program.
-    functions: HashMap<ItemBindingHandle, FunctionValue<'ctx>>,
+    functions: HashMap<DefinitionBindingId, FunctionValue<'ctx>>,
 }
 
 impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
@@ -69,7 +60,6 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     /// Lowers every function in the `Mir` and returns the finished module.
     pub(crate) fn compile(mut self) -> Module<'ctx> {
         self.declare_functions();
-        self.declare_builtin_println();
         self.declare_main_entry_point();
         for function in self.mir.functions() {
             self.define_function(function);
@@ -106,53 +96,6 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
         self.builder.build_return(Some(&exit_code)).unwrap();
     }
 
-    /// Declares the `println` builtin, if [`Mir::builtin_println`] is set:
-    /// a `void __crawfish_println_i32(i32)` wrapper that formats its
-    /// argument through a libc `printf` call, registered into
-    /// [`LlvmCodegen::functions`] under `println`'s binding. There's no MIR
-    /// [`Function`] for it to go through [`LlvmCodegen::declare_functions`],
-    /// so it's declared and defined here in one step; the normal `Call`
-    /// codegen path (`InstructionRef::Call`) then needs no special-casing —
-    /// it just finds this wrapper in [`LlvmCodegen::functions`] like any
-    /// other callee.
-    fn declare_builtin_println(&mut self) {
-        let Some(binding) = self.mir.builtin_println else {
-            return;
-        };
-
-        let ptr_type = self.llvm_context.ptr_type(AddressSpace::default());
-        let printf_type = self
-            .llvm_context
-            .i32_type()
-            .fn_type(&[ptr_type.into()], true);
-        let printf = self
-            .module
-            .add_function("printf", printf_type, Some(Linkage::External));
-
-        let wrapper_type = self
-            .llvm_context
-            .void_type()
-            .fn_type(&[self.llvm_context.i32_type().into()], false);
-        let wrapper = self
-            .module
-            .add_function("__crawfish_println_i32", wrapper_type, None);
-        let entry = self.llvm_context.append_basic_block(wrapper, "entry");
-        self.builder.position_at_end(entry);
-
-        let format_string = self
-            .builder
-            .build_global_string_ptr("%d\n", "println_fmt")
-            .unwrap()
-            .as_pointer_value();
-        let argument = wrapper.get_nth_param(0).unwrap();
-        self.builder
-            .build_call(printf, &[format_string.into(), argument.into()], "")
-            .unwrap();
-        self.builder.build_return(None).unwrap();
-
-        self.functions.insert(binding, wrapper);
-    }
-
     /// Declares every function's signature up front, before any body is
     /// defined, so a call to a function lowered later in this loop (or one
     /// that calls back into an earlier one) still resolves.
@@ -160,20 +103,20 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
         for function in self.mir.functions() {
             let parameter_types: Vec<BasicMetadataTypeEnum> = function
                 .signature
-                .parameters
+                .parameter_type_ids
                 .iter()
                 .map(|&ty| self.llvm_type(ty).into())
                 .collect();
             let fn_type = if self
                 .ctx
                 .type_interner
-                .is_zero_sized(function.signature.return_type)
+                .is_zero_sized(function.signature.return_type_id)
             {
                 self.llvm_context
                     .void_type()
                     .fn_type(&parameter_types, false)
             } else {
-                self.llvm_type(function.signature.return_type)
+                self.llvm_type(function.signature.return_type_id)
                     .fn_type(&parameter_types, false)
             };
             let name = self
@@ -184,22 +127,26 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
             // `main` is renamed so `declare_main_entry_point` can synthesize
             // the real ABI-correct `i32 main(void)` the C runtime expects,
             // without constraining what crawfish's own `main` may return.
-            let llvm_name = if name == "main" { "__crawfish_main" } else { name };
+            let llvm_name = if name == "main" {
+                "__crawfish_main"
+            } else {
+                name
+            };
             let fn_value = self.module.add_function(llvm_name, fn_type, None);
-            self.functions.insert(function.binding, fn_value);
+            self.functions.insert(function.definition_binding_id, fn_value);
         }
     }
 
-    /// Maps a crawfish scalar [`TypeHandle`] to its LLVM representation.
+    /// Maps a crawfish scalar [`TypeId`] to its LLVM representation.
     ///
     /// Zero-sized types (unit) never reach here: they're erased from
     /// signatures, block parameters, and call arguments during MIR lowering
     /// (see [`crate::middle_end::lowerer`]), so the only types a value can
     /// actually have at this point are the scalar ones below.
-    fn llvm_type(&self, ty: TypeHandle) -> BasicTypeEnum<'ctx> {
-        if ty == self.ctx.type_interner.i32_handle {
+    fn llvm_type(&self, ty: TypeId) -> BasicTypeEnum<'ctx> {
+        if ty == self.ctx.type_interner.i32_id {
             self.llvm_context.i32_type().into()
-        } else if ty == self.ctx.type_interner.bool_handle {
+        } else if ty == self.ctx.type_interner.bool_id {
             self.llvm_context.bool_type().into()
         } else {
             panic!("no LLVM representation for type {ty:?}")
@@ -209,18 +156,18 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     /// Defines `function`'s body: every LLVM basic block and phi first, then
     /// every instruction.
     fn define_function(&mut self, function: &Function) {
-        let fn_value = self.functions[&function.binding];
+        let fn_value = self.functions[&function.definition_binding_id];
 
         // Pass 1: create every block, and a phi per block parameter — except
         // the entry block's, which are the function's real arguments, not a
         // merge point.
-        let mut blocks: HashMap<BlockHandle, BasicBlock<'ctx>> = HashMap::new();
+        let mut blocks: HashMap<BlockId, BasicBlock<'ctx>> = HashMap::new();
         for block_id in function.body.blocks() {
             blocks.insert(block_id, self.llvm_context.append_basic_block(fn_value, ""));
         }
 
-        let mut values: HashMap<ValueHandle, BasicValueEnum<'ctx>> = HashMap::new();
-        let mut phis: HashMap<ValueHandle, PhiValue<'ctx>> = HashMap::new();
+        let mut values: HashMap<SsaValueId, BasicValueEnum<'ctx>> = HashMap::new();
+        let mut phis: HashMap<SsaValueId, PhiValue<'ctx>> = HashMap::new();
 
         let entry_id = function
             .body
@@ -273,18 +220,18 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     fn emit_instruction(
         &self,
         function: &Function,
-        instruction_id: InstructionHandle,
-        blocks: &HashMap<BlockHandle, BasicBlock<'ctx>>,
-        values: &mut HashMap<ValueHandle, BasicValueEnum<'ctx>>,
-        phis: &HashMap<ValueHandle, PhiValue<'ctx>>,
+        instruction_id: InstructionId,
+        blocks: &HashMap<BlockId, BasicBlock<'ctx>>,
+        values: &mut HashMap<SsaValueId, BasicValueEnum<'ctx>>,
+        phis: &HashMap<SsaValueId, PhiValue<'ctx>>,
     ) {
         let view = function.body.get_instruction(instruction_id);
         let results = view.results();
 
         match view.as_ref() {
-            InstructionRef::Binary { operator, args } => {
-                let lhs = values[&args[0]].into_int_value();
-                let rhs = values[&args[1]].into_int_value();
+            InstructionRef::Binary { operator, operands } => {
+                let lhs = values[&operands[0]].into_int_value();
+                let rhs = values[&operands[1]].into_int_value();
                 let result: BasicValueEnum = match operator {
                     BinOp::Add => self.builder.build_int_add(lhs, rhs, "").unwrap().into(),
                     BinOp::Sub => self.builder.build_int_sub(lhs, rhs, "").unwrap().into(),
@@ -322,11 +269,11 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
                 values.insert(results[0], result);
             }
 
-            InstructionRef::Unary { operator, arg } => {
-                let operand = values[&arg].into_int_value();
+            InstructionRef::Unary { operator, operand } => {
+                let value = values[&operand].into_int_value();
                 let result: BasicValueEnum = match operator {
-                    UnOp::Neg => self.builder.build_int_neg(operand, "").unwrap().into(),
-                    UnOp::Not => self.builder.build_not(operand, "").unwrap().into(),
+                    UnOp::Neg => self.builder.build_int_neg(value, "").unwrap().into(),
+                    UnOp::Not => self.builder.build_not(value, "").unwrap().into(),
                 };
                 values.insert(results[0], result);
             }
@@ -347,7 +294,7 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
 
             InstructionRef::Call { callee, args } => {
                 let function_reference = function.body.get_function_reference(callee);
-                let callee_value = self.functions[&function_reference.binding];
+                let callee_value = self.functions[&function_reference.definition_binding_id];
                 let argument_values: Vec<BasicMetadataValueEnum> =
                     args.iter().map(|&arg| values[&arg].into()).collect();
                 let call_site = self
@@ -375,7 +322,7 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
             }
 
             InstructionRef::BranchIf {
-                arg,
+                operand,
                 then_destination,
                 then_args,
                 else_destination,
@@ -383,7 +330,7 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
             } => {
                 self.patch_phis(function, then_destination, then_args, values, phis);
                 self.patch_phis(function, else_destination, else_args, values, phis);
-                let condition = values[&arg].into_int_value();
+                let condition = values[&operand].into_int_value();
                 self.builder
                     .build_conditional_branch(
                         condition,
@@ -416,10 +363,10 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     fn patch_phis(
         &self,
         function: &Function,
-        destination: BlockHandle,
-        args: &[ValueHandle],
-        values: &HashMap<ValueHandle, BasicValueEnum<'ctx>>,
-        phis: &HashMap<ValueHandle, PhiValue<'ctx>>,
+        destination: BlockId,
+        args: &[SsaValueId],
+        values: &HashMap<SsaValueId, BasicValueEnum<'ctx>>,
+        phis: &HashMap<SsaValueId, PhiValue<'ctx>>,
     ) {
         let current_block = self
             .builder

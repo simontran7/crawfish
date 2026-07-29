@@ -1,6 +1,6 @@
 //! End-to-end tests: drive the crate through its one real public entry
 //! point ([`crawfish::driver::compile`]), then actually *run* the resulting
-//! executable and check what it printed. Unlike everything under `src/`
+//! executable and check its exit code. Unlike everything under `src/`
 //! (unit/snapshot tests colocated with the code they test, exercising
 //! `pub(crate)` internals directly), these test the whole pipeline the way
 //! an actual crawfish user experiences it: source text in, a real running
@@ -10,30 +10,25 @@ use std::path::Path;
 use std::process::Command;
 
 /// Compiles `source` under a temporary filename, runs the resulting
-/// executable, and returns everything it printed to stdout. Panics if
-/// compilation didn't produce a runnable executable, or if the executable
-/// exited non-zero — exit status is a real success/failure signal here, not
-/// a channel for the program's result, so `main` is expected to report its
-/// result via `println` and return `0`.
-fn compile_and_run(test_name: &str, source: &str) -> String {
+/// executable, and returns its exit code. Panics if compilation didn't
+/// produce a runnable executable at all, so a failure here always points at
+/// the pipeline rather than a mis-asserted exit code.
+fn compile_and_run(test_name: &str, source: &str) -> i32 {
     let path = std::env::temp_dir().join(format!("crawfish_e2e_{test_name}.crw"));
     std::fs::write(&path, source).expect("failed to write test source file");
 
     crawfish::driver::compile(path.clone());
 
     let executable_path = path.with_extension("");
-    let output = Command::new(&executable_path).output().unwrap_or_else(|e| {
+    let status = Command::new(&executable_path).status().unwrap_or_else(|e| {
         panic!("failed to run compiled executable at {executable_path:?}: {e}")
     });
 
     cleanup(&path, &executable_path);
 
-    assert!(
-        output.status.success(),
-        "executable at {executable_path:?} exited with {:?}",
-        output.status.code()
-    );
-    String::from_utf8(output.stdout).expect("executable printed non-UTF8 output")
+    status
+        .code()
+        .expect("executable was terminated by a signal, not a normal exit")
 }
 
 fn cleanup(source_path: &Path, executable_path: &Path) {
@@ -43,7 +38,7 @@ fn cleanup(source_path: &Path, executable_path: &Path) {
 }
 
 #[test]
-fn arithmetic_and_recursion_produce_the_correct_result() {
+fn arithmetic_and_recursion_produce_the_correct_exit_code() {
     let source = r#"
         func fib(n: I32) -> I32 {
             if n < 2 {
@@ -53,11 +48,10 @@ fn arithmetic_and_recursion_produce_the_correct_result() {
         }
 
         func main() -> I32 {
-            println(fib(10));
-            0
+            fib(10)
         }
     "#;
-    assert_eq!(compile_and_run("fib", source), "55\n");
+    assert_eq!(compile_and_run("fib", source), 55);
 }
 
 #[test]
@@ -70,13 +64,12 @@ fn zero_sized_arguments_still_run_their_side_effects() {
         func main() -> I32 {
             let mut counter: I32 = 7;
             let total: I32 = ignore(1, counter = counter + 5, 2);
-            println(total + counter);
-            0
+            total + counter
         }
     "#;
     // ignore(1, .., 2) = 3; counter mutates to 12 via the erased argument's
     // side effect; 3 + 12 = 15.
-    assert_eq!(compile_and_run("zero_sized", source), "15\n");
+    assert_eq!(compile_and_run("zero_sized", source), 15);
 }
 
 #[test]

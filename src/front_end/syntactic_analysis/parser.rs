@@ -5,12 +5,12 @@ use crate::front_end::lexical_analysis::token::{LitKind, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
 use crate::front_end::syntactic_analysis::ast::Ast;
 use crate::front_end::syntactic_analysis::ast::handles::{
-    BlockExpressionHandle, BooleanLiteralHandle, ConstantDefinitionHandle, ErrorExpressionHandle,
-    ErrorItemHandle, ErrorParameterHandle, ErrorStatementHandle, ExpressionHandle,
-    ExpressionStatementHandle, FunctionCallHandle, FunctionDefinitionHandle, IfExpressionHandle,
-    IntegerLiteralHandle, ItemHandle, ItemStatementHandle, LetStatementHandle, ParameterHandle,
-    PatternHandle, ReturnHandle, StatementHandle, StatementKind, TypeAnnotationHandle,
-    UnaryOperationHandle, ValidParameterHandle, VariableHandle,
+    BlockExpressionId, BooleanLiteralId, ConstantDefinitionId, DefinitionId,
+    DefinitionStatementId, ErrorDefinitionId, ErrorExpressionId, ErrorParameterId,
+    ErrorStatementId, ExpressionId, ExpressionStatementId, FunctionCallId,
+    FunctionDefinitionId, IfExpressionId, IntegerLiteralId, LetStatementId,
+    ParameterId, PatternId, ReturnId, StatementId, StatementKind,
+    TypeAnnotationId, UnaryOperationId, ValidParameterId, VariableId,
 };
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 
@@ -80,37 +80,39 @@ impl<'a> Parser<'a> {
     /// whether to proceed.
     pub(crate) fn parse(mut self) -> Ast {
         while !self.cursor.is_at_end() {
-            self.parse_source_file_item();
+            self.parse_source_file_definition();
         }
         self.ast
     }
 
-    /// Parses one top-level item (a [`TokenKind::Func`] or
-    /// [`TokenKind::Const`] item) and appends it to
-    /// [`crate::front_end::syntactic_analysis::ast::nodes::SourceFileNode::items`].
+    /// Parses one top-level definition (a [`TokenKind::Func`] or
+    /// [`TokenKind::Const`] definition) and appends it to
+    /// [`crate::front_end::syntactic_analysis::ast::nodes::SourceFileNode::definition_id_span`].
     ///
     /// If the next token starts neither, it is consumed as an
-    /// [`SyntacticDiagnostic::InvalidTopLevelItem`], the cursor is
+    /// [`SyntacticDiagnostic::InvalidTopLevelDefinition`], the cursor is
     /// resynchronized to the next [`TokenKind::Func`] or
-    /// [`TokenKind::Const`], and an [`ErrorItemHandle`] is recorded for the
+    /// [`TokenKind::Const`], and an [`ErrorDefinitionId`] is recorded for the
     /// skipped span instead.
-    fn parse_source_file_item(&mut self) {
-        let item: ItemHandle = match self.cursor.peek().kind() {
+    fn parse_source_file_definition(&mut self) {
+        let definition_id: DefinitionId = match self.cursor.peek().kind() {
             TokenKind::Func => self.parse_function_definition().into(),
             TokenKind::Const => self.parse_constant_definition().into(),
             _ => {
                 let offending_token = self.cursor.bump();
                 self.ctx
                     .diagnostics
-                    .record(SyntacticDiagnostic::InvalidTopLevelItem {
+                    .record(SyntacticDiagnostic::InvalidTopLevelDefinition {
                         span: offending_token.span(),
                         found: offending_token.kind().to_string(),
                     });
                 self.cursor.sync_until(&[TokenKind::Func, TokenKind::Const]);
-                self.ast.add_erroneous_item(offending_token.span()).into()
+                self.ast
+                    .add_erroneous_definition(offending_token.span())
+                    .into()
             }
         };
-        self.ast.add_source_file_item(item);
+        self.ast.add_source_file_definition(definition_id);
     }
 
     /// Parses `func name(params) -> ret { body }`.
@@ -120,12 +122,14 @@ impl<'a> Parser<'a> {
     /// to find an opening `{`; a missing or malformed name, parameter list,
     /// or return annotation instead produces `Error*` nodes for those parts
     /// while parsing continues.
-    fn parse_function_definition(&mut self) -> Result<FunctionDefinitionHandle, ErrorItemHandle> {
+    fn parse_function_definition(
+        &mut self,
+    ) -> Result<FunctionDefinitionId, ErrorDefinitionId> {
         let start = self.cursor.peek().span().start();
 
         self.expect(TokenKind::Func);
 
-        let name = if self.expect(TokenKind::Identifier) {
+        let name_id = if self.expect(TokenKind::Identifier) {
             let token = self.cursor.previous().as_token();
             self.ast
                 .add_valid_identifier(token.symbol().unwrap(), token.span())
@@ -136,53 +140,53 @@ impl<'a> Parser<'a> {
                 .into()
         };
 
-        let parameters = self.parse_parameter_list();
+        let parameter_ids = self.parse_parameter_list();
 
-        let annotation = if self.cursor.eat(TokenKind::ThinArrow) {
+        let annotation_id = if self.cursor.eat(TokenKind::ThinArrow) {
             Some(self.expect_type_annotation())
         } else {
             None
         };
 
-        if let Ok(body) = self.parse_block_expression() {
+        if let Ok(body_id) = self.parse_block_expression() {
             Ok(self.ast.add_function_definition(
-                name,
-                &parameters,
-                annotation,
-                body,
-                Span::new(start, self.ast.span_of_expression(body.into()).end()),
+                name_id,
+                &parameter_ids,
+                annotation_id,
+                body_id,
+                Span::new(start, self.ast.span_of_expression(body_id.into()).end()),
             ))
         } else {
             Err(self
                 .ast
-                .add_erroneous_item(Span::new(start, self.cursor.peek().span().end())))
+                .add_erroneous_definition(Span::new(start, self.cursor.peek().span().end())))
         }
     }
 
     /// Parses a parenthesized, comma-separated parameter list.
     ///
     /// If the opening `(` is missing, returns a single-element `Vec`
-    /// containing an [`ErrorParameterHandle`] rather than an empty `Vec`, so
+    /// containing an [`ErrorParameterId`] rather than an empty `Vec`, so
     /// that callers like [`Parser::parse_function_definition`] always have
-    /// at least one [`ParameterHandle`] to record.
-    fn parse_parameter_list(&mut self) -> Vec<ParameterHandle> {
+    /// at least one [`ParameterId`] to record.
+    fn parse_parameter_list(&mut self) -> Vec<ParameterId> {
         if !self.expect_delimited(TokenKind::OpenParen) {
-            let error_node = self.ast.add_erroneous_parameter(self.cursor.peek().span());
-            return vec![error_node.into()];
+            let error_node_id = self.ast.add_erroneous_parameter(self.cursor.peek().span());
+            return vec![error_node_id.into()];
         }
 
         let (_, inner, _) = self.cursor.previous().as_delimited();
         let inner_cursor = Cursor::new(inner);
 
         self.parse_inner(inner_cursor, |parser| {
-            let mut params = Vec::new();
+            let mut parameter_ids = Vec::new();
             while !parser.cursor.is_at_end() {
-                params.push(parser.parse_parameter().into());
+                parameter_ids.push(parser.parse_parameter().into());
                 if !parser.cursor.eat(TokenKind::Comma) {
                     break;
                 }
             }
-            params
+            parameter_ids
         })
     }
 
@@ -191,12 +195,12 @@ impl<'a> Parser<'a> {
     /// Fails if the `:` separating the name from its type annotation is
     /// missing, since at that point there's no reliable way to tell where
     /// the parameter ends; the cursor is resynchronized to the next `,`.
-    fn parse_parameter(&mut self) -> Result<ValidParameterHandle, ErrorParameterHandle> {
+    fn parse_parameter(&mut self) -> Result<ValidParameterId, ErrorParameterId> {
         let start = self.cursor.peek().span().start();
 
         let mutable = self.cursor.eat(TokenKind::Mut);
 
-        let name = if self.expect(TokenKind::Identifier) {
+        let name_id = if self.expect(TokenKind::Identifier) {
             let token = self.cursor.previous().as_token();
             self.ast
                 .add_valid_identifier(token.symbol().unwrap(), token.span())
@@ -214,13 +218,13 @@ impl<'a> Parser<'a> {
                 .add_erroneous_parameter(Span::new(start, self.cursor.peek().span().end())));
         }
 
-        let annotation = self.expect_type_annotation();
+        let annotation_id = self.expect_type_annotation();
 
-        let end = self.ast.span_of_type_annotation(annotation).end();
+        let end = self.ast.span_of_type_annotation(annotation_id).end();
 
         Ok(self
             .ast
-            .add_valid_parameter(name, mutable, annotation, Span::new(start, end)))
+            .add_valid_parameter(name_id, mutable, annotation_id, Span::new(start, end)))
     }
 
     /// Parses `const name: Type = value;`.
@@ -229,15 +233,17 @@ impl<'a> Parser<'a> {
     /// value is missing, since either case means the rest of the
     /// declaration can't be parsed reliably; the cursor is resynchronized to
     /// the next `;`, `func`, or `const`. If `value` itself is an
-    /// `ErrorExpressionHandle` expression, the trailing `;` is consumed
+    /// `ErrorExpressionId` expression, the trailing `;` is consumed
     /// without reporting a missing-`;` diagnostic, since the expression
     /// parse already reported an error at that position.
-    fn parse_constant_definition(&mut self) -> Result<ConstantDefinitionHandle, ErrorItemHandle> {
+    fn parse_constant_definition(
+        &mut self,
+    ) -> Result<ConstantDefinitionId, ErrorDefinitionId> {
         let start = self.cursor.peek().span().start();
 
         self.expect(TokenKind::Const);
 
-        let name = if self.expect(TokenKind::Identifier) {
+        let name_id = if self.expect(TokenKind::Identifier) {
             let token = self.cursor.previous().as_token();
             self.ast
                 .add_valid_identifier(token.symbol().unwrap(), token.span())
@@ -254,10 +260,10 @@ impl<'a> Parser<'a> {
             self.cursor.eat(TokenKind::Semicolon);
             return Err(self
                 .ast
-                .add_erroneous_item(Span::new(start, self.cursor.previous().span().end())));
+                .add_erroneous_definition(Span::new(start, self.cursor.previous().span().end())));
         }
 
-        let annotation = self.expect_type_annotation();
+        let annotation_id = self.expect_type_annotation();
 
         if !self.expect(TokenKind::Equal) {
             self.cursor
@@ -265,12 +271,12 @@ impl<'a> Parser<'a> {
             self.cursor.eat(TokenKind::Semicolon);
             return Err(self
                 .ast
-                .add_erroneous_item(Span::new(start, self.cursor.previous().span().end())));
+                .add_erroneous_definition(Span::new(start, self.cursor.previous().span().end())));
         }
 
-        let value = self.parse_expression(Self::MIN_BINDING_POWER);
+        let value_id = self.parse_expression(Self::MIN_BINDING_POWER);
 
-        if value.is_error() {
+        if value_id.is_error() {
             self.cursor.eat(TokenKind::Semicolon);
         } else {
             self.expect(TokenKind::Semicolon);
@@ -279,12 +285,12 @@ impl<'a> Parser<'a> {
         let end = if self.cursor.previous().kind() == TokenKind::Semicolon {
             self.cursor.previous().span().end()
         } else {
-            self.ast.span_of_expression(value).end()
+            self.ast.span_of_expression(value_id).end()
         };
 
         Ok(self
             .ast
-            .add_constant_definition(name, annotation, value, Span::new(start, end)))
+            .add_constant_definition(name_id, annotation_id, value_id, Span::new(start, end)))
     }
 
     /// Parses `let mut? pattern: Type? = value;`.
@@ -293,16 +299,16 @@ impl<'a> Parser<'a> {
     /// semantic analysis. Fails if the `=` before `value` is missing, since
     /// crawfish has no `let` without an initializer; the cursor is
     /// resynchronized to the next `;` or `let`.
-    fn parse_let_statement(&mut self) -> Result<LetStatementHandle, ErrorStatementHandle> {
+    fn parse_let_statement(&mut self) -> Result<LetStatementId, ErrorStatementId> {
         let start = self.cursor.peek().span().start();
 
         self.expect(TokenKind::Let);
 
         let mutable = self.cursor.eat(TokenKind::Mut);
 
-        let name = self.expect_pattern();
+        let name_id = self.expect_pattern();
 
-        let annotation = if self.cursor.eat(TokenKind::Colon) {
+        let annotation_id = if self.cursor.eat(TokenKind::Colon) {
             Some(self.expect_type_annotation())
         } else {
             None
@@ -317,9 +323,9 @@ impl<'a> Parser<'a> {
                 .add_erroneous_statement(Span::new(start, self.cursor.previous().span().end())));
         }
 
-        let value = self.parse_expression(Self::MIN_BINDING_POWER);
+        let value_id = self.parse_expression(Self::MIN_BINDING_POWER);
 
-        if value.is_error() {
+        if value_id.is_error() {
             self.cursor.eat(TokenKind::Semicolon);
         } else {
             self.expect(TokenKind::Semicolon);
@@ -328,30 +334,30 @@ impl<'a> Parser<'a> {
         let end = if self.cursor.previous().kind() == TokenKind::Semicolon {
             self.cursor.previous().span().end()
         } else {
-            self.ast.span_of_expression(value).end()
+            self.ast.span_of_expression(value_id).end()
         };
 
         Ok(self
             .ast
-            .add_let_statement(name, mutable, annotation, value, Span::new(start, end)))
+            .add_let_statement(name_id, mutable, annotation_id, value_id, Span::new(start, end)))
     }
 
-    /// Parses a `const` or `func` item appearing inside a block, wrapping it
-    /// in an [`ItemStatementHandle`].
+    /// Parses a `const` or `func` definition appearing inside a block, wrapping it
+    /// in a [`DefinitionStatementId`].
     ///
     /// Only called from [`Parser::parse_block_statements`] after it has
     /// already peeked [`TokenKind::Const`] or [`TokenKind::Func`], so the
     /// `unreachable!()` case can't be hit.
-    fn parse_item_statement(&mut self) -> ItemStatementHandle {
-        let item: ItemHandle = match self.cursor.peek().kind() {
+    fn parse_definition_statement(&mut self) -> DefinitionStatementId {
+        let definition_id: DefinitionId = match self.cursor.peek().kind() {
             TokenKind::Const => self.parse_constant_definition().into(),
             TokenKind::Func => self.parse_function_definition().into(),
             _ => unreachable!(),
         };
 
-        let span = self.ast.span_of_item(item);
+        let span = self.ast.span_of_definition(definition_id);
 
-        self.ast.add_item_statement(item, span)
+        self.ast.add_definition_statement(definition_id, span)
     }
 
     /// Parses an expression, optionally followed by a `;`.
@@ -361,22 +367,22 @@ impl<'a> Parser<'a> {
     /// itself: [`Parser::parse_block_expression`] uses this to decide
     /// whether the last statement in a block is a tail expression (no `;`)
     /// or a true statement (`;` present).
-    fn parse_expression_statement(&mut self) -> ExpressionStatementHandle {
+    fn parse_expression_statement(&mut self) -> ExpressionStatementId {
         let start = self.cursor.peek().span().start();
 
-        let expr = self.parse_expression(Self::MIN_BINDING_POWER);
+        let expression_id = self.parse_expression(Self::MIN_BINDING_POWER);
 
         if self.cursor.eat(TokenKind::Semicolon) {
             self.ast.add_expression_statement(
-                expr,
+                expression_id,
                 true,
                 Span::new(start, self.cursor.previous().span().end()),
             )
         } else {
             self.ast.add_expression_statement(
-                expr,
+                expression_id,
                 false,
-                Span::new(start, self.ast.span_of_expression(expr).end()),
+                Span::new(start, self.ast.span_of_expression(expression_id).end()),
             )
         }
     }
@@ -395,21 +401,21 @@ impl<'a> Parser<'a> {
     /// operator's right binding power, so higher-precedence operators bind
     /// tighter and `=` (right-associative) recurses with its own left
     /// binding power as `min_bp` for its right-hand side.
-    fn parse_expression(&mut self, min_bp: u8) -> ExpressionHandle {
-        let mut lhs = self.nud();
+    fn parse_expression(&mut self, min_bp: u8) -> ExpressionId {
+        let mut lhs_id = self.nud();
 
         while let Some((lbp, ())) = self.cursor.peek().kind().postfix_binding_power()
             && lbp > min_bp
         {
-            lhs = self.led_postfix(lhs);
+            lhs_id = self.led_postfix(lhs_id);
         }
         while let Some((lbp, rbp)) = self.cursor.peek().kind().infix_binding_power()
             && lbp > min_bp
         {
-            lhs = self.led_infix(lhs, rbp);
+            lhs_id = self.led_infix(lhs_id, rbp);
         }
 
-        lhs
+        lhs_id
     }
 
     /// Parses a prefix expression: the first token (or token tree) of an
@@ -420,9 +426,9 @@ impl<'a> Parser<'a> {
     /// [`SyntacticDiagnostic::InvalidExpression`] is recorded, and parsing
     /// recurses to recover the rest of the expression. Any other
     /// unrecognized token is consumed, reported the same way, and replaced
-    /// with an [`ErrorExpressionHandle`] after resynchronizing to the next `;`
+    /// with an [`ErrorExpressionId`] after resynchronizing to the next `;`
     /// or `,`.
-    fn nud(&mut self) -> ExpressionHandle {
+    fn nud(&mut self) -> ExpressionId {
         match self.cursor.peek().kind() {
             TokenKind::OpenBrace => self.parse_block_expression().into(),
             TokenKind::If => self.parse_if_expression().into(),
@@ -461,29 +467,29 @@ impl<'a> Parser<'a> {
 
     /// The only postfix operator: a function call `lhs(args)`, where `lhs`
     /// is the callee.
-    fn led_postfix(&mut self, lhs: ExpressionHandle) -> ExpressionHandle {
-        self.parse_function_call(lhs).into()
+    fn led_postfix(&mut self, lhs_id: ExpressionId) -> ExpressionId {
+        self.parse_function_call(lhs_id).into()
     }
 
     /// Parses an infix operator and its right-hand side, recursing into
     /// [`Parser::parse_expression`] with `rbp` as the new minimum binding
     /// power.
     ///
-    /// [`TokenKind::Equal`] is special-cased into an `AssignHandle` node
-    /// rather than a `BinaryOperationHandle`, since `=` isn't a value-producing
+    /// [`TokenKind::Equal`] is special-cased into an `AssignId` node
+    /// rather than a `BinaryOperationId`, since `=` isn't a value-producing
     /// `BinOp`.
-    fn led_infix(&mut self, lhs: ExpressionHandle, rbp: u8) -> ExpressionHandle {
+    fn led_infix(&mut self, lhs_id: ExpressionId, rbp: u8) -> ExpressionId {
         let op_token = self.cursor.bump();
-        let rhs = self.parse_expression(rbp);
-        let start = self.ast.span_of_expression(lhs).start();
-        let end = self.ast.span_of_expression(rhs).end();
+        let rhs_id = self.parse_expression(rbp);
+        let start = self.ast.span_of_expression(lhs_id).start();
+        let end = self.ast.span_of_expression(rhs_id).end();
         let span = Span::new(start, end);
 
         if op_token.kind() == TokenKind::Equal {
-            self.ast.add_assign(lhs, rhs, span).into()
+            self.ast.add_assign(lhs_id, rhs_id, span).into()
         } else {
             self.ast
-                .add_binary_operation(BinOp::from_token_kind(op_token.kind()), lhs, rhs, span)
+                .add_binary_operation(BinOp::from_token_kind(op_token.kind()), lhs_id, rhs_id, span)
                 .into()
         }
     }
@@ -496,7 +502,7 @@ impl<'a> Parser<'a> {
     /// without a trailing `;`: it's popped off `statements` and its
     /// expression becomes `tail`. A block with no tail expression evaluates
     /// to `()`.
-    fn parse_block_expression(&mut self) -> Result<BlockExpressionHandle, ErrorExpressionHandle> {
+    fn parse_block_expression(&mut self) -> Result<BlockExpressionId, ErrorExpressionId> {
         if !self.expect_delimited(TokenKind::OpenBrace) {
             return Err(self.ast.add_erroneous_expression(self.cursor.peek().span()));
         }
@@ -504,22 +510,22 @@ impl<'a> Parser<'a> {
         let (_, inner, block_span) = self.cursor.previous().as_delimited();
         let inner_cursor = Cursor::new(inner);
 
-        let (statements, tail) = self.parse_inner(inner_cursor, |parser| {
-            let mut statements = Vec::new();
+        let (statement_ids, tail_id) = self.parse_inner(inner_cursor, |parser| {
+            let mut statement_ids = Vec::new();
             while !parser.cursor.is_at_end() {
-                statements.push(parser.parse_block_statements());
+                statement_ids.push(parser.parse_block_statements());
             }
 
-            let tail = if let Some(last) = statements.last() {
-                let last = *last;
-                if last.kind() == StatementKind::ExpressionStatement {
-                    let node = &parser.ast.expression_statements[last.index().into()];
+            let tail_id = if let Some(last_statement_id) = statement_ids.last() {
+                let last_statement_id = *last_statement_id;
+                if last_statement_id.kind() == StatementKind::ExpressionStatement {
+                    let node = &parser.ast.expression_statements[last_statement_id.index().into()];
                     if node.has_semicolon {
                         None
                     } else {
-                        let expr = node.expression;
-                        statements.pop();
-                        Some(expr)
+                        let expression_id = node.expression_id;
+                        statement_ids.pop();
+                        Some(expression_id)
                     }
                 } else {
                     None
@@ -528,20 +534,20 @@ impl<'a> Parser<'a> {
                 None
             };
 
-            (statements, tail)
+            (statement_ids, tail_id)
         });
 
-        Ok(self.ast.add_block_expression(&statements, tail, block_span))
+        Ok(self.ast.add_block_expression(&statement_ids, tail_id, block_span))
     }
 
     /// Dispatches on the next token to parse one statement inside a block:
-    /// a [`Parser::parse_let_statement`], a [`Parser::parse_item_statement`]
+    /// a [`Parser::parse_let_statement`], a [`Parser::parse_definition_statement`]
     /// for a nested `const`/`func`, or otherwise a
     /// [`Parser::parse_expression_statement`].
-    fn parse_block_statements(&mut self) -> StatementHandle {
+    fn parse_block_statements(&mut self) -> StatementId {
         match self.cursor.peek().kind() {
             TokenKind::Let => self.parse_let_statement().into(),
-            TokenKind::Const | TokenKind::Func => self.parse_item_statement().into(),
+            TokenKind::Const | TokenKind::Func => self.parse_definition_statement().into(),
             _ => self.parse_expression_statement().into(),
         }
     }
@@ -551,19 +557,19 @@ impl<'a> Parser<'a> {
     /// `else_branch` may be another `if` (an `else if` chain, parsed
     /// recursively), a `{ ... }` block, or absent entirely. Anything else
     /// after `else` is reported as an [`SyntacticDiagnostic::UnexpectedToken`]
-    /// and replaced with an [`ErrorExpressionHandle`]. Fails only if
+    /// and replaced with an [`ErrorExpressionId`]. Fails only if
     /// `then_branch` itself fails to parse, since a missing `then_branch`
     /// makes the rest of the `if` unrecoverable.
-    fn parse_if_expression(&mut self) -> Result<IfExpressionHandle, ErrorExpressionHandle> {
+    fn parse_if_expression(&mut self) -> Result<IfExpressionId, ErrorExpressionId> {
         let start = self.cursor.peek().span().start();
 
         self.expect(TokenKind::If);
 
-        let condition = self.parse_expression(Self::MIN_BINDING_POWER);
+        let condition_id = self.parse_expression(Self::MIN_BINDING_POWER);
 
-        let then_branch = self.parse_block_expression()?;
+        let then_branch_id = self.parse_block_expression()?;
 
-        let else_branch = if self.cursor.eat(TokenKind::Else) {
+        let else_branch_id = if self.cursor.eat(TokenKind::Else) {
             if self.cursor.at(TokenKind::If) {
                 Some(self.parse_if_expression().into())
             } else if self.cursor.at_delimited(TokenKind::OpenBrace) {
@@ -583,15 +589,18 @@ impl<'a> Parser<'a> {
             None
         };
 
-        let end = if let Some(else_node) = else_branch {
-            self.ast.span_of_expression(else_node).end()
+        let end = if let Some(else_expression_id) = else_branch_id {
+            self.ast.span_of_expression(else_expression_id).end()
         } else {
-            self.ast.span_of_expression(then_branch.into()).end()
+            self.ast.span_of_expression(then_branch_id.into()).end()
         };
 
-        Ok(self
-            .ast
-            .add_if_expression(condition, then_branch, else_branch, Span::new(start, end)))
+        Ok(self.ast.add_if_expression(
+            condition_id,
+            then_branch_id,
+            else_branch_id,
+            Span::new(start, end),
+        ))
     }
 
     /// Parses a parenthesized expression `(expr)`, or the unit literal `()`
@@ -602,7 +611,7 @@ impl<'a> Parser<'a> {
     /// `)`, but doesn't change the result: `expr` itself is still returned.
     fn parse_parenthesized_expression(
         &mut self,
-    ) -> Result<ExpressionHandle, ErrorExpressionHandle> {
+    ) -> Result<ExpressionId, ErrorExpressionId> {
         if !self.expect_delimited(TokenKind::OpenParen) {
             return Err(self.ast.add_erroneous_expression(self.cursor.peek().span()));
         }
@@ -615,7 +624,7 @@ impl<'a> Parser<'a> {
         }
 
         self.parse_inner(inner_cursor, |parser| {
-            let expression = parser.parse_expression(Self::MIN_BINDING_POWER);
+            let expression_id = parser.parse_expression(Self::MIN_BINDING_POWER);
 
             if !parser.cursor.is_at_end() {
                 let leftover = parser.cursor.peek();
@@ -629,7 +638,7 @@ impl<'a> Parser<'a> {
                     });
             }
 
-            Ok(expression)
+            Ok(expression_id)
         })
     }
 
@@ -637,14 +646,14 @@ impl<'a> Parser<'a> {
     /// recursing into [`Parser::parse_expression`] with the operator's right
     /// binding power from
     /// [`crate::front_end::lexical_analysis::token::TokenKind::prefix_binding_power`].
-    fn parse_unary_operation(&mut self) -> UnaryOperationHandle {
+    fn parse_unary_operation(&mut self) -> UnaryOperationId {
         let op_token = self.cursor.bump();
         let ((), rbp) = op_token.kind().prefix_binding_power().unwrap();
-        let right = self.parse_expression(rbp);
-        let end = self.ast.span_of_expression(right).end();
+        let rhs_id = self.parse_expression(rbp);
+        let end = self.ast.span_of_expression(rhs_id).end();
         self.ast.add_unary_operation(
             UnOp::from_token_kind(op_token.kind()),
-            right,
+            rhs_id,
             Span::new(op_token.span().start(), end),
         )
     }
@@ -653,9 +662,9 @@ impl<'a> Parser<'a> {
     /// parsed `callee` expression as the left-hand side.
     fn parse_function_call(
         &mut self,
-        callee: ExpressionHandle,
-    ) -> Result<FunctionCallHandle, ErrorExpressionHandle> {
-        let start = self.ast.span_of_expression(callee).start();
+        callee_id: ExpressionId,
+    ) -> Result<FunctionCallId, ErrorExpressionId> {
+        let start = self.ast.span_of_expression(callee_id).start();
 
         if !self.expect_delimited(TokenKind::OpenParen) {
             return Err(self.ast.add_erroneous_expression(self.cursor.peek().span()));
@@ -664,27 +673,27 @@ impl<'a> Parser<'a> {
         let (_, inner, _) = self.cursor.previous().as_delimited();
         let inner_cursor = Cursor::new(inner);
 
-        let args = self.parse_inner(inner_cursor, |parser| {
-            let mut args = Vec::new();
+        let argument_ids = self.parse_inner(inner_cursor, |parser| {
+            let mut argument_ids = Vec::new();
             while !parser.cursor.is_at_end() {
-                args.push(parser.parse_expression(Self::MIN_BINDING_POWER));
+                argument_ids.push(parser.parse_expression(Self::MIN_BINDING_POWER));
                 if !parser.cursor.eat(TokenKind::Comma) {
                     break;
                 }
             }
-            args
+            argument_ids
         });
 
         let end = self.cursor.previous().span().end();
 
         Ok(self
             .ast
-            .add_function_call(callee, &args, Span::new(start, end)))
+            .add_function_call(callee_id, &argument_ids, Span::new(start, end)))
     }
 
     /// Parses a bare identifier as a variable reference. Name resolution
     /// happens later, during HIR lowering.
-    fn parse_variable(&mut self) -> VariableHandle {
+    fn parse_variable(&mut self) -> VariableId {
         let token = self.cursor.bump().as_token();
         self.ast.add_variable(token.symbol().unwrap(), token.span())
     }
@@ -697,7 +706,7 @@ impl<'a> Parser<'a> {
     /// digits don't fit in a `u128` (the literal's final type, e.g. `i32` vs
     /// `u8`, isn't known until semantic analysis, so `u128` is used here as
     /// the widest possible intermediate).
-    fn parse_integer_literal(&mut self) -> Result<IntegerLiteralHandle, ErrorExpressionHandle> {
+    fn parse_integer_literal(&mut self) -> Result<IntegerLiteralId, ErrorExpressionId> {
         let token = self.cursor.bump().as_token();
         let span = token.span();
         let symbol = token.symbol().unwrap();
@@ -732,7 +741,7 @@ impl<'a> Parser<'a> {
 
     /// Parses [`TokenKind::True`] or [`TokenKind::False`] as a boolean
     /// literal.
-    fn parse_boolean_literal(&mut self) -> BooleanLiteralHandle {
+    fn parse_boolean_literal(&mut self) -> BooleanLiteralId {
         let token = self.cursor.bump();
         let value = token.kind() == TokenKind::True;
         self.ast.add_boolean_literal(value, token.span())
@@ -742,23 +751,23 @@ impl<'a> Parser<'a> {
     ///
     /// `value` is absent if the next token is `;` or end of input, making
     /// `return;` equivalent to returning `()`.
-    fn parse_return(&mut self) -> ReturnHandle {
+    fn parse_return(&mut self) -> ReturnId {
         let start = self.cursor.peek().span().start();
 
         self.expect(TokenKind::Return);
 
-        let value = if !self.cursor.at(TokenKind::Semicolon) && !self.cursor.is_at_end() {
+        let value_id = if !self.cursor.at(TokenKind::Semicolon) && !self.cursor.is_at_end() {
             Some(self.parse_expression(Self::MIN_BINDING_POWER))
         } else {
             None
         };
 
-        let end = match value {
-            Some(v) => self.ast.span_of_expression(v).end(),
+        let end = match value_id {
+            Some(expression_id) => self.ast.span_of_expression(expression_id).end(),
             None => self.cursor.previous().span().end(),
         };
 
-        self.ast.add_return(value, Span::new(start, end))
+        self.ast.add_return(value_id, Span::new(start, end))
     }
 
     /// Temporarily swaps in `temp_cursor` (a [`Cursor`] over a delimited
@@ -821,17 +830,17 @@ impl<'a> Parser<'a> {
 
     /// Parses a type annotation, currently just a bare identifier naming a
     /// type (e.g. `i32`, `bool`). Resolution to an actual `Ty` happens
-    /// during semantic analysis. Falls back to an `ErrorTypeAnnotationHandle`
+    /// during semantic analysis. Falls back to an `ErrorTypeAnnotationId`
     /// (via [`Parser::expect`]'s diagnostic) if no identifier is found.
-    fn expect_type_annotation(&mut self) -> TypeAnnotationHandle {
+    fn expect_type_annotation(&mut self) -> TypeAnnotationId {
         if self.expect(TokenKind::Identifier) {
             let token = self.cursor.previous().as_token();
-            let id = self
+            let identifier_id = self
                 .ast
                 .add_valid_identifier(token.symbol().unwrap(), token.span())
                 .into();
-            let span = self.ast.span_of_identifier(id);
-            self.ast.add_named_type_annotation(id, span).into()
+            let span = self.ast.span_of_identifier(identifier_id);
+            self.ast.add_named_type_annotation(identifier_id, span).into()
         } else {
             self.ast
                 .add_erroneous_type_annotation(self.cursor.peek().span())
@@ -840,17 +849,17 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses a binding pattern, currently just a bare identifier (the only
-    /// pattern crawfish supports). Falls back to an `ErrorPatternHandle` (via
+    /// pattern crawfish supports). Falls back to an `ErrorPatternId` (via
     /// [`Parser::expect`]'s diagnostic) if no identifier is found.
-    fn expect_pattern(&mut self) -> PatternHandle {
+    fn expect_pattern(&mut self) -> PatternId {
         if self.expect(TokenKind::Identifier) {
             let token = self.cursor.previous().as_token();
-            let id = self
+            let identifier_id = self
                 .ast
                 .add_valid_identifier(token.symbol().unwrap(), token.span())
                 .into();
-            let span = self.ast.span_of_identifier(id);
-            self.ast.add_identifier_pattern(id, span).into()
+            let span = self.ast.span_of_identifier(identifier_id);
+            self.ast.add_identifier_pattern(identifier_id, span).into()
         } else {
             self.ast
                 .add_erroneous_pattern(self.cursor.peek().span())
@@ -928,7 +937,7 @@ impl<'a> Cursor<'a> {
 
     /// Error-recovery helper: advances past tokens until one of
     /// `recovery_tokens` is found (left unconsumed for the caller) or
-    /// [`Cursor::is_at_end`]. Used to skip a malformed item, statement, or
+    /// [`Cursor::is_at_end`]. Used to skip a malformed definition, statement, or
     /// parameter so parsing can resume at the next recognizable boundary.
     fn sync_until(&mut self, recovery_tokens: &[TokenKind]) {
         while !self.is_at_end() {

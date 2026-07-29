@@ -8,6 +8,17 @@ This is because assertions are almost never a detectable performance hit, while 
 
 More importantly, failing loudly in release builds is better than failing silently. A compiler that panics with a clear message is better than one that produces wrong output.
 
+## Naming Conventions for Handles
+
+- the core type: `<type>`
+- the handle: `<type>Id`
+- the view: `<type>View`
+- the handle pointing to a slice of handles: `<type>IdSpan`
+- a variable, parameter, or struct field that's a handle: `<type>_id`
+- a variable, parameter, or struct field whose type is a handle pointing to a slice of handles: `<type>_id_span`
+- a variable, parameter, or struct field whose type is an *actual* slice of handles or a vector of handles: `<type>_ids`
+- a variable, parameter, or struct field whose type is a view: `<type>_view`
+
 ## Layout
 
 ### Directory Layout

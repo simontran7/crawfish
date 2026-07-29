@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::common::string_interner::Symbol;
-use crate::front_end::semantic_analysis::hir::{BindingHandle, BindingKind};
+use crate::front_end::semantic_analysis::hir::{BindingId, BindingKind};
 
-/// A stack of [`Scope`]s used to resolve names to [`BindingHandle`]s during HIR
+/// A stack of [`Scope`]s used to resolve names to [`BindingId`]s during HIR
 /// lowering. Pushed on [`SymbolTable::enter_scope`] and popped on
 /// [`SymbolTable::exit_scope`], following the lexical structure of the
 /// program: one scope per block, function body, and the top-level module.
@@ -13,14 +13,14 @@ use crate::front_end::semantic_analysis::hir::{BindingHandle, BindingKind};
 /// ```rust,ignore
 /// let mut table = SymbolTable::new();
 /// table.enter_scope(ScopeKind::Normal);
-/// table.add_binding(x_symbol, x_local_binding_id).unwrap();
+/// table.add_binding(x_symbol, x_local_binding).unwrap();
 ///
 /// table.enter_scope(ScopeKind::FunctionBoundary);
 /// // `x` is a local from across a function boundary, so it's not visible here.
-/// assert!(table.find_binding(x_symbol).is_err());
+/// assert!(table.find_binding(<x_symbol>).is_err());
 /// table.exit_scope();
 ///
-/// assert_eq!(table.find_binding(x_symbol).unwrap(), x_local_binding_id);
+/// assert_eq!(table.find_binding(x_symbol).unwrap(), x_local_binding>);
 /// ```
 pub(crate) struct SymbolTable {
     scopes: Vec<Scope>,
@@ -31,7 +31,7 @@ pub(crate) struct SymbolTable {
 #[derive(Clone, Debug)]
 pub(crate) struct Scope {
     pub(crate) kind: ScopeKind,
-    pub(crate) bindings: HashMap<Symbol, BindingHandle>,
+    pub(crate) bindings: HashMap<Symbol, BindingId>,
 }
 
 /// Distinguishes a scope that closes over its enclosing scopes from one that
@@ -42,10 +42,10 @@ pub(crate) enum ScopeKind {
     /// visible.
     Normal,
     /// A function body's outermost scope: local bindings from enclosing
-    /// scopes are not visible, since crawfish has no closures. Item
+    /// scopes are not visible, since crawfish has no closures. Definition
     /// bindings (functions, constants) remain visible past this boundary.
     FunctionBoundary,
-    /// A constant item's value expression: local bindings from enclosing
+    /// A constant definition's value expression: local bindings from enclosing
     /// scopes are not visible, since constants must be evaluable at
     /// compile time.
     ConstantBoundary,
@@ -63,7 +63,7 @@ pub(crate) enum LookupError {
 /// the current scope.
 #[derive(Debug)]
 pub(crate) enum DefineError {
-    AlreadyDefined { prev_binding_id: BindingHandle },
+    AlreadyDefined { previous_binding: BindingId },
 }
 
 impl SymbolTable {
@@ -92,28 +92,28 @@ impl SymbolTable {
     pub(crate) fn add_binding(
         &mut self,
         name: Symbol,
-        binding_id: BindingHandle,
+        binding_id: BindingId,
     ) -> Result<(), DefineError> {
         let scope = self.scopes.last_mut().unwrap();
-        if let Some(&prev_binding_id) = scope.bindings.get(&name) {
-            return Err(DefineError::AlreadyDefined { prev_binding_id });
+        if let Some(&previous_binding) = scope.bindings.get(&name) {
+            return Err(DefineError::AlreadyDefined { previous_binding });
         }
         scope.bindings.insert(name, binding_id);
         Ok(())
     }
 
-    /// Resolves `name` to a [`BindingHandle`], searching from the innermost
+    /// Resolves `name` to a [`BindingId`], searching from the innermost
     /// scope outwards. Once the search crosses a [`ScopeKind::FunctionBoundary`]
-    /// or [`ScopeKind::ConstantBoundary`], only [`BindingKind::Item`] bindings
+    /// or [`ScopeKind::ConstantBoundary`], only [`BindingKind::Definition`] bindings
     /// in further-out scopes are visible; [`BindingKind::Local`] bindings are
     /// skipped.
-    pub(crate) fn find_binding(&self, name: Symbol) -> Result<BindingHandle, LookupError> {
+    pub(crate) fn find_binding(&self, name: Symbol) -> Result<BindingId, LookupError> {
         let mut boundary = None;
         for scope in self.scopes.iter().rev() {
-            if let Some(&binding_id) = scope.bindings.get(&name) {
-                match binding_id.kind() {
-                    BindingKind::Item => return Ok(binding_id),
-                    BindingKind::Local if boundary.is_none() => return Ok(binding_id),
+            if let Some(&binding) = scope.bindings.get(&name) {
+                match binding.kind() {
+                    BindingKind::Definition => return Ok(binding),
+                    BindingKind::Local if boundary.is_none() => return Ok(binding),
                     BindingKind::Local => {
                         return Err(LookupError::BlockedByBoundary(boundary.unwrap()));
                     }

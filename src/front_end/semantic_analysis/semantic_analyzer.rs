@@ -1,13 +1,12 @@
 use crate::common::context::CompilerContext;
-use crate::common::span::Span;
 #[allow(unused_imports)] // only used by intra-doc links below, not by any code
 use crate::common::types::TypeInterner;
-use crate::common::types::{InferTy, Ty, TypeHandle};
+use crate::common::types::{InferTy, Ty, TypeId};
 use crate::diagnostics::semantic_diagnostics::SemanticDiagnostic;
 use crate::front_end::semantic_analysis::constraints::{Constraint, Provenance};
 use crate::front_end::semantic_analysis::hir::{
-    BindingHandle, BindingKind, ExpressionHandle, ExpressionKind, ExpressionSlice, Hir, ItemHandle,
-    ItemKind, LocalBindingHandle, StatementHandle, StatementKind,
+    BindingId, BindingKind, DefinitionId, DefinitionKind, ExpressionId, ExpressionKind,
+    ExpressionIdSpan, Hir, LocalBindingId, StatementId, StatementKind,
 };
 use crate::front_end::semantic_analysis::symbol_table::{
     DefineError, LookupError, ScopeKind, SymbolTable,
@@ -20,7 +19,7 @@ use crate::front_end::syntactic_analysis::ast::{self, Ast};
 /// inference.
 ///
 /// Type inference is constraint-based: [`SemanticAnalyzer::infer`] and
-/// [`SemanticAnalyzer::check`] assign each expression a [`TypeHandle`], which
+/// [`SemanticAnalyzer::check`] assign each expression a [`TypeId`], which
 /// may be a concrete [`Ty`] or an [`InferTy::TyVar`]/[`InferTy::IntVar`]
 /// placeholder allocated via [`SemanticAnalyzer::fresh_ty_var`]/
 /// [`SemanticAnalyzer::fresh_int_var`]. Relationships between types (e.g.
@@ -38,15 +37,15 @@ pub(crate) struct SemanticAnalyzer<'ast> {
     hir: Hir,
     constraints: Vec<Constraint>,
     substitutions: UnificationTable,
-    current_return_ty: Option<TypeHandle>,
+    current_return_ty: Option<TypeId>,
 }
 
-/// The failure case of [`SemanticAnalyzer::unify`]: the two [`TypeHandle`]s
+/// The failure case of [`SemanticAnalyzer::unify`]: the two [`TypeId`]s
 /// can't be unified because they resolve to incompatible concrete [`Ty`]s.
 enum UnificationError {
     TypeMismatch {
-        expected: TypeHandle,
-        actual: TypeHandle,
+        expected: TypeId,
+        actual: TypeId,
     },
 }
 
@@ -65,7 +64,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     }
 
     /// Runs the full pipeline: name resolution and type inference
-    /// ([`SemanticAnalyzer::collect_top_level_items`] and
+    /// ([`SemanticAnalyzer::collect_top_level_definitions`] and
     /// [`SemanticAnalyzer::typecheck_source_file`]), then
     /// [`SemanticAnalyzer::solve_constraints`] to resolve inference
     /// variables and report type errors, then
@@ -73,14 +72,13 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`Hir`]. Returns the completed [`Hir`].
     ///
     /// The [`Hir`] is always complete, even when diagnostics were emitted:
-    /// unresolved names lower to [`BindingHandle::ERROR`] with
+    /// unresolved names lower to [`BindingId::ERROR`] with
     /// [`TypeInterner::error_id`], so the tree stays whole and further
     /// diagnostics don't cascade off the bad node. Callers check
     /// [`CompilerContext::diagnostics`] to decide whether to proceed.
     pub(crate) fn analyze(mut self) -> Hir {
         self.symbol_table.enter_scope(ScopeKind::Normal);
-        self.register_builtin_println();
-        self.collect_top_level_items();
+        self.collect_top_level_definitions();
         self.typecheck_source_file();
         self.symbol_table.exit_scope();
 
@@ -91,65 +89,44 @@ impl<'ast> SemanticAnalyzer<'ast> {
         self.hir
     }
 
-    /// Registers `println` as a synthetic item binding, so a call to it
-    /// resolves, type-checks, and arity-checks through the same machinery as
-    /// a user-defined `func` — no crawfish-source body backs it.
-    /// [`crate::back_end::llvm_codegen::LlvmCodegen`] recognizes this
-    /// binding by name and lowers a call to it directly to a libc `printf`
-    /// call.
-    fn register_builtin_println(&mut self) {
-        let name = self.ctx.string_interner.intern("println");
-        let i32_handle = self.ctx.type_interner.i32_handle;
-        let unit_handle = self.ctx.type_interner.unit_handle;
-        let ty = self.ctx.type_interner.intern(Ty::Func {
-            parameters: vec![i32_handle],
-            return_value: unit_handle,
-        });
-        let item_binding_handle = self.hir.add_item_binding(name, ty, Span::default());
-        self.symbol_table
-            .add_binding(name, item_binding_handle.into())
-            .expect("println is registered before any name can collide with it");
-        self.hir.builtin_println = Some(item_binding_handle);
-    }
-
-    /// Calls [`SemanticAnalyzer::collect_item_definition`] for every
-    /// top-level item, populating the source-file scope with item bindings
+    /// Calls [`SemanticAnalyzer::collect_definition`] for every
+    /// top-level definition, populating the source-file scope with definition bindings
     /// before any function bodies are type-checked, so that mutually
-    /// recursive functions and forward references to later items resolve
+    /// recursive functions and forward references to later definitions resolve
     /// correctly.
-    fn collect_top_level_items(&mut self) {
-        let start = self.ast.source_file.items.start as usize;
-        let len = self.ast.source_file.items.len as usize;
-        for &ast_item_id in &self.ast.source_file_items[start..start + len] {
-            self.collect_item_definition(ast_item_id);
+    fn collect_top_level_definitions(&mut self) {
+        let start = self.ast.source_file.definition_id_span.start as usize;
+        let len = self.ast.source_file.definition_id_span.len as usize;
+        for &ast_definition_id in &self.ast.source_file_definition_ids[start..start + len] {
+            self.collect_definition(ast_definition_id);
         }
     }
 
-    /// Type-checks and lowers every top-level item, collecting the
-    /// resulting [`ItemHandle`]s into [`Hir::source_file`]'s item slice. Each
-    /// item must already have a binding from
-    /// [`SemanticAnalyzer::collect_top_level_items`].
+    /// Type-checks and lowers every top-level definition, collecting the
+    /// resulting [`DefinitionId`]s into [`Hir::source_file`]'s definition
+    /// slice. Each definition must already have a binding from
+    /// [`SemanticAnalyzer::collect_top_level_definitions`].
     fn typecheck_source_file(&mut self) {
-        let start = self.ast.source_file.items.start as usize;
-        let len = self.ast.source_file.items.len as usize;
-        let mut root_item_handles: Vec<ItemHandle> = Vec::new();
+        let start = self.ast.source_file.definition_id_span.start as usize;
+        let len = self.ast.source_file.definition_id_span.len as usize;
+        let mut root_definition_ids: Vec<DefinitionId> = Vec::new();
 
-        for &ast_item_id in &self.ast.source_file_items[start..start + len] {
-            let item_handle = match ast_item_id.kind() {
-                ast::handles::ItemKind::FunctionDefinition => {
-                    self.typecheck_function_definition(ast_item_id.index().into())
+        for &ast_definition_id in &self.ast.source_file_definition_ids[start..start + len] {
+            let definition_id = match ast_definition_id.kind() {
+                ast::handles::DefinitionKind::FunctionDefinition => {
+                    self.typecheck_function_definition(ast_definition_id.index().into())
                 }
-                ast::handles::ItemKind::ConstantDefinition => {
-                    self.typecheck_constant_definition(ast_item_id.index().into())
+                ast::handles::DefinitionKind::ConstantDefinition => {
+                    self.typecheck_constant_definition(ast_definition_id.index().into())
                 }
-                ast::handles::ItemKind::Error => {
-                    unreachable!("error items cannot reach semantic analysis")
+                ast::handles::DefinitionKind::Error => {
+                    unreachable!("error definitions cannot reach semantic analysis")
                 }
             };
-            root_item_handles.push(item_handle);
+            root_definition_ids.push(definition_id);
         }
 
-        self.hir.source_file.items = self.hir.add_item_slice(&root_item_handles);
+        self.hir.source_file.definition_id_span = self.hir.add_definition_ids(&root_definition_ids);
     }
 
     /// Drains `constraints`, calling [`SemanticAnalyzer::unify`] on each
@@ -242,7 +219,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         }
     }
 
-    /// Writes the final, resolved [`TypeHandle`] of every [`Hir`] expression and
+    /// Writes the final, resolved [`TypeId`] of every [`Hir`] expression and
     /// local binding back into the [`Hir`], replacing any
     /// [`InferTy`] left over after [`SemanticAnalyzer::solve_constraints`].
     ///
@@ -262,8 +239,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let tys: Vec<_> = tys.iter().map(|&ty| self.shallow_resolve(ty)).collect();
         for (expression, ty) in self.hir.expressions.values_mut().zip(tys) {
             expression.ty = match self.ctx.type_interner.resolve(ty).unwrap() {
-                Ty::Infer(InferTy::IntVar(_)) => self.ctx.type_interner.i32_handle,
-                Ty::Infer(InferTy::TyVar(_)) => self.ctx.type_interner.error_handle,
+                Ty::Infer(InferTy::IntVar(_)) => self.ctx.type_interner.i32_id,
+                Ty::Infer(InferTy::TyVar(_)) => self.ctx.type_interner.error_id,
                 _ => ty,
             };
         }
@@ -273,15 +250,15 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let tys: Vec<_> = tys.iter().map(|&ty| self.shallow_resolve(ty)).collect();
         for (binding, ty) in self.hir.local_bindings.values_mut().zip(tys) {
             binding.ty = match self.ctx.type_interner.resolve(ty).unwrap() {
-                Ty::Infer(InferTy::IntVar(_)) => self.ctx.type_interner.i32_handle,
-                Ty::Infer(InferTy::TyVar(_)) => self.ctx.type_interner.error_handle,
+                Ty::Infer(InferTy::IntVar(_)) => self.ctx.type_interner.i32_id,
+                Ty::Infer(InferTy::TyVar(_)) => self.ctx.type_interner.error_id,
                 _ => ty,
             };
         }
     }
 
-    /// Resolves a top-level or nested item's signature to a [`TypeHandle`] and
-    /// adds an item binding for it via [`Hir::add_item_binding`], without
+    /// Resolves a top-level or nested definition's signature to a [`TypeId`] and
+    /// adds a definition binding for it via [`Hir::add_definition_binding`], without
     /// type-checking its body or value.
     ///
     /// A [`ast::nodes::FunctionDefinitionNode`]
@@ -289,56 +266,56 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// annotations (resolved via
     /// [`SemanticAnalyzer::resolve_type_annotation`]); a
     /// [`ast::nodes::ConstantDefinitionNode`]
-    /// gets the [`TypeHandle`] of its annotation directly. Either way, a
+    /// gets the [`TypeId`] of its annotation directly. Either way, a
     /// duplicate name in the current scope is reported as
     /// [`SemanticDiagnostic::DuplicateDefinition`] but doesn't prevent the
     /// new binding from being added (shadowing the old one).
-    fn collect_item_definition(&mut self, id: ast::handles::ItemHandle) {
-        match id.kind() {
-            ast::handles::ItemKind::FunctionDefinition => {
-                let node = &self.ast.function_definitions[id.index().into()];
+    fn collect_definition(&mut self, ast_definition_id: ast::handles::DefinitionId) {
+        match ast_definition_id.kind() {
+            ast::handles::DefinitionKind::FunctionDefinition => {
+                let node = &self.ast.function_definitions[ast_definition_id.index().into()];
 
-                // resolve each parameter's type annotation to a TypeHandle
-                let start = node.parameters.start as usize;
-                let len = node.parameters.len as usize;
-                let parameters_ty: Vec<TypeHandle> = self.ast.function_definition_parameters
+                // resolve each parameter's type annotation to a TypeId
+                let start = node.parameter_id_span.start as usize;
+                let len = node.parameter_id_span.len as usize;
+                let parameters_ty: Vec<TypeId> = self.ast.function_definition_parameter_ids
                     [start..start + len]
                     .iter()
                     .map(|param_id| {
                         let ast_annotation_id =
-                            self.ast.valid_parameters[param_id.index().into()].annotation;
+                            self.ast.valid_parameters[param_id.index().into()].annotation_id;
                         let ast_identifier_id =
-                            &self.ast.named_type_annotations[ast_annotation_id.index().into()].name;
+                            &self.ast.named_type_annotations[ast_annotation_id.index().into()].name_id;
                         self.resolve_type_annotation(
                             &self.ast.valid_identifiers[ast_identifier_id.index().into()],
                         )
                     })
                     .collect();
 
-                // resolve the return type annotation to a TypeHandle (defaults to unit if omitted)
+                // resolve the return type annotation to a TypeId (defaults to unit if omitted)
                 let return_ty =
-                    node.annotation
-                        .map_or(self.ctx.type_interner.unit_handle, |annotation| {
+                    node.annotation_id
+                        .map_or(self.ctx.type_interner.unit_id, |annotation| {
                             let ast_identifier_id =
-                                &self.ast.named_type_annotations[annotation.index().into()].name;
+                                &self.ast.named_type_annotations[annotation.index().into()].name_id;
                             self.resolve_type_annotation(
                                 &self.ast.valid_identifiers[ast_identifier_id.index().into()],
                             )
                         });
 
                 // create a binding, and reporting an error if the name is already defined
-                let name = self.ast.valid_identifiers[node.name.index().into()].symbol;
-                let item_binding_handle = self.hir.add_item_binding(
+                let name = self.ast.valid_identifiers[node.name_id.index().into()].symbol;
+                let definition_binding_id = self.hir.add_definition_binding(
                     name,
-                    self.ctx.type_interner.intern(Ty::Func {
+                    self.ctx.type_interner.intern(Ty::Function {
                         parameters: parameters_ty,
                         return_value: return_ty,
                     }),
                     node.span,
                 );
-                if let Err(DefineError::AlreadyDefined { prev_binding_id }) = self
+                if let Err(DefineError::AlreadyDefined { previous_binding }) = self
                     .symbol_table
-                    .add_binding(name, item_binding_handle.into())
+                    .add_binding(name, definition_binding_id.into())
                 {
                     self.ctx
                         .diagnostics
@@ -347,26 +324,27 @@ impl<'ast> SemanticAnalyzer<'ast> {
                             span: node.span,
                             previous_span: self
                                 .hir
-                                .get_item_binding(prev_binding_id.as_item().unwrap())
+                                .get_definition_binding(previous_binding.as_definition().unwrap())
                                 .span(),
                         });
                 }
             }
-            ast::handles::ItemKind::ConstantDefinition => {
-                let node = &self.ast.constant_definitions[id.index().into()];
+            ast::handles::DefinitionKind::ConstantDefinition => {
+                let node = &self.ast.constant_definitions[ast_definition_id.index().into()];
 
-                // resolve the type annotation to a TypeHandle
-                let annotation = &self.ast.named_type_annotations[node.annotation.index().into()];
+                // resolve the type annotation to a TypeId
+                let annotation = &self.ast.named_type_annotations[node.annotation_id.index().into()];
                 let ty = self.resolve_type_annotation(
-                    &self.ast.valid_identifiers[annotation.name.index().into()],
+                    &self.ast.valid_identifiers[annotation.name_id.index().into()],
                 );
 
                 // creates a binding, and report an error if the name is already defined
-                let name = self.ast.valid_identifiers[node.name.index().into()].symbol;
-                let item_binding_handle = self.hir.add_item_binding(name, ty, node.span);
-                if let Err(DefineError::AlreadyDefined { prev_binding_id }) = self
+                let name = self.ast.valid_identifiers[node.name_id.index().into()].symbol;
+                let definition_binding_id =
+                    self.hir.add_definition_binding(name, ty, node.span);
+                if let Err(DefineError::AlreadyDefined { previous_binding }) = self
                     .symbol_table
-                    .add_binding(name, item_binding_handle.into())
+                    .add_binding(name, definition_binding_id.into())
                 {
                     self.ctx
                         .diagnostics
@@ -375,12 +353,12 @@ impl<'ast> SemanticAnalyzer<'ast> {
                             span: node.span,
                             previous_span: self
                                 .hir
-                                .get_item_binding(prev_binding_id.as_item().unwrap())
+                                .get_definition_binding(previous_binding.as_definition().unwrap())
                                 .span(),
                         });
                 }
             }
-            ast::handles::ItemKind::Error => {
+            ast::handles::DefinitionKind::Error => {
                 unreachable!("error statements cannot reach semantic analysis")
             }
         }
@@ -389,7 +367,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// Type-checks and lowers a function definition's body.
     ///
     /// The function's own [`Ty::Func`] was already computed by
-    /// [`SemanticAnalyzer::collect_item_definition`]; this method enters an
+    /// [`SemanticAnalyzer::collect_definition`]; this method enters an
     /// [`ScopeKind::FunctionBoundary`] scope (so the body can't see local
     /// bindings from any enclosing scope, since crawfish has no closures),
     /// adds a local binding for each parameter, sets `current_return_ty` so
@@ -399,16 +377,16 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// expected type.
     fn typecheck_function_definition(
         &mut self,
-        id: ast::handles::FunctionDefinitionHandle,
-    ) -> ItemHandle {
-        let node = &self.ast.function_definitions[id];
+        function_definition_id: ast::handles::FunctionDefinitionId,
+    ) -> DefinitionId {
+        let node = &self.ast.function_definitions[function_definition_id];
 
-        // grab parameter type handle and return type handle
-        let name = self.ast.valid_identifiers[node.name.index().into()].symbol;
-        let binding_handle = self.symbol_table.find_binding(name).unwrap();
+        // grab parameter type and return type
+        let name = self.ast.valid_identifiers[node.name_id.index().into()].symbol;
+        let binding_id = self.symbol_table.find_binding(name).unwrap();
         let func_ty = self
             .hir
-            .get_item_binding(binding_handle.as_item().unwrap())
+            .get_definition_binding(binding_id.as_definition().unwrap())
             .ty();
         let (parameter_tys, return_ty) = self
             .ctx
@@ -421,25 +399,25 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // produce local bindings for all the parameters
         // since in the pre-pass, we only create a binding for the function itself
-        let mut param_local_binding_handles: Vec<LocalBindingHandle> = Vec::new();
-        let start = node.parameters.start as usize;
-        let len = node.parameters.len as usize;
-        for (i, &ast_param_id) in self.ast.function_definition_parameters[start..start + len]
+        let mut param_local_binding_ids: Vec<LocalBindingId> = Vec::new();
+        let start = node.parameter_id_span.start as usize;
+        let len = node.parameter_id_span.len as usize;
+        for (i, &ast_param_id) in self.ast.function_definition_parameter_ids[start..start + len]
             .iter()
             .enumerate()
         {
             let parameter = &self.ast.valid_parameters[ast_param_id.index().into()];
-            let name = self.ast.valid_identifiers[parameter.name.index().into()].symbol;
-            let local_binding_handle = self.hir.add_local_binding(
+            let name = self.ast.valid_identifiers[parameter.name_id.index().into()].symbol;
+            let local_binding_id = self.hir.add_local_binding(
                 name,
                 parameter.mutable,
                 Some(parameter_tys[i]),
                 parameter_tys[i],
                 parameter.span,
             );
-            if let Err(DefineError::AlreadyDefined { prev_binding_id }) = self
+            if let Err(DefineError::AlreadyDefined { previous_binding }) = self
                 .symbol_table
-                .add_binding(name, local_binding_handle.into())
+                .add_binding(name, local_binding_id.into())
             {
                 self.ctx
                     .diagnostics
@@ -448,14 +426,14 @@ impl<'ast> SemanticAnalyzer<'ast> {
                         span: parameter.span,
                         previous_span: self
                             .hir
-                            .get_local_binding(prev_binding_id.as_local().unwrap())
+                            .get_local_binding(previous_binding.as_local().unwrap())
                             .span(),
                     });
             }
 
-            param_local_binding_handles.push(local_binding_handle);
+            param_local_binding_ids.push(local_binding_id);
         }
-        let parameter_slice = self.hir.add_parameter_slice(&param_local_binding_handles);
+        let parameter_id_span = self.hir.add_parameter_ids(&param_local_binding_ids);
 
         // save the caller's return type
         let temp = self.current_return_ty;
@@ -463,7 +441,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         self.current_return_ty = Some(return_ty);
 
         // analyze the block
-        let body_handle = self.analyze_block(node.body, Some(return_ty));
+        let body_id = self.analyze_block(node.body_id, Some(return_ty));
 
         // restore the caller's return type
         self.current_return_ty = temp;
@@ -471,43 +449,43 @@ impl<'ast> SemanticAnalyzer<'ast> {
         self.symbol_table.exit_scope();
 
         // create the HIR node
-        self.hir.add_item(
-            ItemKind::Function {
-                binding: binding_handle.as_item().unwrap(),
-                parameters: parameter_slice,
-                body: body_handle,
+        self.hir.add_definition(
+            DefinitionKind::Function {
+                definition_binding_id: binding_id.as_definition().unwrap(),
+                parameter_id_span,
+                body_id,
             },
             node.span,
         )
     }
 
     /// Type-checks and lowers a constant definition's value expression against
-    /// the [`TypeHandle`] already recorded for it by [`SemanticAnalyzer::collect_item_definition`].
+    /// the [`TypeId`] already recorded for it by [`SemanticAnalyzer::collect_definition`].
     fn typecheck_constant_definition(
         &mut self,
-        id: ast::handles::ConstantDefinitionHandle,
-    ) -> ItemHandle {
-        let node = &self.ast.constant_definitions[id];
+        constant_definition_id: ast::handles::ConstantDefinitionId,
+    ) -> DefinitionId {
+        let node = &self.ast.constant_definitions[constant_definition_id];
 
-        // get the binding handle
-        let name = self.ast.valid_identifiers[node.name.index().into()].symbol;
-        let binding_handle = self.symbol_table.find_binding(name).unwrap();
+        // get the binding
+        let name = self.ast.valid_identifiers[node.name_id.index().into()].symbol;
+        let binding_id = self.symbol_table.find_binding(name).unwrap();
 
         // type-check and lower the value
         self.symbol_table.enter_scope(ScopeKind::ConstantBoundary);
-        let value_handle = self.check(
-            node.value,
+        let value_id = self.check(
+            node.value_id,
             self.hir
-                .get_item_binding(binding_handle.as_item().unwrap())
+                .get_definition_binding(binding_id.as_definition().unwrap())
                 .ty(),
         );
         self.symbol_table.exit_scope();
 
         // create the HIR node
-        self.hir.add_item(
-            ItemKind::Constant {
-                binding: binding_handle.as_item().unwrap(),
-                value: value_handle,
+        self.hir.add_definition(
+            DefinitionKind::Constant {
+                definition_binding_id: binding_id.as_definition().unwrap(),
+                value_id,
             },
             node.span,
         )
@@ -522,30 +500,30 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// `else` branch).
     fn analyze_block(
         &mut self,
-        id: ast::handles::BlockExpressionHandle,
-        expected: Option<TypeHandle>,
-    ) -> ExpressionHandle {
+        block_expression_id: ast::handles::BlockExpressionId,
+        expected: Option<TypeId>,
+    ) -> ExpressionId {
         self.symbol_table.enter_scope(ScopeKind::Normal);
-        self.collect_block_statements(id);
-        let expression_handle = self.typecheck_block(id, expected);
+        self.collect_block_statements(block_expression_id);
+        let expression_id = self.typecheck_block(block_expression_id, expected);
         self.symbol_table.exit_scope();
-        expression_handle
+        expression_id
     }
 
-    /// Calls [`SemanticAnalyzer::collect_item_definition`] for each nested
-    /// `const`/`func` item statement in the block, before any statement is
-    /// type-checked, so that items declared later in the block (or that
+    /// Calls [`SemanticAnalyzer::collect_definition`] for each nested
+    /// `const`/`func` definition statement in the block, before any statement is
+    /// type-checked, so that definitions declared later in the block (or that
     /// reference each other) are already bound by the time
     /// [`SemanticAnalyzer::typecheck_block`] processes the block's
     /// statements in order.
-    fn collect_block_statements(&mut self, id: ast::handles::BlockExpressionHandle) {
-        let node = &self.ast.block_expressions[id];
-        let start = node.statements.start as usize;
-        let len = node.statements.len as usize;
-        for &ast_statement_id in &self.ast.block_statements[start..start + len] {
-            if ast_statement_id.kind() == ast::handles::StatementKind::ItemStatement {
-                self.collect_item_definition(
-                    self.ast.item_statements[ast_statement_id.index().into()].item,
+    fn collect_block_statements(&mut self, block_expression_id: ast::handles::BlockExpressionId) {
+        let node = &self.ast.block_expressions[block_expression_id];
+        let start = node.statement_id_span.start as usize;
+        let len = node.statement_id_span.len as usize;
+        for &ast_statement_id in &self.ast.block_statement_ids[start..start + len] {
+            if ast_statement_id.kind() == ast::handles::StatementKind::DefinitionStatement {
+                self.collect_definition(
+                    self.ast.definition_statements[ast_statement_id.index().into()].definition_id,
                 );
             }
         }
@@ -563,52 +541,52 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// a missing tail makes the block unit with no constraint needed.
     fn typecheck_block(
         &mut self,
-        id: ast::handles::BlockExpressionHandle,
-        expected: Option<TypeHandle>,
-    ) -> ExpressionHandle {
-        let node = &self.ast.block_expressions[id];
+        block_expression_id: ast::handles::BlockExpressionId,
+        expected: Option<TypeId>,
+    ) -> ExpressionId {
+        let node = &self.ast.block_expressions[block_expression_id];
 
         // create statement slice
-        let mut statement_handles: Vec<StatementHandle> = Vec::new();
-        let start = node.statements.start as usize;
-        let len = node.statements.len as usize;
-        for &ast_statement_id in &self.ast.block_statements[start..start + len] {
-            statement_handles.push(self.typecheck_statement(ast_statement_id));
+        let mut statement_ids: Vec<StatementId> = Vec::new();
+        let start = node.statement_id_span.start as usize;
+        let len = node.statement_id_span.len as usize;
+        for &ast_statement_id in &self.ast.block_statement_ids[start..start + len] {
+            statement_ids.push(self.typecheck_statement(ast_statement_id));
         }
-        let statement_slice = self.hir.add_statement_slice(&statement_handles);
+        let statement_id_span = self.hir.add_statement_ids(&statement_ids);
 
         // type-check and lower the tail
-        let (tail_handle, ty) = match (node.tail, expected) {
+        let (tail_id, ty) = match (node.tail_id, expected) {
             // tail present, expected type known: check tail against expected
-            (Some(expr_id), Some(expected)) => {
-                let handle = self.check(expr_id, expected);
-                (Some(handle), expected)
+            (Some(ast_expression_id), Some(expected)) => {
+                let expression_id = self.check(ast_expression_id, expected);
+                (Some(expression_id), expected)
             }
             // tail present, no expected type: infer from tail
-            (Some(expr_id), None) => {
-                let handle = self.infer(expr_id);
-                (Some(handle), self.hir.get_expression(handle).ty())
+            (Some(ast_expression_id), None) => {
+                let expression_id = self.infer(ast_expression_id);
+                (Some(expression_id), self.hir.get_expression(expression_id).ty())
             }
             // no tail, expected type known: constrain expected to unit
             (None, Some(expected)) => {
                 self.constrain(Constraint::Equality {
                     expected,
-                    actual: self.ctx.type_interner.unit_handle,
+                    actual: self.ctx.type_interner.unit_id,
                     provenance: Provenance::BlockMissingTail {
                         block_span: node.span,
                     },
                 });
-                (None, self.ctx.type_interner.unit_handle)
+                (None, self.ctx.type_interner.unit_id)
             }
             // no tail, no expected type: block is unit
-            (None, None) => (None, self.ctx.type_interner.unit_handle),
+            (None, None) => (None, self.ctx.type_interner.unit_id),
         };
 
         // create HIR node
         self.hir.add_expression(
             ExpressionKind::Block {
-                statements: statement_slice,
-                tail: tail_handle,
+                statement_id_span,
+                tail_id,
             },
             ty,
             node.span,
@@ -619,7 +597,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     ///
     /// An [`ast::handles::StatementKind::ExpressionStatement`] is inferred via
     /// [`SemanticAnalyzer::infer`] (its type is discarded; only side effects
-    /// matter for a statement). An [`ast::handles::StatementKind::ItemStatement`]
+    /// matter for a statement). An [`ast::handles::StatementKind::DefinitionStatement`]
     /// dispatches to [`SemanticAnalyzer::typecheck_function_definition`] or
     /// [`SemanticAnalyzer::typecheck_constant_definition`] (the binding
     /// itself was already added by
@@ -627,68 +605,68 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`ast::handles::StatementKind::LetStatement`] resolves its optional type
     /// annotation, type-checks `value` against it (or infers if absent),
     /// and adds a new local binding for the pattern.
-    fn typecheck_statement(&mut self, id: ast::handles::StatementHandle) -> StatementHandle {
-        match id.kind() {
+    fn typecheck_statement(&mut self, ast_statement_id: ast::handles::StatementId) -> StatementId {
+        match ast_statement_id.kind() {
             ast::handles::StatementKind::ExpressionStatement => {
-                let node = &self.ast.expression_statements[id.index().into()];
+                let node = &self.ast.expression_statements[ast_statement_id.index().into()];
 
                 // type-check and lower the expression in the statement
-                let expression_handle = self.infer(node.expression);
+                let expression_id = self.infer(node.expression_id);
 
                 // create HIR node
                 self.hir.add_statement(
                     StatementKind::Expression {
-                        expression: expression_handle,
+                        expression_id,
                         has_semicolon: node.has_semicolon,
                     },
                     node.span,
                 )
             }
-            ast::handles::StatementKind::ItemStatement => {
-                let node = &self.ast.item_statements[id.index().into()];
+            ast::handles::StatementKind::DefinitionStatement => {
+                let node = &self.ast.definition_statements[ast_statement_id.index().into()];
 
-                let item_handle = match node.item.kind() {
-                    ast::handles::ItemKind::FunctionDefinition => {
-                        self.typecheck_function_definition(node.item.index().into())
+                let definition_id = match node.definition_id.kind() {
+                    ast::handles::DefinitionKind::FunctionDefinition => {
+                        self.typecheck_function_definition(node.definition_id.index().into())
                     }
-                    ast::handles::ItemKind::ConstantDefinition => {
-                        self.typecheck_constant_definition(node.item.index().into())
+                    ast::handles::DefinitionKind::ConstantDefinition => {
+                        self.typecheck_constant_definition(node.definition_id.index().into())
                     }
-                    ast::handles::ItemKind::Error => {
+                    ast::handles::DefinitionKind::Error => {
                         unreachable!("error statements cannot reach semantic analysis")
                     }
                 };
 
                 self.hir
-                    .add_statement(StatementKind::Item { item: item_handle }, node.span)
+                    .add_statement(StatementKind::Definition { definition_id }, node.span)
             }
             ast::handles::StatementKind::LetStatement => {
-                let node = &self.ast.let_statements[id.index().into()];
+                let node = &self.ast.let_statements[ast_statement_id.index().into()];
 
-                // resolve the type annotation (if present) to a TypeHandle
-                let annotated_ty = node.annotation.map(|id| {
-                    let annotation = &self.ast.named_type_annotations[id.index().into()];
+                // resolve the type annotation (if present) to a TypeId
+                let annotated_ty = node.annotation_id.map(|ast_annotation_id| {
+                    let annotation = &self.ast.named_type_annotations[ast_annotation_id.index().into()];
                     self.resolve_type_annotation(
-                        &self.ast.valid_identifiers[annotation.name.index().into()],
+                        &self.ast.valid_identifiers[annotation.name_id.index().into()],
                     )
                 });
 
                 // type-check and lower the value
-                let value_handle = match annotated_ty {
-                    Some(expected) => self.check(node.value, expected),
-                    None => self.infer(node.value),
+                let value_id = match annotated_ty {
+                    Some(expected) => self.check(node.value_id, expected),
+                    None => self.infer(node.value_id),
                 };
-                let ty = self.hir.get_expression(value_handle).ty();
+                let ty = self.hir.get_expression(value_id).ty();
 
                 // create a binding
-                let pattern = &self.ast.identifier_patterns[node.name.index().into()];
-                let name = self.ast.valid_identifiers[pattern.name.index().into()].symbol;
-                let local_binding_handle =
+                let pattern = &self.ast.identifier_patterns[node.name_id.index().into()];
+                let name = self.ast.valid_identifiers[pattern.name_id.index().into()].symbol;
+                let local_binding_id =
                     self.hir
                         .add_local_binding(name, node.mutable, annotated_ty, ty, node.span);
-                if let Err(DefineError::AlreadyDefined { prev_binding_id }) = self
+                if let Err(DefineError::AlreadyDefined { previous_binding }) = self
                     .symbol_table
-                    .add_binding(name, local_binding_handle.into())
+                    .add_binding(name, local_binding_id.into())
                 {
                     self.ctx
                         .diagnostics
@@ -697,7 +675,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                             span: node.span,
                             previous_span: self
                                 .hir
-                                .get_local_binding(prev_binding_id.as_local().unwrap())
+                                .get_local_binding(previous_binding.as_local().unwrap())
                                 .span(),
                         });
                 }
@@ -705,8 +683,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 // create HIR node
                 self.hir.add_statement(
                     StatementKind::Let {
-                        pattern: local_binding_handle,
-                        value: value_handle,
+                        pattern_id: local_binding_id,
+                        value_id,
                     },
                     node.span,
                 )
@@ -717,7 +695,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         }
     }
 
-    /// Type-checks and lowers an expression against an expected [`TypeHandle`]
+    /// Type-checks and lowers an expression against an expected [`TypeId`]
     /// (bidirectional type checking's "checking" mode).
     ///
     /// Most expression kinds fall through to [`SemanticAnalyzer::infer`]
@@ -734,27 +712,30 @@ impl<'ast> SemanticAnalyzer<'ast> {
     ///   checks both operands against `ty` directly (e.g. `1 + 2` checked
     ///   against `u8` lowers both literals as `u8` rather than unifying two
     ///   separate [`InferTy::IntVar`]s)
-    fn check(&mut self, id: ast::handles::ExpressionHandle, ty: TypeHandle) -> ExpressionHandle {
-        match (id.kind(), self.ctx.type_interner.resolve(ty).unwrap()) {
+    fn check(&mut self, ast_expression_id: ast::handles::ExpressionId, ty: TypeId) -> ExpressionId {
+        match (
+            ast_expression_id.kind(),
+            self.ctx.type_interner.resolve(ty).unwrap(),
+        ) {
             (ast::handles::ExpressionKind::IntegerLiteral, Ty::Signed(_) | Ty::Unsigned(_)) => {
-                let node = &self.ast.integer_literals[id.index().into()];
+                let node = &self.ast.integer_literals[ast_expression_id.index().into()];
                 self.hir
                     .add_expression(ExpressionKind::Integer(node.value), ty, node.span)
             }
             (ast::handles::ExpressionKind::UnitLiteral, Ty::Unit) => {
-                let node = &self.ast.unit_literals[id.index().into()];
+                let node = &self.ast.unit_literals[ast_expression_id.index().into()];
                 self.hir.add_expression(ExpressionKind::Unit, ty, node.span)
             }
             (ast::handles::ExpressionKind::BinaryOperation, _) => {
-                let node = &self.ast.binary_operations[id.index().into()];
+                let node = &self.ast.binary_operations[ast_expression_id.index().into()];
 
                 match node.operator {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                         // type-check and lower lhs
-                        let lhs_handle = self.check(node.lhs, ty);
+                        let lhs_id = self.check(node.lhs_id, ty);
 
                         // type-check and lower rhs
-                        let rhs_handle = self.check(node.rhs, ty);
+                        let rhs_id = self.check(node.rhs_id, ty);
 
                         // constraint
                         let int_ty = self.fresh_int_var();
@@ -762,42 +743,46 @@ impl<'ast> SemanticAnalyzer<'ast> {
                             expected: int_ty,
                             actual: ty,
                             provenance: Provenance::BinaryOperandNotNumeric {
-                                operand_span: self.hir.get_expression(lhs_handle).span(),
+                                operand_span: self.hir.get_expression(lhs_id).span(),
                             },
                         });
 
                         // create HIR node
                         self.hir.add_expression(
-                            ExpressionKind::Infix {
+                            ExpressionKind::Binary {
                                 operator: node.operator,
-                                lhs: lhs_handle,
-                                rhs: rhs_handle,
+                                lhs_id,
+                                rhs_id,
                             },
                             ty,
                             node.span,
                         )
                     }
                     _ => {
-                        let expression_handle = self.infer(id);
-                        let view = self.hir.get_expression(expression_handle);
+                        let expression_id = self.infer(ast_expression_id);
+                        let expression_view = self.hir.get_expression(expression_id);
                         self.constrain(Constraint::Equality {
                             expected: ty,
-                            actual: view.ty(),
-                            provenance: Provenance::TypeMismatch { span: view.span() },
+                            actual: expression_view.ty(),
+                            provenance: Provenance::TypeMismatch {
+                                span: expression_view.span(),
+                            },
                         });
-                        expression_handle
+                        expression_id
                     }
                 }
             }
             _ => {
-                let expression_handle = self.infer(id);
-                let view = self.hir.get_expression(expression_handle);
+                let expression_id = self.infer(ast_expression_id);
+                let expression_view = self.hir.get_expression(expression_id);
                 self.constrain(Constraint::Equality {
                     expected: ty,
-                    actual: view.ty(),
-                    provenance: Provenance::TypeMismatch { span: view.span() },
+                    actual: expression_view.ty(),
+                    provenance: Provenance::TypeMismatch {
+                        span: expression_view.span(),
+                    },
                 });
-                expression_handle
+                expression_id
             }
         }
     }
@@ -812,47 +797,53 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// literal's concrete integer type isn't known until it's used (e.g.
     /// assigned to a typed binding or compared against a typed value).
     /// Compound expressions dispatch to their own `typecheck_*` method.
-    fn infer(&mut self, id: ast::handles::ExpressionHandle) -> ExpressionHandle {
-        match id.kind() {
+    fn infer(&mut self, ast_expression_id: ast::handles::ExpressionId) -> ExpressionId {
+        match ast_expression_id.kind() {
             ast::handles::ExpressionKind::UnitLiteral => {
-                let node = &self.ast.unit_literals[id.index().into()];
+                let node = &self.ast.unit_literals[ast_expression_id.index().into()];
                 self.hir.add_expression(
                     ExpressionKind::Unit,
-                    self.ctx.type_interner.unit_handle,
+                    self.ctx.type_interner.unit_id,
                     node.span,
                 )
             }
             ast::handles::ExpressionKind::BooleanLiteral => {
-                let node = &self.ast.boolean_literals[id.index().into()];
+                let node = &self.ast.boolean_literals[ast_expression_id.index().into()];
                 self.hir.add_expression(
                     ExpressionKind::Boolean(node.value),
-                    self.ctx.type_interner.bool_handle,
+                    self.ctx.type_interner.bool_id,
                     node.span,
                 )
             }
             ast::handles::ExpressionKind::IntegerLiteral => {
-                let node = &self.ast.integer_literals[id.index().into()];
+                let node = &self.ast.integer_literals[ast_expression_id.index().into()];
                 let ty = self.fresh_int_var();
                 self.hir
                     .add_expression(ExpressionKind::Integer(node.value), ty, node.span)
             }
-            ast::handles::ExpressionKind::Variable => self.typecheck_variable(id.index().into()),
+            ast::handles::ExpressionKind::Variable => {
+                self.typecheck_variable(ast_expression_id.index().into())
+            }
             ast::handles::ExpressionKind::UnaryOperation => {
-                self.typecheck_unary_operation(id.index().into())
+                self.typecheck_unary_operation(ast_expression_id.index().into())
             }
             ast::handles::ExpressionKind::BinaryOperation => {
-                self.typecheck_binary_operation(id.index().into())
+                self.typecheck_binary_operation(ast_expression_id.index().into())
             }
             ast::handles::ExpressionKind::IfExpression => {
-                self.typecheck_if_expression(id.index().into())
+                self.typecheck_if_expression(ast_expression_id.index().into())
             }
-            ast::handles::ExpressionKind::Return => self.typecheck_return(id.index().into()),
-            ast::handles::ExpressionKind::Assign => self.typecheck_assign(id.index().into()),
+            ast::handles::ExpressionKind::Return => {
+                self.typecheck_return(ast_expression_id.index().into())
+            }
+            ast::handles::ExpressionKind::Assign => {
+                self.typecheck_assign(ast_expression_id.index().into())
+            }
             ast::handles::ExpressionKind::FunctionCall => {
-                self.typecheck_function_call(id.index().into())
+                self.typecheck_function_call(ast_expression_id.index().into())
             }
             ast::handles::ExpressionKind::BlockExpression => {
-                self.analyze_block(id.index().into(), None)
+                self.analyze_block(ast_expression_id.index().into(), None)
             }
             ast::handles::ExpressionKind::Error => {
                 unreachable!("error expressions cannot reach semantic analysis")
@@ -860,27 +851,27 @@ impl<'ast> SemanticAnalyzer<'ast> {
         }
     }
 
-    /// Resolves a variable reference to a [`BindingHandle`] via
+    /// Resolves a variable reference to a [`BindingId`] via
     /// [`SymbolTable::find_binding`] and looks up its type.
     ///
     /// An unresolved name is reported as
     /// [`SemanticDiagnostic::UnresolvedName`] and lowered as
-    /// [`BindingHandle::ERROR`] with [`TypeInterner::error_id`], so that uses of
+    /// [`BindingId::ERROR`] with [`TypeInterner::error_id`], so that uses of
     /// the bad variable don't cascade into further diagnostics (see
     /// [`SemanticAnalyzer::constrain`]'s error-type poisoning).
-    fn typecheck_variable(&mut self, id: ast::handles::VariableHandle) -> ExpressionHandle {
-        let node = &self.ast.variables[id];
+    fn typecheck_variable(&mut self, variable_id: ast::handles::VariableId) -> ExpressionId {
+        let node = &self.ast.variables[variable_id];
 
-        // get binding handle
-        let binding_handle = match self.symbol_table.find_binding(node.symbol) {
-            Ok(handle) => handle,
+        // get binding
+        let binding_id = match self.symbol_table.find_binding(node.symbol) {
+            Ok(binding_id) => binding_id,
             Err(LookupError::BlockedByBoundary(ScopeKind::ConstantBoundary)) => {
                 self.ctx
                     .diagnostics
                     .record(SemanticDiagnostic::NonConstantValue { span: node.span });
                 return self.hir.add_expression(
-                    ExpressionKind::Variable(BindingHandle::ERROR),
-                    self.ctx.type_interner.error_handle,
+                    ExpressionKind::Variable(BindingId::ERROR),
+                    self.ctx.type_interner.error_id,
                     node.span,
                 );
             }
@@ -889,8 +880,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     .diagnostics
                     .record(SemanticDiagnostic::CaptureInFunction { span: node.span });
                 return self.hir.add_expression(
-                    ExpressionKind::Variable(BindingHandle::ERROR),
-                    self.ctx.type_interner.error_handle,
+                    ExpressionKind::Variable(BindingId::ERROR),
+                    self.ctx.type_interner.error_id,
                     node.span,
                 );
             }
@@ -908,28 +899,28 @@ impl<'ast> SemanticAnalyzer<'ast> {
                         span: node.span,
                     });
                 return self.hir.add_expression(
-                    ExpressionKind::Variable(BindingHandle::ERROR),
-                    self.ctx.type_interner.error_handle,
+                    ExpressionKind::Variable(BindingId::ERROR),
+                    self.ctx.type_interner.error_id,
                     node.span,
                 );
             }
         };
 
         // get type
-        let ty = match binding_handle.kind() {
+        let ty = match binding_id.kind() {
             BindingKind::Local => self
                 .hir
-                .get_local_binding(binding_handle.as_local().unwrap())
+                .get_local_binding(binding_id.as_local().unwrap())
                 .ty(),
-            BindingKind::Item => self
+            BindingKind::Definition => self
                 .hir
-                .get_item_binding(binding_handle.as_item().unwrap())
+                .get_definition_binding(binding_id.as_definition().unwrap())
                 .ty(),
         };
 
         // create HIR node
         self.hir
-            .add_expression(ExpressionKind::Variable(binding_handle), ty, node.span)
+            .add_expression(ExpressionKind::Variable(binding_id), ty, node.span)
     }
 
     /// Type-checks a prefix unary operation: [`UnOp::Not`] constrains
@@ -938,47 +929,47 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`InferTy::IntVar`] and produces the operand's own type.
     fn typecheck_unary_operation(
         &mut self,
-        id: ast::handles::UnaryOperationHandle,
-    ) -> ExpressionHandle {
-        let node = &self.ast.unary_operations[id];
+        unary_operation_id: ast::handles::UnaryOperationId,
+    ) -> ExpressionId {
+        let node = &self.ast.unary_operations[unary_operation_id];
 
         // type-check and lower the rhs
-        let rhs_handle = self.infer(node.rhs);
+        let rhs_id = self.infer(node.rhs_id);
 
         // determine result type and constrain operand type
         let ty = match node.operator {
             UnOp::Not => {
                 // constraint for the operand to be a boolean
                 self.constrain(Constraint::Equality {
-                    expected: self.ctx.type_interner.bool_handle,
-                    actual: self.hir.get_expression(rhs_handle).ty(),
+                    expected: self.ctx.type_interner.bool_id,
+                    actual: self.hir.get_expression(rhs_id).ty(),
                     provenance: Provenance::UnaryOperandMismatch {
                         operator: node.operator.to_string(),
-                        operand_span: self.hir.get_expression(rhs_handle).span(),
+                        operand_span: self.hir.get_expression(rhs_id).span(),
                     },
                 });
-                self.ctx.type_interner.bool_handle
+                self.ctx.type_interner.bool_id
             }
             UnOp::Neg => {
                 // constraint for the operand to be numeric
                 let int_ty = self.fresh_int_var();
                 self.constrain(Constraint::Equality {
                     expected: int_ty,
-                    actual: self.hir.get_expression(rhs_handle).ty(),
+                    actual: self.hir.get_expression(rhs_id).ty(),
                     provenance: Provenance::UnaryOperandMismatch {
                         operator: node.operator.to_string(),
-                        operand_span: self.hir.get_expression(rhs_handle).span(),
+                        operand_span: self.hir.get_expression(rhs_id).span(),
                     },
                 });
-                self.hir.get_expression(rhs_handle).ty()
+                self.hir.get_expression(rhs_id).ty()
             }
         };
 
         // create HIR node
         self.hir.add_expression(
-            ExpressionKind::Prefix {
+            ExpressionKind::Unary {
                 operator: node.operator,
-                rhs: rhs_handle,
+                operand_id: rhs_id,
             },
             ty,
             node.span,
@@ -997,15 +988,15 @@ impl<'ast> SemanticAnalyzer<'ast> {
     ///   result type is [`Ty::Bool`].
     fn typecheck_binary_operation(
         &mut self,
-        id: ast::handles::BinaryOperationHandle,
-    ) -> ExpressionHandle {
-        let node = &self.ast.binary_operations[id];
+        binary_operation_id: ast::handles::BinaryOperationId,
+    ) -> ExpressionId {
+        let node = &self.ast.binary_operations[binary_operation_id];
 
         // type-check and lower lhs
-        let lhs_handle = self.infer(node.lhs);
+        let lhs_id = self.infer(node.lhs_id);
 
         // type-check and lower rhs
-        let rhs_handle = self.infer(node.rhs);
+        let rhs_id = self.infer(node.rhs_id);
 
         // determine result type and constrain operand type
         let ty = match node.operator {
@@ -1013,85 +1004,85 @@ impl<'ast> SemanticAnalyzer<'ast> {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                 // constraint so that lhs and rhs have the same type
                 self.constrain(Constraint::Equality {
-                    expected: self.hir.get_expression(lhs_handle).ty(),
-                    actual: self.hir.get_expression(rhs_handle).ty(),
+                    expected: self.hir.get_expression(lhs_id).ty(),
+                    actual: self.hir.get_expression(rhs_id).ty(),
                     provenance: Provenance::BinaryOperandMismatch {
-                        lhs_span: self.hir.get_expression(lhs_handle).span(),
-                        rhs_span: self.hir.get_expression(rhs_handle).span(),
+                        lhs_span: self.hir.get_expression(lhs_id).span(),
+                        rhs_span: self.hir.get_expression(rhs_id).span(),
                     },
                 });
                 let int_ty = self.fresh_int_var();
                 // constraint so that lhs and rhs are numeric values
                 self.constrain(Constraint::Equality {
                     expected: int_ty,
-                    actual: self.hir.get_expression(lhs_handle).ty(),
+                    actual: self.hir.get_expression(lhs_id).ty(),
                     provenance: Provenance::BinaryOperandNotNumeric {
-                        operand_span: self.hir.get_expression(lhs_handle).span(),
+                        operand_span: self.hir.get_expression(lhs_id).span(),
                     },
                 });
-                self.hir.get_expression(lhs_handle).ty() // arbitrary since by the time constraint solving happens, lhs and rhs will be the same type
+                self.hir.get_expression(lhs_id).ty() // arbitrary since by the time constraint solving happens, lhs and rhs will be the same type
             }
             // comparison: both sides must be the same integer type, result type is `Bool`
             BinOp::Lt | BinOp::Gt => {
                 // constraint for the lhs and the rhs to be the same type
                 self.constrain(Constraint::Equality {
-                    expected: self.hir.get_expression(lhs_handle).ty(),
-                    actual: self.hir.get_expression(rhs_handle).ty(),
+                    expected: self.hir.get_expression(lhs_id).ty(),
+                    actual: self.hir.get_expression(rhs_id).ty(),
                     provenance: Provenance::BinaryOperandMismatch {
-                        lhs_span: self.hir.get_expression(lhs_handle).span(),
-                        rhs_span: self.hir.get_expression(rhs_handle).span(),
+                        lhs_span: self.hir.get_expression(lhs_id).span(),
+                        rhs_span: self.hir.get_expression(rhs_id).span(),
                     },
                 });
                 // constraint for the result type to be numeric
                 let int_ty = self.fresh_int_var();
                 self.constrain(Constraint::Equality {
                     expected: int_ty,
-                    actual: self.hir.get_expression(lhs_handle).ty(),
+                    actual: self.hir.get_expression(lhs_id).ty(),
                     provenance: Provenance::BinaryOperandNotNumeric {
-                        operand_span: self.hir.get_expression(lhs_handle).span(),
+                        operand_span: self.hir.get_expression(lhs_id).span(),
                     },
                 });
-                self.ctx.type_interner.bool_handle
+                self.ctx.type_interner.bool_id
             }
             // logical: both sides must be `Bool`, result type is `Bool`
             BinOp::And | BinOp::Or => {
                 self.constrain(Constraint::Equality {
-                    expected: self.ctx.type_interner.bool_handle,
-                    actual: self.hir.get_expression(lhs_handle).ty(),
+                    expected: self.ctx.type_interner.bool_id,
+                    actual: self.hir.get_expression(lhs_id).ty(),
                     provenance: Provenance::BinaryOperandNotBool {
-                        operand_span: self.hir.get_expression(lhs_handle).span(),
+                        operand_span: self.hir.get_expression(lhs_id).span(),
                     },
                 });
                 self.constrain(Constraint::Equality {
-                    expected: self.ctx.type_interner.bool_handle,
-                    actual: self.hir.get_expression(rhs_handle).ty(),
+                    expected: self.ctx.type_interner.bool_id,
+                    actual: self.hir.get_expression(rhs_id).ty(),
                     provenance: Provenance::BinaryOperandNotBool {
-                        operand_span: self.hir.get_expression(rhs_handle).span(),
+                        operand_span: self.hir.get_expression(rhs_id).span(),
                     },
                 });
-                self.ctx.type_interner.bool_handle
+                self.ctx.type_interner.bool_id
             }
             // equality: both sides must be the same type, result type is `Bool`
             BinOp::Eq | BinOp::Ne => {
                 self.constrain(Constraint::Equality {
                     // constraint for the lhs and the rhs to be the same type
-                    expected: self.hir.get_expression(lhs_handle).ty(),
-                    actual: self.hir.get_expression(rhs_handle).ty(),
+                    expected: self.hir.get_expression(lhs_id).ty(),
+                    actual: self.hir.get_expression(rhs_id).ty(),
                     provenance: Provenance::BinaryOperandMismatch {
-                        lhs_span: self.hir.get_expression(lhs_handle).span(),
-                        rhs_span: self.hir.get_expression(rhs_handle).span(),
+                        lhs_span: self.hir.get_expression(lhs_id).span(),
+                        rhs_span: self.hir.get_expression(rhs_id).span(),
                     },
                 });
-                self.ctx.type_interner.bool_handle
+                self.ctx.type_interner.bool_id
             }
         };
 
         // create HIR node
         self.hir.add_expression(
-            ExpressionKind::Infix {
+            ExpressionKind::Binary {
                 operator: node.operator,
-                lhs: lhs_handle,
-                rhs: rhs_handle,
+                lhs_id,
+                rhs_id,
             },
             ty,
             node.span,
@@ -1102,29 +1093,29 @@ impl<'ast> SemanticAnalyzer<'ast> {
     ///
     /// `target` must be a place expression: a variable referring to a
     /// [`BindingKind::Local`] binding. A
-    /// [`BindingKind::Item`] target (assigning to a function or constant) or
+    /// [`BindingKind::Definition`] target (assigning to a function or constant) or
     /// any non-variable target (e.g. `42 = val`) is reported as
     /// [`SemanticDiagnostic::InvalidAssignTarget`]. Mutability of the target
     /// (whether it was declared `let mut`) is checked later, during MIR
     /// lowering, not here. An assignment expression always has type
     /// [`Ty::Unit`].
-    fn typecheck_assign(&mut self, id: ast::handles::AssignHandle) -> ExpressionHandle {
-        let node = &self.ast.assigns[id];
+    fn typecheck_assign(&mut self, assign_id: ast::handles::AssignId) -> ExpressionId {
+        let node = &self.ast.assigns[assign_id];
 
         // type-check and lower target
-        let target_handle = self.infer(node.target);
-        let target = self.hir.get_expression(target_handle);
+        let target_id = self.infer(node.target_id);
+        let target_view = self.hir.get_expression(target_id);
 
         // extract binding if the target is a variable; used for mutability and place checks
-        let target_binding = match *target.kind() {
-            ExpressionKind::Variable(b) => Some(b),
+        let target_binding_id = match *target_view.kind() {
+            ExpressionKind::Variable(binding_id) => Some(binding_id),
             _ => None,
         };
 
         // validate the target is a place expression (mutability checked in MIR lowering)
-        let target_is_error = match target_binding {
-            Some(b) if b.as_local().is_some() => false,
-            Some(b) if b.as_item().is_some() => {
+        let target_is_error = match target_binding_id {
+            Some(binding_id) if binding_id.as_local().is_some() => false,
+            Some(binding_id) if binding_id.as_definition().is_some() => {
                 self.ctx
                     .diagnostics
                     .record(SemanticDiagnostic::InvalidAssignTarget { span: node.span });
@@ -1136,27 +1127,28 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 self.ctx
                     .diagnostics
                     .record(SemanticDiagnostic::InvalidAssignTarget {
-                        span: target.span(),
+                        span: target_view.span(),
                     });
                 true
             }
         };
 
         // check value against target type if valid, otherwise infer to surface errors
-        let value_handle = if target_is_error || target.ty() == self.ctx.type_interner.error_handle
+        let value_id = if target_is_error
+            || target_view.ty() == self.ctx.type_interner.error_id
         {
-            self.infer(node.value)
+            self.infer(node.value_id)
         } else {
-            self.check(node.value, target.ty())
+            self.check(node.value_id, target_view.ty())
         };
 
         // create HIR node
         self.hir.add_expression(
             ExpressionKind::Assign {
-                target: target_handle,
-                value: value_handle,
+                target_id,
+                value_id,
             },
-            self.ctx.type_interner.unit_handle,
+            self.ctx.type_interner.unit_id,
             node.span,
         )
     }
@@ -1175,55 +1167,55 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// didn't match.
     fn typecheck_function_call(
         &mut self,
-        id: ast::handles::FunctionCallHandle,
-    ) -> ExpressionHandle {
-        let node = &self.ast.function_calls[id];
-        let ast_arg_start = node.arguments.start as usize;
-        let ast_arg_len = node.arguments.len as usize;
-        let ast_arg_slice =
-            &self.ast.function_call_arguments[ast_arg_start..ast_arg_start + ast_arg_len];
+        function_call_id: ast::handles::FunctionCallId,
+    ) -> ExpressionId {
+        let node = &self.ast.function_calls[function_call_id];
+        let ast_arg_start = node.argument_id_span.start as usize;
+        let ast_arg_len = node.argument_id_span.len as usize;
+        let ast_argument_ids =
+            &self.ast.function_call_argument_ids[ast_arg_start..ast_arg_start + ast_arg_len];
 
         // type-check and lower callee
-        let callee_handle = self.infer(node.callee);
-        let callee = self.hir.get_expression(callee_handle);
+        let callee_id = self.infer(node.callee_id);
+        let callee_view = self.hir.get_expression(callee_id);
 
         // poison if callee resolved to an error (e.g. unresolved name)
-        if callee.ty() == self.ctx.type_interner.error_handle {
-            for &ast_arg_id in ast_arg_slice {
+        if callee_view.ty() == self.ctx.type_interner.error_id {
+            for &ast_arg_id in ast_argument_ids {
                 self.infer(ast_arg_id); // surface errors inside args
             }
             return self.hir.add_expression(
                 ExpressionKind::Call {
-                    callee: callee_handle,
-                    arguments: ExpressionSlice { start: 0, len: 0 },
+                    callee_id,
+                    argument_id_span: ExpressionIdSpan { start: 0, len: 0 },
                 },
-                self.ctx.type_interner.error_handle,
+                self.ctx.type_interner.error_id,
                 node.span,
             );
         }
 
         // check callee is callable
-        let Ty::Func {
+        let Ty::Function {
             parameters,
             return_value: ret,
-        } = self.ctx.type_interner.resolve(callee.ty()).unwrap()
+        } = self.ctx.type_interner.resolve(callee_view.ty()).unwrap()
         else {
             self.ctx
                 .diagnostics
                 .record(SemanticDiagnostic::NotCallable {
-                    found: self.ctx.type_interner.to_string(callee.ty()),
-                    callee_span: callee.span(),
+                    found: self.ctx.type_interner.to_string(callee_view.ty()),
+                    callee_span: callee_view.span(),
                     call_span: node.span,
                 });
-            for &ast_arg_id in ast_arg_slice {
+            for &ast_arg_id in ast_argument_ids {
                 self.infer(ast_arg_id); // surface errors inside args
             }
             return self.hir.add_expression(
                 ExpressionKind::Call {
-                    callee: callee_handle,
-                    arguments: ExpressionSlice { start: 0, len: 0 },
+                    callee_id,
+                    argument_id_span: ExpressionIdSpan { start: 0, len: 0 },
                 },
-                self.ctx.type_interner.error_handle,
+                self.ctx.type_interner.error_id,
                 node.span,
             );
         };
@@ -1236,31 +1228,31 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 .record(SemanticDiagnostic::ArityMismatch {
                     expected: parameter_tys.len(),
                     found: ast_arg_len,
-                    callee_span: callee.span(),
+                    callee_span: callee_view.span(),
                     call_span: node.span,
                     // when there are too few args, extra_arg_spans is empty (no extra args to point to),
                     // and when there are too many, it correctly collects the spans of the surplus arguments.
-                    extra_arg_spans: ast_arg_slice[parameter_tys.len().min(ast_arg_len)..]
+                    extra_arg_spans: ast_argument_ids[parameter_tys.len().min(ast_arg_len)..]
                         .iter()
-                        .map(|&id| self.ast.span_of_expression(id))
+                        .map(|&ast_expression_id| self.ast.span_of_expression(ast_expression_id))
                         .collect(),
                 });
         }
 
         // type-check and lower each argument
-        let mut argument_handles: Vec<ExpressionHandle> = Vec::new();
-        for (i, &ast_arg_id) in ast_arg_slice.iter().enumerate() {
+        let mut argument_ids: Vec<ExpressionId> = Vec::new();
+        for (i, &ast_arg_id) in ast_argument_ids.iter().enumerate() {
             if i < parameter_tys.len() {
-                argument_handles.push(self.check(ast_arg_id, parameter_tys[i]));
+                argument_ids.push(self.check(ast_arg_id, parameter_tys[i]));
             } else {
-                argument_handles.push(self.infer(ast_arg_id)); // arity mismatch: surface errors
+                argument_ids.push(self.infer(ast_arg_id)); // arity mismatch: surface errors
             }
         }
-        let arg_slice = self.hir.add_expression_slice(&argument_handles);
+        let argument_id_span = self.hir.add_expression_ids(&argument_ids);
 
         // get type
         let ty = if ast_arg_len != parameter_tys.len() {
-            self.ctx.type_interner.error_handle
+            self.ctx.type_interner.error_id
         } else {
             return_ty
         };
@@ -1268,8 +1260,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
         // create HIR node
         self.hir.add_expression(
             ExpressionKind::Call {
-                callee: callee_handle,
-                arguments: arg_slice,
+                callee_id,
+                argument_id_span,
             },
             ty,
             node.span,
@@ -1285,21 +1277,19 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// [`Provenance::ReturnMissingValue`], since `return;` only type-checks
     /// in a function returning `()`. A `return` expression itself has type
     /// [`TypeInterner::never_id`], since control never proceeds past it.
-    fn typecheck_return(&mut self, id: ast::handles::ReturnHandle) -> ExpressionHandle {
-        let node = &self.ast.returns[id];
+    fn typecheck_return(&mut self, return_id: ast::handles::ReturnId) -> ExpressionId {
+        let node = &self.ast.returns[return_id];
 
         if self.current_return_ty.is_none() {
-            let value_handle = node
-                .value
+            let value_id = node
+                .value_id
                 .map(|ast_expression_id| self.infer(ast_expression_id));
             self.ctx
                 .diagnostics
                 .record(SemanticDiagnostic::ReturnOutsideFunction { span: node.span });
             return self.hir.add_expression(
-                ExpressionKind::Return {
-                    value: value_handle,
-                },
-                self.ctx.type_interner.error_handle,
+                ExpressionKind::Return { value_id },
+                self.ctx.type_interner.error_id,
                 node.span,
             );
         }
@@ -1307,12 +1297,12 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let return_ty = self.current_return_ty.unwrap();
 
         // type-check and lower return
-        let value_handle = match node.value {
+        let value_id = match node.value_id {
             Some(ast_expression_id) => Some(self.check(ast_expression_id, return_ty)),
             None => {
                 self.constrain(Constraint::Equality {
                     expected: return_ty,
-                    actual: self.ctx.type_interner.unit_handle,
+                    actual: self.ctx.type_interner.unit_id,
                     provenance: Provenance::ReturnMissingValue {
                         return_span: node.span,
                     },
@@ -1323,10 +1313,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // create HIR node
         self.hir.add_expression(
-            ExpressionKind::Return {
-                value: value_handle,
-            },
-            self.ctx.type_interner.never_handle,
+            ExpressionKind::Return { value_id },
+            self.ctx.type_interner.never_id,
             node.span,
         )
     }
@@ -1342,65 +1330,65 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// is [`Ty::Unit`].
     fn typecheck_if_expression(
         &mut self,
-        id: ast::handles::IfExpressionHandle,
-    ) -> ExpressionHandle {
-        let node = &self.ast.if_expressions[id];
+        if_expression_id: ast::handles::IfExpressionId,
+    ) -> ExpressionId {
+        let node = &self.ast.if_expressions[if_expression_id];
 
         // type-check and lower condition
-        let condition_handle = self.check(node.condition, self.ctx.type_interner.bool_handle);
+        let condition_id = self.check(node.condition_id, self.ctx.type_interner.bool_id);
 
         // type-check and lower then branch
-        let then_branch_handle = self.analyze_block(node.then_branch, None);
+        let then_branch_id = self.analyze_block(node.then_branch_id, None);
 
-        let (else_branch_handle, ty) = match node.else_branch {
+        let (else_branch_id, ty) = match node.else_branch_id {
             Some(ast_else_id) => {
                 // type-check and lower else branch
-                let else_expression_handle = self.infer(ast_else_id);
+                let else_expression_id = self.infer(ast_else_id);
                 // cosntraint then branch and else branch to be of the same type
                 self.constrain(Constraint::Equality {
-                    expected: self.hir.get_expression(then_branch_handle).ty(),
-                    actual: self.hir.get_expression(else_expression_handle).ty(),
+                    expected: self.hir.get_expression(then_branch_id).ty(),
+                    actual: self.hir.get_expression(else_expression_id).ty(),
                     provenance: Provenance::IfBranchMismatch {
-                        then_span: self.hir.get_expression(then_branch_handle).span(),
-                        else_span: self.hir.get_expression(else_expression_handle).span(),
+                        then_span: self.hir.get_expression(then_branch_id).span(),
+                        else_span: self.hir.get_expression(else_expression_id).span(),
                     },
                 });
                 (
-                    Some(else_expression_handle),
-                    self.hir.get_expression(then_branch_handle).ty(),
+                    Some(else_expression_id),
+                    self.hir.get_expression(then_branch_id).ty(),
                 )
             }
             None => {
                 // constraint then branch to be of unit type
                 self.constrain(Constraint::Equality {
-                    expected: self.hir.get_expression(then_branch_handle).ty(),
-                    actual: self.ctx.type_interner.unit_handle,
+                    expected: self.hir.get_expression(then_branch_id).ty(),
+                    actual: self.ctx.type_interner.unit_id,
                     provenance: Provenance::IfWithoutElse {
-                        then_span: self.hir.get_expression(then_branch_handle).span(),
+                        then_span: self.hir.get_expression(then_branch_id).span(),
                     },
                 });
-                (None, self.ctx.type_interner.unit_handle)
+                (None, self.ctx.type_interner.unit_id)
             }
         };
 
         // create HIR node
         self.hir.add_expression(
             ExpressionKind::If {
-                condition: condition_handle,
-                then_branch: then_branch_handle,
-                else_branch: else_branch_handle,
+                condition_id,
+                then_branch_id,
+                else_branch_id,
             },
             ty,
             node.span,
         )
     }
 
-    /// Resolves a type annotation's identifier to a [`TypeHandle`] via
+    /// Resolves a type annotation's identifier to a [`TypeId`] via
     /// [`TypeInterner::builtin_type_id`] (built-in types like `i32`, `bool`).
     /// An unrecognized name is reported as
     /// [`SemanticDiagnostic::UnknownType`] and resolved to
     /// [`TypeInterner::error_id`].
-    fn resolve_type_annotation(&mut self, node: &ast::nodes::ValidIdentifierNode) -> TypeHandle {
+    fn resolve_type_annotation(&mut self, node: &ast::nodes::ValidIdentifierNode) -> TypeId {
         if let Some(ty) = self
             .ctx
             .type_interner
@@ -1420,7 +1408,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     .to_string(),
                 span: node.span,
             });
-        self.ctx.type_interner.error_handle
+        self.ctx.type_interner.error_id
     }
 
     /// Records `constraint` to be solved later by
@@ -1436,8 +1424,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
             expected, actual, ..
         } = &constraint;
         // don't constrain error types, but poison silently
-        if *expected == self.ctx.type_interner.error_handle
-            || *actual == self.ctx.type_interner.error_handle
+        if *expected == self.ctx.type_interner.error_id
+            || *actual == self.ctx.type_interner.error_id
         {
             return;
         }
@@ -1445,7 +1433,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     }
 
     /// Resolves inference variables, but doesn't recurse into the structure of the type itself.
-    fn shallow_resolve(&mut self, ty: TypeHandle) -> TypeHandle {
+    fn shallow_resolve(&mut self, ty: TypeId) -> TypeId {
         match self.ctx.type_interner.resolve(ty).unwrap() {
             Ty::Infer(InferTy::TyVar(vid)) => {
                 let root = self.substitutions.find_type_var(*vid);
@@ -1485,7 +1473,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// can only be pinned to [`Ty::Signed`]/[`Ty::Unsigned`]). Otherwise,
     /// `expected == actual` was already checked and failed, so this is a
     /// genuine [`UnificationError::TypeMismatch`].
-    fn unify(&mut self, expected: TypeHandle, actual: TypeHandle) -> Result<(), UnificationError> {
+    fn unify(&mut self, expected: TypeId, actual: TypeId) -> Result<(), UnificationError> {
         let expected = self.shallow_resolve(expected);
         let actual = self.shallow_resolve(actual);
 
@@ -1526,8 +1514,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
     }
 
     /// Allocates a new [`InferTy::TyVar`] in its own singleton set in the
-    /// [`UnificationTable`] and interns it as a [`TypeHandle`].
-    fn fresh_ty_var(&mut self) -> TypeHandle {
+    /// [`UnificationTable`] and interns it as a [`TypeId`].
+    fn fresh_ty_var(&mut self) -> TypeId {
         let vid = self.substitutions.make_type_var_set();
         self.ctx
             .type_interner
@@ -1535,10 +1523,10 @@ impl<'ast> SemanticAnalyzer<'ast> {
     }
 
     /// Allocates a new [`InferTy::IntVar`] in its own singleton set in the
-    /// [`UnificationTable`] and interns it as a [`TypeHandle`]. Used for integer
+    /// [`UnificationTable`] and interns it as a [`TypeId`]. Used for integer
     /// literals whose concrete type isn't yet known (see
     /// [`SemanticAnalyzer::infer`]).
-    fn fresh_int_var(&mut self) -> TypeHandle {
+    fn fresh_int_var(&mut self) -> TypeId {
         let vid = self.substitutions.make_int_var_set();
         self.ctx
             .type_interner

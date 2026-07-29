@@ -13,65 +13,65 @@ use crate::common::string_interner::Symbol;
 ///
 /// Stored as a struct of arenas: each concrete node type (e.g.
 /// [`FunctionDefinitionNode`], [`LetStatementNode`]) has its own
-/// [`HandleMap`], indexed by its `Typed*Id`. A tagged handle like [`ItemHandle`]
-/// or [`ExpressionHandle`] is dispatched to the right arena via its `kind()`,
-/// as in [`Ast::span_of_item`] and [`Ast::span_of_expression`] below. The
-/// "child node pools" are flattened `Vec`s referenced by the [`ItemSlice`],
-/// [`ParameterSlice`], [`StatementSlice`], and [`ExpressionSlice`] handles
-/// embedded in node fields like [`SourceFileNode::items`] and
-/// [`BlockExpressionNode::statements`].
+/// [`HandleMap`], indexed by its `Typed*Id`. A tagged handle like [`DefinitionId`]
+/// or [`ExpressionId`] is dispatched to the right arena via its `kind()`,
+/// as in [`Ast::span_of_definition`] and [`Ast::span_of_expression`] below. The
+/// "child node pools" are flattened `Vec`s referenced by the [`DefinitionIdSpan`],
+/// [`ParameterIdSpan`], [`StatementIdSpan`], and [`ExpressionIdSpan`] handles
+/// embedded in node fields like [`SourceFileNode::definition_id_span`] and
+/// [`BlockExpressionNode::statement_id_span`].
 pub(crate) struct Ast {
     /// root node
     pub(crate) source_file: SourceFileNode,
 
-    /// item nodes
-    pub(crate) function_definitions: HandleMap<FunctionDefinitionHandle, FunctionDefinitionNode>,
-    pub(crate) constant_definitions: HandleMap<ConstantDefinitionHandle, ConstantDefinitionNode>,
-    pub(crate) erroneous_items: HandleMap<ErrorItemHandle, ErrorItemNode>,
+    /// definition nodes
+    pub(crate) function_definitions: HandleMap<FunctionDefinitionId, FunctionDefinitionNode>,
+    pub(crate) constant_definitions: HandleMap<ConstantDefinitionId, ConstantDefinitionNode>,
+    pub(crate) erroneous_definitions: HandleMap<ErrorDefinitionId, ErrorDefinitionNode>,
 
     /// statement nodes
-    pub(crate) expression_statements: HandleMap<ExpressionStatementHandle, ExpressionStatementNode>,
-    pub(crate) item_statements: HandleMap<ItemStatementHandle, ItemStatementNode>,
-    pub(crate) let_statements: HandleMap<LetStatementHandle, LetStatementNode>,
-    pub(crate) erroneous_statements: HandleMap<ErrorStatementHandle, ErrorStatementNode>,
+    pub(crate) expression_statements: HandleMap<ExpressionStatementId, ExpressionStatementNode>,
+    pub(crate) definition_statements: HandleMap<DefinitionStatementId, DefinitionStatementNode>,
+    pub(crate) let_statements: HandleMap<LetStatementId, LetStatementNode>,
+    pub(crate) erroneous_statements: HandleMap<ErrorStatementId, ErrorStatementNode>,
 
     /// expression nodes
-    pub(crate) unit_literals: HandleMap<UnitLiteralHandle, UnitLiteralNode>,
-    pub(crate) integer_literals: HandleMap<IntegerLiteralHandle, IntegerLiteralNode>,
-    pub(crate) boolean_literals: HandleMap<BooleanLiteralHandle, BooleanLiteralNode>,
-    pub(crate) variables: HandleMap<VariableHandle, VariableNode>,
-    pub(crate) unary_operations: HandleMap<UnaryOperationHandle, UnaryOperationNode>,
-    pub(crate) binary_operations: HandleMap<BinaryOperationHandle, BinaryOperationNode>,
-    pub(crate) if_expressions: HandleMap<IfExpressionHandle, IfExpressionNode>,
-    pub(crate) block_expressions: HandleMap<BlockExpressionHandle, BlockExpressionNode>,
-    pub(crate) function_calls: HandleMap<FunctionCallHandle, FunctionCallNode>,
-    pub(crate) assigns: HandleMap<AssignHandle, AssignNode>,
-    pub(crate) returns: HandleMap<ReturnHandle, ReturnNode>,
-    pub(crate) erroneous_expressions: HandleMap<ErrorExpressionHandle, ErrorExpressionNode>,
+    pub(crate) unit_literals: HandleMap<UnitLiteralId, UnitLiteralNode>,
+    pub(crate) integer_literals: HandleMap<IntegerLiteralId, IntegerLiteralNode>,
+    pub(crate) boolean_literals: HandleMap<BooleanLiteralId, BooleanLiteralNode>,
+    pub(crate) variables: HandleMap<VariableId, VariableNode>,
+    pub(crate) unary_operations: HandleMap<UnaryOperationId, UnaryOperationNode>,
+    pub(crate) binary_operations: HandleMap<BinaryOperationId, BinaryOperationNode>,
+    pub(crate) if_expressions: HandleMap<IfExpressionId, IfExpressionNode>,
+    pub(crate) block_expressions: HandleMap<BlockExpressionId, BlockExpressionNode>,
+    pub(crate) function_calls: HandleMap<FunctionCallId, FunctionCallNode>,
+    pub(crate) assigns: HandleMap<AssignId, AssignNode>,
+    pub(crate) returns: HandleMap<ReturnId, ReturnNode>,
+    pub(crate) erroneous_expressions: HandleMap<ErrorExpressionId, ErrorExpressionNode>,
 
     /// parameter nodes
-    pub(crate) valid_parameters: HandleMap<ValidParameterHandle, ValidParameterNode>,
-    pub(crate) erroneous_parameters: HandleMap<ErrorParameterHandle, ErrorParameterNode>,
+    pub(crate) valid_parameters: HandleMap<ValidParameterId, ValidParameterNode>,
+    pub(crate) erroneous_parameters: HandleMap<ErrorParameterId, ErrorParameterNode>,
 
     /// identifier nodes
-    pub(crate) valid_identifiers: HandleMap<ValidIdentifierHandle, ValidIdentifierNode>,
-    pub(crate) erroneous_identifiers: HandleMap<ErrorIdentifierHandle, ErrorIdentifierNode>,
+    pub(crate) valid_identifiers: HandleMap<ValidIdentifierId, ValidIdentifierNode>,
+    pub(crate) erroneous_identifiers: HandleMap<ErrorIdentifierId, ErrorIdentifierNode>,
 
     /// type annotation nodes
     pub(crate) named_type_annotations:
-        HandleMap<NamedTypeAnnotationHandle, NamedTypeAnnotationNode>,
+        HandleMap<NamedTypeAnnotationId, NamedTypeAnnotationNode>,
     pub(crate) erroneous_type_annotations:
-        HandleMap<ErrorTypeAnnotationHandle, ErrorTypeAnnotationNode>,
+        HandleMap<ErrorTypeAnnotationId, ErrorTypeAnnotationNode>,
 
     /// pattern nodes
-    pub(crate) identifier_patterns: HandleMap<IdentifierPatternHandle, IdentifierPatternNode>,
-    pub(crate) erroneous_patterns: HandleMap<ErrorPatternHandle, ErrorPatternNode>,
+    pub(crate) identifier_patterns: HandleMap<IdentifierPatternId, IdentifierPatternNode>,
+    pub(crate) erroneous_patterns: HandleMap<ErrorPatternId, ErrorPatternNode>,
 
     /// child node pools
-    pub(crate) source_file_items: Vec<ItemHandle>,
-    pub(crate) function_definition_parameters: Vec<ParameterHandle>,
-    pub(crate) block_statements: Vec<StatementHandle>,
-    pub(crate) function_call_arguments: Vec<ExpressionHandle>,
+    pub(crate) source_file_definition_ids: Vec<DefinitionId>,
+    pub(crate) function_definition_parameter_ids: Vec<ParameterId>,
+    pub(crate) block_statement_ids: Vec<StatementId>,
+    pub(crate) function_call_argument_ids: Vec<ExpressionId>,
 }
 
 impl Ast {
@@ -79,16 +79,16 @@ impl Ast {
     pub(crate) fn new(source_size: usize) -> Self {
         Self {
             source_file: SourceFileNode {
-                items: ItemSlice { start: 0, len: 0 },
+                definition_id_span: DefinitionIdSpan { start: 0, len: 0 },
                 span: Span::new(0_u32, source_size as u32),
             },
 
             function_definitions: HandleMap::new(),
             constant_definitions: HandleMap::new(),
-            erroneous_items: HandleMap::new(),
+            erroneous_definitions: HandleMap::new(),
 
             expression_statements: HandleMap::new(),
-            item_statements: HandleMap::new(),
+            definition_statements: HandleMap::new(),
             let_statements: HandleMap::new(),
             erroneous_statements: HandleMap::new(),
 
@@ -117,43 +117,43 @@ impl Ast {
             identifier_patterns: HandleMap::new(),
             erroneous_patterns: HandleMap::new(),
 
-            source_file_items: Vec::new(),
-            function_definition_parameters: Vec::new(),
-            block_statements: Vec::new(),
-            function_call_arguments: Vec::new(),
+            source_file_definition_ids: Vec::new(),
+            function_definition_parameter_ids: Vec::new(),
+            block_statement_ids: Vec::new(),
+            function_call_argument_ids: Vec::new(),
         }
     }
 
-    /// Returns the [`Span`] of the node `id` refers to, dispatching to the
-    /// arena named by [`ItemHandle::kind`]. Every `span_of_*` accessor below
+    /// Returns the [`Span`] of the node `definition_id` refers to, dispatching to the
+    /// arena named by [`DefinitionId::kind`]. Every `span_of_*` accessor below
     /// follows this same dispatch-then-index pattern for its own tagged
     /// handle type.
-    pub(crate) fn span_of_item(&self, id: ItemHandle) -> Span {
-        let idx = id.index();
-        match id.kind() {
-            ItemKind::FunctionDefinition => self.function_definitions[idx.into()].span,
-            ItemKind::ConstantDefinition => self.constant_definitions[idx.into()].span,
-            ItemKind::Error => self.erroneous_items[idx.into()].span,
+    pub(crate) fn span_of_definition(&self, definition_id: DefinitionId) -> Span {
+        let idx = definition_id.index();
+        match definition_id.kind() {
+            DefinitionKind::FunctionDefinition => self.function_definitions[idx.into()].span,
+            DefinitionKind::ConstantDefinition => self.constant_definitions[idx.into()].span,
+            DefinitionKind::Error => self.erroneous_definitions[idx.into()].span,
         }
     }
 
-    /// Returns the [`Span`] of the node `id` refers to. See
-    /// [`Ast::span_of_item`].
-    pub(crate) fn span_of_statement(&self, id: StatementHandle) -> Span {
-        let idx = id.index();
-        match id.kind() {
+    /// Returns the [`Span`] of the node `statement_id` refers to. See
+    /// [`Ast::span_of_definition`].
+    pub(crate) fn span_of_statement(&self, statement_id: StatementId) -> Span {
+        let idx = statement_id.index();
+        match statement_id.kind() {
             StatementKind::ExpressionStatement => self.expression_statements[idx.into()].span,
-            StatementKind::ItemStatement => self.item_statements[idx.into()].span,
+            StatementKind::DefinitionStatement => self.definition_statements[idx.into()].span,
             StatementKind::LetStatement => self.let_statements[idx.into()].span,
             StatementKind::Error => self.erroneous_statements[idx.into()].span,
         }
     }
 
-    /// Returns the [`Span`] of the node `id` refers to. See
-    /// [`Ast::span_of_item`].
-    pub(crate) fn span_of_expression(&self, id: ExpressionHandle) -> Span {
-        let idx = id.index();
-        match id.kind() {
+    /// Returns the [`Span`] of the node `expression_id` refers to. See
+    /// [`Ast::span_of_definition`].
+    pub(crate) fn span_of_expression(&self, expression_id: ExpressionId) -> Span {
+        let idx = expression_id.index();
+        match expression_id.kind() {
             ExpressionKind::UnitLiteral => self.unit_literals[idx.into()].span,
             ExpressionKind::IntegerLiteral => self.integer_literals[idx.into()].span,
             ExpressionKind::BooleanLiteral => self.boolean_literals[idx.into()].span,
@@ -169,74 +169,74 @@ impl Ast {
         }
     }
 
-    /// Returns the [`Span`] of the node `id` refers to. See
-    /// [`Ast::span_of_item`].
-    pub(crate) fn span_of_parameter(&self, id: ParameterHandle) -> Span {
-        let idx = id.index();
-        match id.kind() {
+    /// Returns the [`Span`] of the node `parameter_id` refers to. See
+    /// [`Ast::span_of_definition`].
+    pub(crate) fn span_of_parameter(&self, parameter_id: ParameterId) -> Span {
+        let idx = parameter_id.index();
+        match parameter_id.kind() {
             ParameterKind::Valid => self.valid_parameters[idx.into()].span,
             ParameterKind::Error => self.erroneous_parameters[idx.into()].span,
         }
     }
 
-    /// Returns the [`Span`] of the node `id` refers to. See
-    /// [`Ast::span_of_item`].
-    pub(crate) fn span_of_identifier(&self, id: IdentifierHandle) -> Span {
-        let idx = id.index();
-        match id.kind() {
+    /// Returns the [`Span`] of the node `identifier_id` refers to. See
+    /// [`Ast::span_of_definition`].
+    pub(crate) fn span_of_identifier(&self, identifier_id: IdentifierId) -> Span {
+        let idx = identifier_id.index();
+        match identifier_id.kind() {
             IdentifierKind::Valid => self.valid_identifiers[idx.into()].span,
             IdentifierKind::Error => self.erroneous_identifiers[idx.into()].span,
         }
     }
 
-    /// Returns the [`Span`] of the node `id` refers to. See
-    /// [`Ast::span_of_item`].
-    pub(crate) fn span_of_type_annotation(&self, id: TypeAnnotationHandle) -> Span {
-        let idx = id.index();
-        match id.kind() {
+    /// Returns the [`Span`] of the node `type_annotation_id` refers to. See
+    /// [`Ast::span_of_definition`].
+    pub(crate) fn span_of_type_annotation(&self, type_annotation_id: TypeAnnotationId) -> Span {
+        let idx = type_annotation_id.index();
+        match type_annotation_id.kind() {
             TypeAnnotationKind::Named => self.named_type_annotations[idx.into()].span,
             TypeAnnotationKind::Error => self.erroneous_type_annotations[idx.into()].span,
         }
     }
 
-    /// Returns the [`Span`] of the node `id` refers to. See
-    /// [`Ast::span_of_item`].
-    pub(crate) fn span_of_pattern(&self, id: PatternHandle) -> Span {
-        let idx = id.index();
-        match id.kind() {
+    /// Returns the [`Span`] of the node `pattern_id` refers to. See
+    /// [`Ast::span_of_definition`].
+    pub(crate) fn span_of_pattern(&self, pattern_id: PatternId) -> Span {
+        let idx = pattern_id.index();
+        match pattern_id.kind() {
             PatternKind::Identifier => self.identifier_patterns[idx.into()].span,
             PatternKind::Error => self.erroneous_patterns[idx.into()].span,
         }
     }
 
-    /// Appends `item` to the [`Ast::source_file_items`] pool and grows
-    /// [`SourceFileNode::items`] to cover it. Each call extends the
-    /// [`ItemSlice`] by one, so items must be added in source order.
-    pub(crate) fn add_source_file_item(&mut self, item: ItemHandle) {
-        self.source_file_items.push(item);
-        self.source_file.items.len += 1;
+    /// Appends `definition_id` to the [`Ast::source_file_definition_ids`] pool and grows
+    /// [`SourceFileNode::definition_id_span`] to cover it. Each call extends the
+    /// [`DefinitionIdSpan`] by one, so definitions must be added in source order.
+    pub(crate) fn add_source_file_definition(&mut self, definition_id: DefinitionId) {
+        self.source_file_definition_ids.push(definition_id);
+        self.source_file.definition_id_span.len += 1;
     }
 
-    /// Appends `parameters` to the [`Ast::function_definition_parameters`]
-    /// pool, builds a [`ParameterSlice`] over the appended range, and adds a
+    /// Appends `parameter_ids` to the [`Ast::function_definition_parameter_ids`]
+    /// pool, builds a [`ParameterIdSpan`] over the appended range, and adds a
     /// [`FunctionDefinitionNode`] referencing that slice.
     pub(crate) fn add_function_definition(
         &mut self,
-        name: IdentifierHandle,
-        parameters: &[ParameterHandle],
-        annotation: Option<TypeAnnotationHandle>,
-        body: BlockExpressionHandle,
+        name_id: IdentifierId,
+        parameter_ids: &[ParameterId],
+        annotation_id: Option<TypeAnnotationId>,
+        body_id: BlockExpressionId,
         span: Span,
-    ) -> FunctionDefinitionHandle {
-        let start = self.function_definition_parameters.len() as u32;
-        self.function_definition_parameters
-            .extend_from_slice(parameters);
-        let len = parameters.len() as u32;
+    ) -> FunctionDefinitionId {
+        let start = self.function_definition_parameter_ids.len() as u32;
+        self.function_definition_parameter_ids
+            .extend_from_slice(parameter_ids);
+        let len = parameter_ids.len() as u32;
         self.function_definitions.add(FunctionDefinitionNode {
-            name,
-            parameters: ParameterSlice { start, len },
-            annotation,
-            body,
+            name_id,
+            parameter_id_span: ParameterIdSpan { start, len },
+            annotation_id,
+            body_id,
             span,
         })
     }
@@ -244,89 +244,90 @@ impl Ast {
     /// Adds a [`ConstantDefinitionNode`] and returns a handle to it.
     pub(crate) fn add_constant_definition(
         &mut self,
-        name: IdentifierHandle,
-        annotation: TypeAnnotationHandle,
-        value: ExpressionHandle,
+        name_id: IdentifierId,
+        annotation_id: TypeAnnotationId,
+        value_id: ExpressionId,
         span: Span,
-    ) -> ConstantDefinitionHandle {
+    ) -> ConstantDefinitionId {
         self.constant_definitions.add(ConstantDefinitionNode {
-            name,
-            annotation,
-            value,
+            name_id,
+            annotation_id,
+            value_id,
             span,
         })
     }
 
-    /// Adds an [`ErrorItemNode`] and returns a handle to it.
-    pub(crate) fn add_erroneous_item(&mut self, span: Span) -> ErrorItemHandle {
-        self.erroneous_items.add(ErrorItemNode { span })
+    /// Adds an [`ErrorDefinitionNode`] and returns a handle to it.
+    pub(crate) fn add_erroneous_definition(&mut self, span: Span) -> ErrorDefinitionId {
+        self.erroneous_definitions.add(ErrorDefinitionNode { span })
     }
 
     /// Adds an [`ExpressionStatementNode`] and returns a handle to it.
     pub(crate) fn add_expression_statement(
         &mut self,
-        expression: ExpressionHandle,
+        expression_id: ExpressionId,
         has_semicolon: bool,
         span: Span,
-    ) -> ExpressionStatementHandle {
+    ) -> ExpressionStatementId {
         self.expression_statements.add(ExpressionStatementNode {
-            expression,
+            expression_id,
             has_semicolon,
             span,
         })
     }
 
-    /// Adds an [`ItemStatementNode`] and returns a handle to it.
-    pub(crate) fn add_item_statement(
+    /// Adds a [`DefinitionStatementNode`] and returns a handle to it.
+    pub(crate) fn add_definition_statement(
         &mut self,
-        item: ItemHandle,
+        definition_id: DefinitionId,
         span: Span,
-    ) -> ItemStatementHandle {
-        self.item_statements.add(ItemStatementNode { item, span })
+    ) -> DefinitionStatementId {
+        self.definition_statements
+            .add(DefinitionStatementNode { definition_id, span })
     }
 
     /// Adds a [`LetStatementNode`] and returns a handle to it.
     pub(crate) fn add_let_statement(
         &mut self,
-        name: PatternHandle,
+        name_id: PatternId,
         mutable: bool,
-        annotation: Option<TypeAnnotationHandle>,
-        value: ExpressionHandle,
+        annotation_id: Option<TypeAnnotationId>,
+        value_id: ExpressionId,
         span: Span,
-    ) -> LetStatementHandle {
+    ) -> LetStatementId {
         self.let_statements.add(LetStatementNode {
-            name,
+            name_id,
             mutable,
-            annotation,
-            value,
+            annotation_id,
+            value_id,
             span,
         })
     }
 
     /// Adds an [`ErrorStatementNode`] and returns a handle to it.
-    pub(crate) fn add_erroneous_statement(&mut self, span: Span) -> ErrorStatementHandle {
+    pub(crate) fn add_erroneous_statement(&mut self, span: Span) -> ErrorStatementId {
         self.erroneous_statements.add(ErrorStatementNode { span })
     }
 
     /// Adds a [`UnitLiteralNode`] and returns a handle to it.
-    pub(crate) fn add_unit_literal(&mut self, span: Span) -> UnitLiteralHandle {
+    pub(crate) fn add_unit_literal(&mut self, span: Span) -> UnitLiteralId {
         self.unit_literals.add(UnitLiteralNode { span })
     }
 
     /// Adds an [`IntegerLiteralNode`] and returns a handle to it.
-    pub(crate) fn add_integer_literal(&mut self, value: u128, span: Span) -> IntegerLiteralHandle {
+    pub(crate) fn add_integer_literal(&mut self, value: u128, span: Span) -> IntegerLiteralId {
         self.integer_literals
             .add(IntegerLiteralNode { value, span })
     }
 
     /// Adds a [`BooleanLiteralNode`] and returns a handle to it.
-    pub(crate) fn add_boolean_literal(&mut self, value: bool, span: Span) -> BooleanLiteralHandle {
+    pub(crate) fn add_boolean_literal(&mut self, value: bool, span: Span) -> BooleanLiteralId {
         self.boolean_literals
             .add(BooleanLiteralNode { value, span })
     }
 
     /// Adds a [`VariableNode`] and returns a handle to it.
-    pub(crate) fn add_variable(&mut self, symbol: Symbol, span: Span) -> VariableHandle {
+    pub(crate) fn add_variable(&mut self, symbol: Symbol, span: Span) -> VariableId {
         self.variables.add(VariableNode { symbol, span })
     }
 
@@ -334,12 +335,12 @@ impl Ast {
     pub(crate) fn add_unary_operation(
         &mut self,
         operator: UnOp,
-        rhs: ExpressionHandle,
+        rhs_id: ExpressionId,
         span: Span,
-    ) -> UnaryOperationHandle {
+    ) -> UnaryOperationId {
         self.unary_operations.add(UnaryOperationNode {
             operator,
-            rhs,
+            rhs_id,
             span,
         })
     }
@@ -348,14 +349,14 @@ impl Ast {
     pub(crate) fn add_binary_operation(
         &mut self,
         operator: BinOp,
-        lhs: ExpressionHandle,
-        rhs: ExpressionHandle,
+        lhs_id: ExpressionId,
+        rhs_id: ExpressionId,
         span: Span,
-    ) -> BinaryOperationHandle {
+    ) -> BinaryOperationId {
         self.binary_operations.add(BinaryOperationNode {
             operator,
-            lhs,
-            rhs,
+            lhs_id,
+            rhs_id,
             span,
         })
     }
@@ -363,55 +364,55 @@ impl Ast {
     /// Adds an [`IfExpressionNode`] and returns a handle to it.
     pub(crate) fn add_if_expression(
         &mut self,
-        condition: ExpressionHandle,
-        then_branch: BlockExpressionHandle,
-        else_branch: Option<ExpressionHandle>,
+        condition_id: ExpressionId,
+        then_branch_id: BlockExpressionId,
+        else_branch_id: Option<ExpressionId>,
         span: Span,
-    ) -> IfExpressionHandle {
+    ) -> IfExpressionId {
         self.if_expressions.add(IfExpressionNode {
-            condition,
-            then_branch,
-            else_branch,
+            condition_id,
+            then_branch_id,
+            else_branch_id,
             span,
         })
     }
 
-    /// Appends `statements` to the [`Ast::block_statements`] pool, builds a
-    /// [`StatementSlice`] over the appended range, and adds a
+    /// Appends `statement_ids` to the [`Ast::block_statement_ids`] pool, builds a
+    /// [`StatementIdSpan`] over the appended range, and adds a
     /// [`BlockExpressionNode`] referencing that slice. See
     /// [`Ast::add_function_definition`] for the pool-and-slice pattern.
     pub(crate) fn add_block_expression(
         &mut self,
-        statements: &[StatementHandle],
-        tail: Option<ExpressionHandle>,
+        statement_ids: &[StatementId],
+        tail_id: Option<ExpressionId>,
         span: Span,
-    ) -> BlockExpressionHandle {
-        let start = self.block_statements.len() as u32;
-        self.block_statements.extend_from_slice(statements);
-        let len = statements.len() as u32;
+    ) -> BlockExpressionId {
+        let start = self.block_statement_ids.len() as u32;
+        self.block_statement_ids.extend_from_slice(statement_ids);
+        let len = statement_ids.len() as u32;
         self.block_expressions.add(BlockExpressionNode {
-            statements: StatementSlice { start, len },
-            tail,
+            statement_id_span: StatementIdSpan { start, len },
+            tail_id,
             span,
         })
     }
 
-    /// Appends `arguments` to the [`Ast::function_call_arguments`] pool,
-    /// builds an [`ExpressionSlice`] over the appended range, and adds a
+    /// Appends `argument_ids` to the [`Ast::function_call_argument_ids`] pool,
+    /// builds an [`ExpressionIdSpan`] over the appended range, and adds a
     /// [`FunctionCallNode`] referencing that slice. See
     /// [`Ast::add_function_definition`] for the pool-and-slice pattern.
     pub(crate) fn add_function_call(
         &mut self,
-        callee: ExpressionHandle,
-        arguments: &[ExpressionHandle],
+        callee_id: ExpressionId,
+        argument_ids: &[ExpressionId],
         span: Span,
-    ) -> FunctionCallHandle {
-        let start = self.function_call_arguments.len() as u32;
-        self.function_call_arguments.extend_from_slice(arguments);
-        let len = arguments.len() as u32;
+    ) -> FunctionCallId {
+        let start = self.function_call_argument_ids.len() as u32;
+        self.function_call_argument_ids.extend_from_slice(argument_ids);
+        let len = argument_ids.len() as u32;
         self.function_calls.add(FunctionCallNode {
-            callee,
-            arguments: ExpressionSlice { start, len },
+            callee_id,
+            argument_id_span: ExpressionIdSpan { start, len },
             span,
         })
     }
@@ -419,13 +420,13 @@ impl Ast {
     /// Adds an [`AssignNode`] and returns a handle to it.
     pub(crate) fn add_assign(
         &mut self,
-        target: ExpressionHandle,
-        value: ExpressionHandle,
+        target_id: ExpressionId,
+        value_id: ExpressionId,
         span: Span,
-    ) -> AssignHandle {
+    ) -> AssignId {
         self.assigns.add(AssignNode {
-            target,
-            value,
+            target_id,
+            value_id,
             span,
         })
     }
@@ -433,35 +434,35 @@ impl Ast {
     /// Adds a [`ReturnNode`] and returns a handle to it.
     pub(crate) fn add_return(
         &mut self,
-        value: Option<ExpressionHandle>,
+        value_id: Option<ExpressionId>,
         span: Span,
-    ) -> ReturnHandle {
-        self.returns.add(ReturnNode { value, span })
+    ) -> ReturnId {
+        self.returns.add(ReturnNode { value_id, span })
     }
 
     /// Adds an [`ErrorExpressionNode`] and returns a handle to it.
-    pub(crate) fn add_erroneous_expression(&mut self, span: Span) -> ErrorExpressionHandle {
+    pub(crate) fn add_erroneous_expression(&mut self, span: Span) -> ErrorExpressionId {
         self.erroneous_expressions.add(ErrorExpressionNode { span })
     }
 
     /// Adds a [`ValidParameterNode`] and returns a handle to it.
     pub(crate) fn add_valid_parameter(
         &mut self,
-        name: IdentifierHandle,
+        name_id: IdentifierId,
         mutable: bool,
-        annotation: TypeAnnotationHandle,
+        annotation_id: TypeAnnotationId,
         span: Span,
-    ) -> ValidParameterHandle {
+    ) -> ValidParameterId {
         self.valid_parameters.add(ValidParameterNode {
-            name,
+            name_id,
             mutable,
-            annotation,
+            annotation_id,
             span,
         })
     }
 
     /// Adds an [`ErrorParameterNode`] and returns a handle to it.
-    pub(crate) fn add_erroneous_parameter(&mut self, span: Span) -> ErrorParameterHandle {
+    pub(crate) fn add_erroneous_parameter(&mut self, span: Span) -> ErrorParameterId {
         self.erroneous_parameters.add(ErrorParameterNode { span })
     }
 
@@ -470,31 +471,31 @@ impl Ast {
         &mut self,
         symbol: Symbol,
         span: Span,
-    ) -> ValidIdentifierHandle {
+    ) -> ValidIdentifierId {
         self.valid_identifiers
             .add(ValidIdentifierNode { symbol, span })
     }
 
     /// Adds an [`ErrorIdentifierNode`] and returns a handle to it.
-    pub(crate) fn add_erroneous_identifier(&mut self, span: Span) -> ErrorIdentifierHandle {
+    pub(crate) fn add_erroneous_identifier(&mut self, span: Span) -> ErrorIdentifierId {
         self.erroneous_identifiers.add(ErrorIdentifierNode { span })
     }
 
     /// Adds a [`NamedTypeAnnotationNode`] and returns a handle to it.
     pub(crate) fn add_named_type_annotation(
         &mut self,
-        name: IdentifierHandle,
+        name_id: IdentifierId,
         span: Span,
-    ) -> NamedTypeAnnotationHandle {
+    ) -> NamedTypeAnnotationId {
         self.named_type_annotations
-            .add(NamedTypeAnnotationNode { name, span })
+            .add(NamedTypeAnnotationNode { name_id, span })
     }
 
     /// Adds an [`ErrorTypeAnnotationNode`] and returns a handle to it.
     pub(crate) fn add_erroneous_type_annotation(
         &mut self,
         span: Span,
-    ) -> ErrorTypeAnnotationHandle {
+    ) -> ErrorTypeAnnotationId {
         self.erroneous_type_annotations
             .add(ErrorTypeAnnotationNode { span })
     }
@@ -502,15 +503,15 @@ impl Ast {
     /// Adds an [`IdentifierPatternNode`] and returns a handle to it.
     pub(crate) fn add_identifier_pattern(
         &mut self,
-        name: IdentifierHandle,
+        name_id: IdentifierId,
         span: Span,
-    ) -> IdentifierPatternHandle {
+    ) -> IdentifierPatternId {
         self.identifier_patterns
-            .add(IdentifierPatternNode { name, span })
+            .add(IdentifierPatternNode { name_id, span })
     }
 
     /// Adds an [`ErrorPatternNode`] and returns a handle to it.
-    pub(crate) fn add_erroneous_pattern(&mut self, span: Span) -> ErrorPatternHandle {
+    pub(crate) fn add_erroneous_pattern(&mut self, span: Span) -> ErrorPatternId {
         self.erroneous_patterns.add(ErrorPatternNode { span })
     }
 }
