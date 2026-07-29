@@ -308,8 +308,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 let definition_binding_id = self.hir.add_definition_binding(
                     name,
                     self.ctx.type_interner.intern(Ty::Function {
-                        parameters: parameters_ty,
-                        return_value: return_ty,
+                        parameter_type_ids: parameters_ty,
+                        return_type_id: return_ty,
                     }),
                     node.span,
                 );
@@ -1196,8 +1196,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // check callee is callable
         let Ty::Function {
-            parameters,
-            return_value: ret,
+            parameter_type_ids: parameters,
+            return_type_id: ret,
         } = self.ctx.type_interner.resolve(callee_view.ty()).unwrap()
         else {
             self.ctx

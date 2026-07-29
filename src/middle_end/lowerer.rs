@@ -111,11 +111,11 @@ impl<'a> CfgBuilder<'a> {
 
     fn reachable(&self) -> bool {
         match self.cursor.current_block(&self.cfg) {
-            Some(block) => !self
+            Some(block_id) => !self
                 .cfg
-                .get_block(block)
+                .get_block(block_id)
                 .last_instruction()
-                .is_some_and(|id| self.cfg.get_instruction(id).is_terminator()),
+                .is_some_and(|instruction_id| self.cfg.get_instruction(instruction_id).is_terminator()),
             None => true,
         }
     }
@@ -179,7 +179,10 @@ impl<'a> CfgBuilder<'a> {
                 value,
             )),
             ExpressionKind::Unary { operator, operand_id } => {
-                let operand_id: SsaValueId = self.lower_expression(operand_id)?;
+                // `?`: unary's operand can't be zero-sized (only bool/int types
+                // support `!`/`-`), so a `None` here only means the operand's
+                // evaluation diverged.
+                let operand_id: SsaValueId = self.lower_expression(operand_id)?; 
                 Some(
                     self.cursor
                         .add_unary(&mut self.cfg, operator, operand_id, expression_view.ty()),

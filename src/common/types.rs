@@ -26,8 +26,8 @@ pub(crate) enum Ty {
     Unsigned(UnsignedIntTy),
     /// function definition type
     Function {
-        parameters: Vec<TypeId>,
-        return_value: TypeId,
+        parameter_type_ids: Vec<TypeId>,
+        return_type_id: TypeId,
     },
     /// A type not yet resolved by inference. See [`InferTy`].
     Infer(InferTy),
@@ -170,9 +170,9 @@ impl TypeInterner {
     pub(crate) fn as_func(&self, ty: TypeId) -> Option<(&[TypeId], TypeId)> {
         match self.resolve(ty)? {
             Ty::Function {
-                parameters,
-                return_value,
-            } => Some((parameters, *return_value)),
+                parameter_type_ids,
+                return_type_id,
+            } => Some((parameter_type_ids, *return_type_id)),
             _ => None,
         }
     }
@@ -189,11 +189,11 @@ impl TypeInterner {
             Ty::Unsigned(UnsignedIntTy::U32) => "U32".to_string(),
             Ty::Unsigned(UnsignedIntTy::U64) => "U64".to_string(),
             Ty::Function {
-                parameters,
-                return_value,
+                parameter_type_ids,
+                return_type_id,
             } => {
-                let parameters: Vec<_> = parameters.iter().map(|p| self.to_string(*p)).collect();
-                let return_value = self.to_string(*return_value);
+                let parameters: Vec<String> = parameter_type_ids.iter().map(|p| self.to_string(*p)).collect();
+                let return_value = self.to_string(*return_type_id);
                 format!("({}) -> {}", parameters.join(", "), return_value)
             }
             Ty::Infer(InferTy::IntVar(_)) => "Int".to_string(),
