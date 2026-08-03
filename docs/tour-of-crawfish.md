@@ -1,7 +1,5 @@
 # A Tour of Crawfish
 
-This is a tour of the crawfish language: what it looks like, and what it's growing into.
-
 > [!CAUTION]
 > Sections marked `Unimplemented` describe language design that has been decided but is not yet wired through the compiler. 
 
@@ -125,7 +123,9 @@ func main() {
 }
 ```
 
-## Records
+## Algebraic Data Types
+
+### Records
 
 > [!CAUTION]
 > Unimplemented
@@ -144,7 +144,7 @@ func main() {
 }
 ```
 
-## Tuple structs
+### Named Tuples
 
 > [!CAUTION]
 > Unimplemented
@@ -160,7 +160,7 @@ func main() {
 }
 ```
 
-## Variants
+### Variants
 
 > [!CAUTION]
 > Unimplemented
