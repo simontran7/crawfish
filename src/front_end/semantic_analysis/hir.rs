@@ -74,7 +74,7 @@ pub(crate) enum DefinitionKind {
     /// A top-level constant: `const name: Type = value;`.
     Constant {
         definition_binding_id: DefinitionBindingId,
-        value_id: ExpressionId,
+        initializer_id: ExpressionId,
     },
 }
 
@@ -292,30 +292,39 @@ impl Hir {
     /// Returns the [`DefinitionId`]s covered by `s`, indexing into
     /// [`Hir::definition_children_ids`]. Every `get_*` accessor below follows
     /// this same indexing pattern for its own child-node pool.
-    pub(crate) fn get_definition_ids(&self, definition_id_span: DefinitionIdSpan) -> &[DefinitionId] {
-        &self.definition_children_ids
-            [definition_id_span.start as usize..(definition_id_span.start + definition_id_span.len) as usize]
+    pub(crate) fn get_definition_ids(
+        &self,
+        definition_id_span: DefinitionIdSpan,
+    ) -> &[DefinitionId] {
+        &self.definition_children_ids[definition_id_span.start as usize
+            ..(definition_id_span.start + definition_id_span.len) as usize]
     }
 
     /// Returns the [`StatementId`]s covered by `statement_id_span`. See
     /// [`Hir::get_definition_ids`].
     pub(crate) fn get_statement_ids(&self, statement_id_span: StatementIdSpan) -> &[StatementId] {
-        &self.statement_children_ids
-            [statement_id_span.start as usize..(statement_id_span.start + statement_id_span.len) as usize]
+        &self.statement_children_ids[statement_id_span.start as usize
+            ..(statement_id_span.start + statement_id_span.len) as usize]
     }
 
     /// Returns the [`ExpressionId`]s covered by `expression_id_span`. See
     /// [`Hir::get_definition_ids`].
-    pub(crate) fn get_expression_ids(&self, expression_id_span: ExpressionIdSpan) -> &[ExpressionId] {
-        &self.expression_children_ids
-            [expression_id_span.start as usize..(expression_id_span.start + expression_id_span.len) as usize]
+    pub(crate) fn get_expression_ids(
+        &self,
+        expression_id_span: ExpressionIdSpan,
+    ) -> &[ExpressionId] {
+        &self.expression_children_ids[expression_id_span.start as usize
+            ..(expression_id_span.start + expression_id_span.len) as usize]
     }
 
     /// Returns the [`LocalBindingId`]s covered by `parameter_id_span`. See
     /// [`Hir::get_definition_ids`].
-    pub(crate) fn get_parameter_binding_ids(&self, parameter_id_span: ParameterIdSpan) -> &[LocalBindingId] {
-        &self.parameter_children_ids
-            [parameter_id_span.start as usize..(parameter_id_span.start + parameter_id_span.len) as usize]
+    pub(crate) fn get_parameter_binding_ids(
+        &self,
+        parameter_id_span: ParameterIdSpan,
+    ) -> &[LocalBindingId] {
+        &self.parameter_children_ids[parameter_id_span.start as usize
+            ..(parameter_id_span.start + parameter_id_span.len) as usize]
     }
 
     /// Returns every `func` in the program, in declaration order.
@@ -364,7 +373,8 @@ impl Hir {
         definition_ids: &[DefinitionId],
     ) -> DefinitionIdSpan {
         let start = self.definition_children_ids.len() as u32;
-        self.definition_children_ids.extend_from_slice(definition_ids);
+        self.definition_children_ids
+            .extend_from_slice(definition_ids);
         DefinitionIdSpan {
             start,
             len: definition_ids.len() as u32,
@@ -374,10 +384,7 @@ impl Hir {
     /// Appends `statements` to the [`Hir::statement_children_ids`] pool and
     /// returns a [`StatementIdSpan`] over the appended range. See
     /// [`Hir::add_definition_slice`].
-    pub(crate) fn add_statement_ids(
-        &mut self,
-        statement_ids: &[StatementId],
-    ) -> StatementIdSpan {
+    pub(crate) fn add_statement_ids(&mut self, statement_ids: &[StatementId]) -> StatementIdSpan {
         let start = self.statement_children_ids.len() as u32;
         self.statement_children_ids.extend_from_slice(statement_ids);
         StatementIdSpan {
@@ -394,7 +401,8 @@ impl Hir {
         expression_ids: &[ExpressionId],
     ) -> ExpressionIdSpan {
         let start = self.expression_children_ids.len() as u32;
-        self.expression_children_ids.extend_from_slice(expression_ids);
+        self.expression_children_ids
+            .extend_from_slice(expression_ids);
         ExpressionIdSpan {
             start,
             len: expression_ids.len() as u32,
@@ -681,10 +689,7 @@ impl BindingId {
     ///
     /// Panics if this is [`BindingId::ERROR`].
     pub(crate) fn kind(self) -> BindingKind {
-        assert!(
-            !self.is_error(),
-            "called `kind()` on an error BindingId"
-        );
+        assert!(!self.is_error(), "called `kind()` on an error BindingId");
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => BindingKind::Local,
             _ => BindingKind::Definition,
@@ -697,10 +702,7 @@ impl BindingId {
     ///
     /// Panics if this is [`BindingId::ERROR`].
     pub(crate) fn index(self) -> usize {
-        assert!(
-            !self.is_error(),
-            "called `index()` on an error BindingId"
-        );
+        assert!(!self.is_error(), "called `index()` on an error BindingId");
         (self.0 & Self::INDEX_MASK) as usize
     }
 

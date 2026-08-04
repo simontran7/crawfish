@@ -246,6 +246,8 @@ pub(crate) enum BinOp {
     Ne,
     Lt,
     Gt,
+    Le,
+    Ge,
     /// `and`. Both operands and the result are `Bool`.
     And,
     /// `or`. Both operands and the result are `Bool`.
@@ -288,6 +290,8 @@ impl BinOp {
             TokenKind::NotEqual => Self::Ne,
             TokenKind::LessThan => Self::Lt,
             TokenKind::GreaterThan => Self::Gt,
+            TokenKind::LessEqual => Self::Le,
+            TokenKind::GreaterEqual => Self::Ge,
             TokenKind::LogicalAnd => Self::And,
             TokenKind::LogicalOr => Self::Or,
             _ => panic!("Token should be a binary operator"),
@@ -306,6 +310,8 @@ impl fmt::Display for BinOp {
             Self::Ne => write!(f, "!="),
             Self::Lt => write!(f, "<"),
             Self::Gt => write!(f, ">"),
+            Self::Le => write!(f, "<="),
+            Self::Ge => write!(f, ">="),
             Self::And => write!(f, "and"),
             Self::Or => write!(f, "or"),
         }

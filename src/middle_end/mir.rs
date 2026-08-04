@@ -540,11 +540,7 @@ impl Cfg {
 
     /// Appends `instruction_id` (already allocated in the DFG) to the end of `block_id`'s
     /// instruction sequence.
-    fn link_instruction_to_block(
-        &mut self,
-        block_id: BlockId,
-        instruction_id: InstructionId,
-    ) {
+    fn link_instruction_to_block(&mut self, block_id: BlockId, instruction_id: InstructionId) {
         let prev = self.layout.blocks[block_id].last_instruction;
         let node = InstructionNode {
             block: Some(block_id),
@@ -642,11 +638,7 @@ impl Cfg {
 
     /// Splits a block in two up till and excluding `partition_point`, moving `partition_point` and everything after it into
     /// a newly inserted block pointed by `new_block_id`.
-    pub(crate) fn split_block(
-        &mut self,
-        new_block_id: BlockId,
-        partition_point: InstructionId,
-    ) {
+    pub(crate) fn split_block(&mut self, new_block_id: BlockId, partition_point: InstructionId) {
         assert!(
             !self.is_block_linked(new_block_id),
             "cannot split into a block that is already in the cfg"
@@ -690,11 +682,7 @@ impl Cfg {
     }
 
     /// Builds (but does not insert) a `Jump` instruction to `destination`, passing `args`.
-    pub(crate) fn new_jump(
-        &mut self,
-        destination: BlockId,
-        args: &[SsaValueId],
-    ) -> Instruction {
+    pub(crate) fn new_jump(&mut self, destination: BlockId, args: &[SsaValueId]) -> Instruction {
         Instruction::Jump {
             destination,
             args: HandleList::<SsaValueId>::from(&mut self.dfg.suballocator, args),
@@ -1251,11 +1239,7 @@ impl<'a> InstructionViewMut<'a> {
     /// same block — a single instruction can be a predecessor via more than one edge.
     ///
     /// Panics if this instruction doesn't branch to `destination` at all.
-    pub(crate) fn append_block_argument(
-        &mut self,
-        destination: BlockId,
-        value: SsaValueId,
-    ) {
+    pub(crate) fn append_block_argument(&mut self, destination: BlockId, value: SsaValueId) {
         let suballocator = &mut self.cfg.dfg.suballocator;
         match &mut self.cfg.dfg.instructions[self.instruction_id] {
             Instruction::Jump {

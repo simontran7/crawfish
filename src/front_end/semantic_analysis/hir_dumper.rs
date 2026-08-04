@@ -1,7 +1,7 @@
 use crate::common::context::CompilerContext;
 use crate::front_end::semantic_analysis::hir::{
-    BindingId, BindingKind, DefinitionId, DefinitionKind, ExpressionId, ExpressionKind,
-    Hir, StatementId, StatementKind,
+    BindingId, BindingKind, DefinitionId, DefinitionKind, ExpressionId, ExpressionKind, Hir,
+    StatementId, StatementKind,
 };
 
 use std::fmt::{self, Write};
@@ -101,7 +101,7 @@ impl<'a> HirDumper<'a> {
             }
             DefinitionKind::Constant {
                 definition_binding_id,
-                value_id,
+                initializer_id,
             } => {
                 let binding_view = self.hir.get_definition_binding(definition_binding_id);
                 let name = self
@@ -115,7 +115,7 @@ impl<'a> HirDumper<'a> {
                 writeln!(hir_output, "{padding}const {name} : {ty}")?;
 
                 // dump expression
-                self.dump_expression(value_id, depth + 1, "", hir_output)?;
+                self.dump_expression(initializer_id, depth + 1, "", hir_output)?;
             }
         }
 
@@ -213,7 +213,10 @@ impl<'a> HirDumper<'a> {
                     self.dump_expression(tail_id, depth + 1, "[tail] ", hir_output)?;
                 }
             }
-            ExpressionKind::Assign { target_id, value_id } => {
+            ExpressionKind::Assign {
+                target_id,
+                value_id,
+            } => {
                 // dump header
                 writeln!(hir_output, "{padding}{label}assign : {ty}")?;
 
@@ -236,14 +239,21 @@ impl<'a> HirDumper<'a> {
                 let name = self.binding_name(binding_id);
                 writeln!(hir_output, "{padding}{label}{name} : {ty}")?;
             }
-            ExpressionKind::Unary { operator, operand_id } => {
+            ExpressionKind::Unary {
+                operator,
+                operand_id,
+            } => {
                 // dump header
                 writeln!(hir_output, "{padding}{label}`{operator}` : {ty}")?;
 
                 // dump operand
                 self.dump_expression(operand_id, depth + 1, "", hir_output)?;
             }
-            ExpressionKind::Binary { operator, lhs_id, rhs_id } => {
+            ExpressionKind::Binary {
+                operator,
+                lhs_id,
+                rhs_id,
+            } => {
                 // dump header
                 writeln!(hir_output, "{padding}{label}`{operator}` : {ty}")?;
 

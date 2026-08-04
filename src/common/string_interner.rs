@@ -15,7 +15,7 @@ pub(crate) struct StringInterner {
     strings: Vec<String>,
     symbols: HashMap<String, Symbol>,
     pub(crate) unit_symbol: Symbol,
-    pub(crate) never_symbol: Symbol,
+    pub(crate) bottom_symbol: Symbol,
     pub(crate) bool_symbol: Symbol,
     pub(crate) u32_symbol: Symbol,
     pub(crate) u64_symbol: Symbol,
@@ -35,7 +35,7 @@ impl StringInterner {
             strings: Vec::new(),
             symbols: HashMap::new(),
             unit_symbol: Symbol(0),
-            never_symbol: Symbol(0),
+            bottom_symbol: Symbol(0),
             bool_symbol: Symbol(0),
             u32_symbol: Symbol(0),
             u64_symbol: Symbol(0),
@@ -43,7 +43,7 @@ impl StringInterner {
             i64_symbol: Symbol(0),
         };
         si.unit_symbol = si.intern("Unit");
-        si.never_symbol = si.intern("Never");
+        si.bottom_symbol = si.intern("Bottom");
         si.bool_symbol = si.intern("Bool");
         si.u32_symbol = si.intern("U32");
         si.u64_symbol = si.intern("U64");

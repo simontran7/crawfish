@@ -5,12 +5,11 @@ use crate::front_end::lexical_analysis::token::{LitKind, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
 use crate::front_end::syntactic_analysis::ast::Ast;
 use crate::front_end::syntactic_analysis::ast::handles::{
-    BlockExpressionId, BooleanLiteralId, ConstantDefinitionId, DefinitionId,
-    DefinitionStatementId, ErrorDefinitionId, ErrorExpressionId, ErrorParameterId,
-    ErrorStatementId, ExpressionId, ExpressionStatementId, FunctionCallId,
-    FunctionDefinitionId, IfExpressionId, IntegerLiteralId, LetStatementId,
-    ParameterId, PatternId, ReturnId, StatementId, StatementKind,
-    TypeAnnotationId, UnaryOperationId, ValidParameterId, VariableId,
+    BlockExpressionId, BooleanLiteralId, ConstantDefinitionId, DefinitionId, DefinitionStatementId,
+    ErrorDefinitionId, ErrorExpressionId, ErrorParameterId, ErrorStatementId, ExpressionId,
+    ExpressionStatementId, FunctionCallId, FunctionDefinitionId, IfExpressionId, IntegerLiteralId,
+    LetStatementId, ParameterId, PatternId, ReturnId, StatementId, StatementKind, TypeAnnotationId,
+    UnaryOperationId, ValidParameterId, VariableId,
 };
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 
@@ -122,9 +121,7 @@ impl<'a> Parser<'a> {
     /// to find an opening `{`; a missing or malformed name, parameter list,
     /// or return annotation instead produces `Error*` nodes for those parts
     /// while parsing continues.
-    fn parse_function_definition(
-        &mut self,
-    ) -> Result<FunctionDefinitionId, ErrorDefinitionId> {
+    fn parse_function_definition(&mut self) -> Result<FunctionDefinitionId, ErrorDefinitionId> {
         let start = self.cursor.peek().span().start();
 
         self.expect(TokenKind::Func);
@@ -236,9 +233,7 @@ impl<'a> Parser<'a> {
     /// `ErrorExpressionId` expression, the trailing `;` is consumed
     /// without reporting a missing-`;` diagnostic, since the expression
     /// parse already reported an error at that position.
-    fn parse_constant_definition(
-        &mut self,
-    ) -> Result<ConstantDefinitionId, ErrorDefinitionId> {
+    fn parse_constant_definition(&mut self) -> Result<ConstantDefinitionId, ErrorDefinitionId> {
         let start = self.cursor.peek().span().start();
 
         self.expect(TokenKind::Const);
@@ -288,9 +283,12 @@ impl<'a> Parser<'a> {
             self.ast.span_of_expression(value_id).end()
         };
 
-        Ok(self
-            .ast
-            .add_constant_definition(name_id, annotation_id, value_id, Span::new(start, end)))
+        Ok(self.ast.add_constant_definition(
+            name_id,
+            annotation_id,
+            value_id,
+            Span::new(start, end),
+        ))
     }
 
     /// Parses `let mut? pattern: Type? = value;`.
@@ -337,9 +335,13 @@ impl<'a> Parser<'a> {
             self.ast.span_of_expression(value_id).end()
         };
 
-        Ok(self
-            .ast
-            .add_let_statement(name_id, mutable, annotation_id, value_id, Span::new(start, end)))
+        Ok(self.ast.add_let_statement(
+            name_id,
+            mutable,
+            annotation_id,
+            value_id,
+            Span::new(start, end),
+        ))
     }
 
     /// Parses a `const` or `func` definition appearing inside a block, wrapping it
@@ -489,7 +491,12 @@ impl<'a> Parser<'a> {
             self.ast.add_assign(lhs_id, rhs_id, span).into()
         } else {
             self.ast
-                .add_binary_operation(BinOp::from_token_kind(op_token.kind()), lhs_id, rhs_id, span)
+                .add_binary_operation(
+                    BinOp::from_token_kind(op_token.kind()),
+                    lhs_id,
+                    rhs_id,
+                    span,
+                )
                 .into()
         }
     }
@@ -537,7 +544,9 @@ impl<'a> Parser<'a> {
             (statement_ids, tail_id)
         });
 
-        Ok(self.ast.add_block_expression(&statement_ids, tail_id, block_span))
+        Ok(self
+            .ast
+            .add_block_expression(&statement_ids, tail_id, block_span))
     }
 
     /// Dispatches on the next token to parse one statement inside a block:
@@ -609,9 +618,7 @@ impl<'a> Parser<'a> {
     /// Anything left over inside the parentheses after `expr` is parsed is
     /// reported as an [`SyntacticDiagnostic::UnexpectedToken`] expecting
     /// `)`, but doesn't change the result: `expr` itself is still returned.
-    fn parse_parenthesized_expression(
-        &mut self,
-    ) -> Result<ExpressionId, ErrorExpressionId> {
+    fn parse_parenthesized_expression(&mut self) -> Result<ExpressionId, ErrorExpressionId> {
         if !self.expect_delimited(TokenKind::OpenParen) {
             return Err(self.ast.add_erroneous_expression(self.cursor.peek().span()));
         }
@@ -840,7 +847,9 @@ impl<'a> Parser<'a> {
                 .add_valid_identifier(token.symbol().unwrap(), token.span())
                 .into();
             let span = self.ast.span_of_identifier(identifier_id);
-            self.ast.add_named_type_annotation(identifier_id, span).into()
+            self.ast
+                .add_named_type_annotation(identifier_id, span)
+                .into()
         } else {
             self.ast
                 .add_erroneous_type_annotation(self.cursor.peek().span())

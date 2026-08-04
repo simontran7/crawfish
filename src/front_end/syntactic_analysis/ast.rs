@@ -58,8 +58,7 @@ pub(crate) struct Ast {
     pub(crate) erroneous_identifiers: HandleMap<ErrorIdentifierId, ErrorIdentifierNode>,
 
     /// type annotation nodes
-    pub(crate) named_type_annotations:
-        HandleMap<NamedTypeAnnotationId, NamedTypeAnnotationNode>,
+    pub(crate) named_type_annotations: HandleMap<NamedTypeAnnotationId, NamedTypeAnnotationNode>,
     pub(crate) erroneous_type_annotations:
         HandleMap<ErrorTypeAnnotationId, ErrorTypeAnnotationNode>,
 
@@ -282,8 +281,10 @@ impl Ast {
         definition_id: DefinitionId,
         span: Span,
     ) -> DefinitionStatementId {
-        self.definition_statements
-            .add(DefinitionStatementNode { definition_id, span })
+        self.definition_statements.add(DefinitionStatementNode {
+            definition_id,
+            span,
+        })
     }
 
     /// Adds a [`LetStatementNode`] and returns a handle to it.
@@ -408,7 +409,8 @@ impl Ast {
         span: Span,
     ) -> FunctionCallId {
         let start = self.function_call_argument_ids.len() as u32;
-        self.function_call_argument_ids.extend_from_slice(argument_ids);
+        self.function_call_argument_ids
+            .extend_from_slice(argument_ids);
         let len = argument_ids.len() as u32;
         self.function_calls.add(FunctionCallNode {
             callee_id,
@@ -432,11 +434,7 @@ impl Ast {
     }
 
     /// Adds a [`ReturnNode`] and returns a handle to it.
-    pub(crate) fn add_return(
-        &mut self,
-        value_id: Option<ExpressionId>,
-        span: Span,
-    ) -> ReturnId {
+    pub(crate) fn add_return(&mut self, value_id: Option<ExpressionId>, span: Span) -> ReturnId {
         self.returns.add(ReturnNode { value_id, span })
     }
 
@@ -467,11 +465,7 @@ impl Ast {
     }
 
     /// Adds a [`ValidIdentifierNode`] and returns a handle to it.
-    pub(crate) fn add_valid_identifier(
-        &mut self,
-        symbol: Symbol,
-        span: Span,
-    ) -> ValidIdentifierId {
+    pub(crate) fn add_valid_identifier(&mut self, symbol: Symbol, span: Span) -> ValidIdentifierId {
         self.valid_identifiers
             .add(ValidIdentifierNode { symbol, span })
     }
@@ -492,10 +486,7 @@ impl Ast {
     }
 
     /// Adds an [`ErrorTypeAnnotationNode`] and returns a handle to it.
-    pub(crate) fn add_erroneous_type_annotation(
-        &mut self,
-        span: Span,
-    ) -> ErrorTypeAnnotationId {
+    pub(crate) fn add_erroneous_type_annotation(&mut self, span: Span) -> ErrorTypeAnnotationId {
         self.erroneous_type_annotations
             .add(ErrorTypeAnnotationNode { span })
     }

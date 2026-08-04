@@ -3,8 +3,7 @@
 use crate::common::types::TypeId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
 use crate::middle_end::mir::{
-    BlockId, Cfg, FunctionReferenceId, Instruction, InstructionId, SsaValueId,
-    SsaValueOrigin,
+    BlockId, Cfg, FunctionReferenceId, Instruction, InstructionId, SsaValueId, SsaValueOrigin,
 };
 
 /// A cursor's position within a `Cfg`'s layout, tracked independently of the
@@ -336,22 +335,21 @@ impl CursorPosition {
         value: bool,
         ty: TypeId,
     ) -> SsaValueId {
-        let instruction =
-            self.add_instruction(cfg, Instruction::BooleanLiteral { value }, &[ty]);
+        let instruction = self.add_instruction(cfg, Instruction::BooleanLiteral { value }, &[ty]);
         cfg.get_instruction(instruction).first_result().unwrap()
     }
 
-    /// Builds and inserts a `Call` instruction to `callee` at the current position, passing
-    /// `args` and allocating result values with types `result_tys`.
+    /// Builds and inserts a `Call` instruction to `callee_reference_id` at the current position, passing
+    /// `argument_ssa_value_ids` and allocating result values with type handles `result_type_ids`.
     pub(crate) fn add_call(
         &mut self,
         cfg: &mut Cfg,
-        callee: FunctionReferenceId,
-        args: &[SsaValueId],
-        result_tys: &[TypeId],
+        callee_reference_id: FunctionReferenceId,
+        argument_ssa_value_ids: &[SsaValueId],
+        result_type_ids: &[TypeId],
     ) -> InstructionId {
-        let instruction = cfg.new_call(callee, args);
-        self.add_instruction(cfg, instruction, result_tys)
+        let instruction = cfg.new_call(callee_reference_id, argument_ssa_value_ids);
+        self.add_instruction(cfg, instruction, result_type_ids)
     }
 
     /// Builds and inserts a `Jump` instruction to `destination` at the current position, passing `args`.
@@ -387,11 +385,7 @@ impl CursorPosition {
     }
 
     /// Builds and inserts a `Return` instruction at the current position, passing `args`.
-    pub(crate) fn add_return(
-        &mut self,
-        cfg: &mut Cfg,
-        args: &[SsaValueId],
-    ) -> InstructionId {
+    pub(crate) fn add_return(&mut self, cfg: &mut Cfg, args: &[SsaValueId]) -> InstructionId {
         let instruction = cfg.new_return(args);
         self.add_instruction(cfg, instruction, &[])
     }

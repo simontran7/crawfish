@@ -798,8 +798,7 @@ pub(crate) type IntegerLiteralId =
     TypedExpressionId<IntegerLiteralNode, { ExpressionKind::IntegerLiteral as u8 }>;
 pub(crate) type BooleanLiteralId =
     TypedExpressionId<BooleanLiteralNode, { ExpressionKind::BooleanLiteral as u8 }>;
-pub(crate) type VariableId =
-    TypedExpressionId<VariableNode, { ExpressionKind::Variable as u8 }>;
+pub(crate) type VariableId = TypedExpressionId<VariableNode, { ExpressionKind::Variable as u8 }>;
 pub(crate) type UnaryOperationId =
     TypedExpressionId<UnaryOperationNode, { ExpressionKind::UnaryOperation as u8 }>;
 pub(crate) type BinaryOperationId =
@@ -832,5 +831,4 @@ pub(crate) type ErrorTypeAnnotationId =
 
 pub(crate) type IdentifierPatternId =
     TypedPatternId<IdentifierPatternNode, { PatternKind::Identifier as u8 }>;
-pub(crate) type ErrorPatternId =
-    TypedPatternId<ErrorPatternNode, { PatternKind::Error as u8 }>;
+pub(crate) type ErrorPatternId = TypedPatternId<ErrorPatternNode, { PatternKind::Error as u8 }>;

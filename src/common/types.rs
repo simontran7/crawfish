@@ -17,7 +17,7 @@ pub(crate) enum Ty {
     /// unit type
     Unit,
     /// bottom type
-    Never,
+    Bottom,
     /// boolean type
     Bool,
     /// signed integer type
@@ -73,7 +73,7 @@ pub(crate) struct TypeInterner {
     types: Vec<Ty>,
     handles: HashMap<Ty, TypeId>,
     pub(crate) unit_id: TypeId,
-    pub(crate) never_id: TypeId,
+    pub(crate) bottom_id: TypeId,
     pub(crate) bool_id: TypeId,
     pub(crate) u32_id: TypeId,
     pub(crate) u64_id: TypeId,
@@ -88,7 +88,7 @@ pub(crate) struct TypeId(pub(crate) u32);
 
 impl TypeInterner {
     /// Creates and returns a `TypeInterner` pre-populated with [`TypeId`]s
-    /// for [`Ty::Unit`], [`Ty::Never`], [`Ty::Bool`], the fixed-width
+    /// for [`Ty::Unit`], [`Ty::Bottom`], [`Ty::Bool`], the fixed-width
     /// integer types, and [`Ty::Error`], cached on the fields above so
     /// callers don't need to re-intern them.
     pub(crate) fn new() -> Self {
@@ -96,7 +96,7 @@ impl TypeInterner {
             types: Vec::new(),
             handles: HashMap::new(),
             unit_id: TypeId(0),
-            never_id: TypeId(0),
+            bottom_id: TypeId(0),
             bool_id: TypeId(0),
             u32_id: TypeId(0),
             u64_id: TypeId(0),
@@ -105,7 +105,7 @@ impl TypeInterner {
             error_id: TypeId(0),
         };
         ti.unit_id = ti.intern(Ty::Unit);
-        ti.never_id = ti.intern(Ty::Never);
+        ti.bottom_id = ti.intern(Ty::Bottom);
         ti.bool_id = ti.intern(Ty::Bool);
         ti.u32_id = ti.intern(Ty::Unsigned(UnsignedIntTy::U32));
         ti.u64_id = ti.intern(Ty::Unsigned(UnsignedIntTy::U64));
@@ -137,6 +137,11 @@ impl TypeInterner {
         id == self.unit_id
     }
 
+    /// Returns whether `id` resolves to an unsigned integer type.
+    pub(crate) fn is_unsigned(&self, id: TypeId) -> bool {
+        matches!(self.resolve(id), Some(Ty::Unsigned(_)))
+    }
+
     /// Looks up the [`TypeId`] of a built-in type by name, e.g. `Bool` or
     /// `I32`. Returns `None` for any name that isn't a built-in type
     /// (including user-defined types, which this interner does not handle).
@@ -144,8 +149,8 @@ impl TypeInterner {
         if s == si.unit_symbol {
             return Some(self.unit_id);
         }
-        if s == si.never_symbol {
-            return Some(self.never_id);
+        if s == si.bottom_symbol {
+            return Some(self.bottom_id);
         }
         if s == si.bool_symbol {
             return Some(self.bool_id);
@@ -182,7 +187,7 @@ impl TypeInterner {
     pub(crate) fn to_string(&self, handle: TypeId) -> String {
         match self.resolve(handle).unwrap() {
             Ty::Unit => "()".to_string(),
-            Ty::Never => "Never".to_string(),
+            Ty::Bottom => "Bottom".to_string(),
             Ty::Bool => "Bool".to_string(),
             Ty::Signed(SignedIntTy::I32) => "I32".to_string(),
             Ty::Signed(SignedIntTy::I64) => "I64".to_string(),
@@ -192,7 +197,10 @@ impl TypeInterner {
                 parameter_type_ids,
                 return_type_id,
             } => {
-                let parameters: Vec<String> = parameter_type_ids.iter().map(|p| self.to_string(*p)).collect();
+                let parameters: Vec<String> = parameter_type_ids
+                    .iter()
+                    .map(|p| self.to_string(*p))
+                    .collect();
                 let return_value = self.to_string(*return_type_id);
                 format!("({}) -> {}", parameters.join(", "), return_value)
             }

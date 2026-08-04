@@ -326,10 +326,7 @@ mod tests {
     soup::handle_impl!(pub(crate) TestId);
 
     fn ids(values: &[u32]) -> Vec<TestId> {
-        values
-            .iter()
-            .map(|&v| TestId::new(v as usize))
-            .collect()
+        values.iter().map(|&v| TestId::new(v as usize)).collect()
     }
 
     #[test]

@@ -73,7 +73,7 @@ func abs(x: I32) -> I32 {
 ## Operators
 
 - Arithmetic: `+ - * /`
-- Comparison: `< > == !=`
+- Comparison: `< > <= >= == !=`
 - Logical: `and`, `or`, `not`
 
 ```
@@ -119,7 +119,7 @@ func helper(x: I32) -> I32 {
 import "shapes/circle" as circle;
 
 func main() {
-    println(circle.area(3));
+    println(circle::area(3));
 }
 ```
 

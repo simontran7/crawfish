@@ -39,6 +39,10 @@ pub(crate) enum TokenKind {
     LessThan,
     /// `>`
     GreaterThan,
+    /// `<=`
+    LessEqual,
+    /// `>=`
+    GreaterEqual,
     /// `==`
     EqualEqual,
     /// `!=`
@@ -219,7 +223,9 @@ impl TokenKind {
             Self::LogicalOr => Some((3, 4)),
             Self::LogicalAnd => Some((5, 6)),
             Self::EqualEqual | Self::NotEqual => Some((7, 8)),
-            Self::LessThan | Self::GreaterThan => Some((9, 10)),
+            Self::LessThan | Self::GreaterThan | Self::LessEqual | Self::GreaterEqual => {
+                Some((9, 10))
+            }
             Self::Plus | Self::Minus => Some((11, 12)),
             Self::Star | Self::Slash => Some((13, 14)),
             _ => None,
@@ -227,12 +233,12 @@ impl TokenKind {
     }
 
     /// The binding power of this token as a prefix operator, for Pratt
-    /// parsing. `((), 15)` for `not`, `+`, and `-`, since unary operators
-    /// bind tighter than every infix operator. `None` if this token cannot
-    /// start a prefix operator.
+    /// parsing. `((), 15)` for `not` and `-`, since unary operators bind
+    /// tighter than every infix operator. `None` if this token cannot start
+    /// a prefix operator (crawfish has no unary `+`; see [`Parser::nud`]).
     pub(crate) const fn prefix_binding_power(&self) -> Option<((), u8)> {
         match self {
-            Self::LogicalNot | Self::Plus | Self::Minus => Some(((), 15)),
+            Self::LogicalNot | Self::Minus => Some(((), 15)),
             _ => None,
         }
     }
@@ -256,6 +262,8 @@ impl fmt::Display for TokenKind {
             Self::Slash => "/",
             Self::LessThan => "<",
             Self::GreaterThan => ">",
+            Self::LessEqual => "<=",
+            Self::GreaterEqual => ">=",
             Self::EqualEqual => "==",
             Self::NotEqual => "!=",
 

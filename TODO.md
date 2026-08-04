@@ -131,11 +131,32 @@ When the first `Ty` variant is defined with a `TypeId` field — most likely whe
 
 - [ ] Const evaluation (CTFE): one mechanism for both cases, following rustc rather than special-casing plain consts. A plain `const` item's initializer is lowered into its own `Function`/`Cfg` (zero params) via the existing `CfgBuilder` — same lowering path a real function body goes through, so no separate fold/environment logic is written or maintained. A small compile-time interpreter (a call stack + recursion limit) then walks that `Cfg` to produce a value. `const fn` calls reuse the identical interpreter, but walk the callee's real, already-lowered `Cfg` (the same one used for runtime codegen, per rustc's model) rather than a body built specially for evaluation. Results are cached by `ItemBindingId`, resolved lazily on first reference.
 
+- [ ] Storage for constants: not needed for today's scalar-only (`i32`/`bool`) constants — a CTFE-folded scalar can just be rematerialized as an immediate at each reference, same as now. Becomes necessary once a constant's type can't fit as an immediate (arrays, structs, strings): CTFE's evaluated value then needs an addressable home instead. Emit it as an LLVM global (LLVM's [Global Variables](https://llvm.org/docs/LangRef.html#global-variables); `inkwell::module::Module::add_global`) and replace the constant-initializer cache with a binding → `GlobalValue` map, mirroring the `function_refs`/`FunctionReferenceId` pattern already used for `func` bindings. Reference: [cranelift-module's `DataDescription`/`DataId`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/module/src/data_context.rs) for the equivalent design in a different backend.
+
 ### Language Features
 
 - [ ] introduce while loops, general loops, and for loops
 - [ ] introduce array literals (https://www.reddit.com/r/ProgrammingLanguages/comments/1dy9anu/comment/lcdf25s/)
 - [ ] introduce module system (https://www.reddit.com/r/ProgrammingLanguages/comments/1k4261j/comment/mo8rfxg/, https://www.reddit.com/r/ProgrammingLanguages/comments/1r6fhq8/comment/o5q5xk2/?context=3)
+
+- [ ] `main` success-by-default + `exit` builtin, following rustc's `Termination`-based model exactly rather than C's "return an int, that's the exit code" convention:
+```text
+## What changes
+
+- `main` must return `Unit`. A new semantic check (`main` isn't special-cased anywhere in `semantic_analyzer.rs` today) rejects any other return type — matching that `fn main() -> i32` is a hard compile error in real Rust, not silently accepted.
+- Normal completion of `main` already exits 0 for free: `llvm_codegen.rs`'s `declare_main_entry_point` already wraps crawfish's `main` (renamed `__crawfish_main`) in a real `i32 main(void)`, and already hardcodes a `0` return when the wrapped call is zero-sized/void. Verified directly — `func main() { ... }` today already exits 0. No codegen change needed for this half.
+- Add `exit(code: I32) -> Bottom` as a compiler builtin — not a stdlib (crawfish has no module system yet to hang one off of): pre-register its `DefinitionBinding` in the global scope before user definitions are processed, matching `std::process::exit(code: i32) -> !` exactly, including the `Bottom`/`!` return type (so `exit(1)` type-checks in any expression position, same as `panic!`/`std::process::exit` do in Rust).
+
+## What that requires
+
+- A `TypeInterner` predicate that's true for `Unit` *or* `Bottom` (a call with either return type produces no result) — `is_zero_sized` alone isn't enough, since `Bottom` isn't zero-sized (it's uninhabited, a different property; conflating the two would be a type-system smell, not a shortcut). Used in `lowerer.rs`'s `Call` result handling and `llvm_codegen.rs`'s `declare_functions`/`Call` instruction lowering — a user-defined function can legitimately return `Bottom` too (e.g. one that always recurses/always exits), not just the `exit` builtin.
+- `llvm_codegen.rs`: declare `exit` as an external `void @exit(i32) noreturn` (bypassing the generic `self.functions` map and `llvm_type`, which has no representation for `Bottom` and shouldn't grow one — nothing ever materializes a `Bottom` value to represent). A call to it is followed by `build_unreachable()` instead of the normal call-result handling.
+- Once `main` is guaranteed `Unit`-returning, `declare_main_entry_point`'s `Some(value) => ...` branch (handling a non-void wrapped call) becomes dead code and should come out.
+
+## Why this matters for the test suite
+
+crawfish has no I/O yet (not even `println`), so today's `tests/end_to_end.rs` uses `main -> I32`'s return value as its *only* way to observe a computed result — every value-checking test asserts on the process's exit code. Landing this means rewriting the whole suite (and every `.crw` fixture using `main -> I32`) to `func main() { ...; exit(computed_value); }` instead. Do this in the same change, not after — the suite has no other oracle until real I/O exists.
+```
 
 ### Miscellaneous
 

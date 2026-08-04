@@ -5,9 +5,7 @@ use std::fmt::{self, Write};
 use soup::handle_map::Handle;
 
 use crate::common::context::CompilerContext;
-use crate::middle_end::mir::{
-    BlockId, Function, InstructionId, InstructionRef, Mir, SsaValueId,
-};
+use crate::middle_end::mir::{BlockId, Function, InstructionId, InstructionRef, Mir, SsaValueId};
 
 /// Dumps every [`Function`] in a [`Mir`], blank-line separated.
 ///
@@ -101,12 +99,10 @@ impl<'a> FunctionDumper<'a> {
         Ok(out)
     }
 
-    fn decorate_function<FW: FunctionWriter>(
-        &self,
-        writer: &mut FW,
-        out: &mut String,
-    ) -> fmt::Result {
-        // spec line
+    /// Renders `name(param_ty, param_ty) -> return_ty`, shared by the plain
+    /// dump's spec line and [`crate::middle_end::dot_dumper::DotDumper`]'s
+    /// cluster labels, so both stay in sync with the signature's rendering.
+    pub(crate) fn signature_line(&self) -> String {
         let name = self
             .ctx
             .string_interner
@@ -124,7 +120,16 @@ impl<'a> FunctionDumper<'a> {
             .ctx
             .type_interner
             .to_string(self.function.signature.return_type_id);
-        writeln!(out, "function {name}({parameters}) -> {return_type} {{")?;
+        format!("{name}({parameters}) -> {return_type}")
+    }
+
+    fn decorate_function<FW: FunctionWriter>(
+        &self,
+        writer: &mut FW,
+        out: &mut String,
+    ) -> fmt::Result {
+        // spec line
+        writeln!(out, "function {} {{", self.signature_line())?;
 
         // Instructions indent 4; block headers sit outdented 4 from that.
         let indent = 4;
@@ -286,12 +291,7 @@ impl<'a> FunctionDumper<'a> {
     }
 
     /// Writes `BlockN` or `BlockN(v1, v2)`.
-    fn block_call(
-        &self,
-        out: &mut String,
-        block: BlockId,
-        args: &[SsaValueId],
-    ) -> fmt::Result {
+    fn block_call(&self, out: &mut String, block: BlockId, args: &[SsaValueId]) -> fmt::Result {
         write!(out, "Block{}", block.index())?;
         if !args.is_empty() {
             write!(out, "({})", join_values(args))?;

@@ -144,16 +144,6 @@ impl DiagnosticSink {
             .any(|d| d.severity() == Severity::Error)
     }
 
-    /// Returns the number of accumulated `(errors, warnings)`.
-    pub(crate) fn counts(&self) -> (usize, usize) {
-        let diagnostics = self.diagnostics.borrow();
-        let errors = diagnostics
-            .iter()
-            .filter(|d| d.severity() == Severity::Error)
-            .count();
-        (errors, diagnostics.len() - errors)
-    }
-
     /// Renders every accumulated diagnostic to stderr, in the order they were added.
     pub(crate) fn render(&self, filename: &str, source: &str) {
         for d in self.diagnostics.borrow().iter() {

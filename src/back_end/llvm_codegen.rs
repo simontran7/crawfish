@@ -14,9 +14,7 @@ use crate::common::context::CompilerContext;
 use crate::common::types::TypeId;
 use crate::front_end::semantic_analysis::hir::DefinitionBindingId;
 use crate::front_end::syntactic_analysis::ast::nodes::{BinOp, UnOp};
-use crate::middle_end::mir::{
-    BlockId, Function, InstructionId, InstructionRef, Mir, SsaValueId,
-};
+use crate::middle_end::mir::{BlockId, Function, InstructionId, InstructionRef, Mir, SsaValueId};
 
 /// Lowers a [`Mir`] to an LLVM [`Module`].
 ///
@@ -80,7 +78,8 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     /// undefined behavior, not just "returns 0."
     fn declare_main_entry_point(&mut self) {
         let Some(inner_main) = self.module.get_function("__crawfish_main") else {
-            return; // no `main` in this program; let the linker report it, as before
+            // no `main` in this program, but let the linker report it.
+            return;
         };
 
         let entry_point_type = self.llvm_context.i32_type().fn_type(&[], false);
@@ -133,7 +132,8 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
                 name
             };
             let fn_value = self.module.add_function(llvm_name, fn_type, None);
-            self.functions.insert(function.definition_binding_id, fn_value);
+            self.functions
+                .insert(function.definition_binding_id, fn_value);
         }
     }
 
@@ -144,8 +144,10 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
     /// (see [`crate::middle_end::lowerer`]), so the only types a value can
     /// actually have at this point are the scalar ones below.
     fn llvm_type(&self, ty: TypeId) -> BasicTypeEnum<'ctx> {
-        if ty == self.ctx.type_interner.i32_id {
+        if ty == self.ctx.type_interner.i32_id || ty == self.ctx.type_interner.u32_id {
             self.llvm_context.i32_type().into()
+        } else if ty == self.ctx.type_interner.i64_id || ty == self.ctx.type_interner.u64_id {
+            self.llvm_context.i64_type().into()
         } else if ty == self.ctx.type_interner.bool_id {
             self.llvm_context.bool_type().into()
         } else {
@@ -232,10 +234,19 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
             InstructionRef::Binary { operator, operands } => {
                 let lhs = values[&operands[0]].into_int_value();
                 let rhs = values[&operands[1]].into_int_value();
+                let is_unsigned = self
+                    .ctx
+                    .type_interner
+                    .is_unsigned(function.body.get_value(operands[0]).ty());
                 let result: BasicValueEnum = match operator {
                     BinOp::Add => self.builder.build_int_add(lhs, rhs, "").unwrap().into(),
                     BinOp::Sub => self.builder.build_int_sub(lhs, rhs, "").unwrap().into(),
                     BinOp::Mul => self.builder.build_int_mul(lhs, rhs, "").unwrap().into(),
+                    BinOp::Div if is_unsigned => self
+                        .builder
+                        .build_int_unsigned_div(lhs, rhs, "")
+                        .unwrap()
+                        .into(),
                     BinOp::Div => self
                         .builder
                         .build_int_signed_div(lhs, rhs, "")
@@ -253,12 +264,58 @@ impl<'ctx, 'a> LlvmCodegen<'ctx, 'a> {
                         .into(),
                     BinOp::Lt => self
                         .builder
-                        .build_int_compare(IntPredicate::SLT, lhs, rhs, "")
+                        .build_int_compare(
+                            if is_unsigned {
+                                IntPredicate::ULT
+                            } else {
+                                IntPredicate::SLT
+                            },
+                            lhs,
+                            rhs,
+                            "",
+                        )
                         .unwrap()
                         .into(),
                     BinOp::Gt => self
                         .builder
-                        .build_int_compare(IntPredicate::SGT, lhs, rhs, "")
+                        .build_int_compare(
+                            if is_unsigned {
+                                IntPredicate::UGT
+                            } else {
+                                IntPredicate::SGT
+                            },
+                            lhs,
+                            rhs,
+                            "",
+                        )
+                        .unwrap()
+                        .into(),
+                    BinOp::Le => self
+                        .builder
+                        .build_int_compare(
+                            if is_unsigned {
+                                IntPredicate::ULE
+                            } else {
+                                IntPredicate::SLE
+                            },
+                            lhs,
+                            rhs,
+                            "",
+                        )
+                        .unwrap()
+                        .into(),
+                    BinOp::Ge => self
+                        .builder
+                        .build_int_compare(
+                            if is_unsigned {
+                                IntPredicate::UGE
+                            } else {
+                                IntPredicate::SGE
+                            },
+                            lhs,
+                            rhs,
+                            "",
+                        )
                         .unwrap()
                         .into(),
                     // `Bool`'s LLVM representation (i1) makes bitwise and/or

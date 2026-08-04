@@ -48,15 +48,7 @@ impl<'a> Tokenizer<'a> {
         tokens
     }
 
-    /// Lexes the next [`Token`] in `source`, after skipping trivia
-    /// (whitespace and `//` line comments).
-    /// Returns [`TokenKind::Eof`] once the cursor reaches the end of
-    /// `source`; callers should stop calling [`Tokenizer::next_token`]
-    /// after that.
-    ///
-    /// Only integer literals are lexed here ([`LitKind::Integer`]); `Char`,
-    /// `Float`, and `String` are unused placeholders in [`LitKind`] for a
-    /// future lexer extension.
+    /// Lexes the next [`Token`] in `source`, after skipping trivia (whitespace and line comments).
     fn next_token(&mut self) -> Token {
         self.eat_trivia();
         let start_pos = self.pos();
@@ -79,8 +71,6 @@ impl<'a> Tokenizer<'a> {
             },
             '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
-            // A lone `!` is an error: crawfish has no `!` prefix operator
-            // (logical not is the `not` keyword), so only `!=` is valid here.
             '!' => match self.peek() {
                 '=' => {
                     self.advance();
@@ -88,8 +78,20 @@ impl<'a> Tokenizer<'a> {
                 }
                 _ => TokenKind::Error,
             },
-            '<' => TokenKind::LessThan,
-            '>' => TokenKind::GreaterThan,
+            '<' => match self.peek() {
+                '=' => {
+                    self.advance();
+                    TokenKind::LessEqual
+                }
+                _ => TokenKind::LessThan,
+            },
+            '>' => match self.peek() {
+                '=' => {
+                    self.advance();
+                    TokenKind::GreaterEqual
+                }
+                _ => TokenKind::GreaterThan,
+            },
             ',' => TokenKind::Comma,
             ';' => TokenKind::Semicolon,
             '(' => TokenKind::OpenParen,

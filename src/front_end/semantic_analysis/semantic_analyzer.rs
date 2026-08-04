@@ -5,8 +5,8 @@ use crate::common::types::{InferTy, Ty, TypeId};
 use crate::diagnostics::semantic_diagnostics::SemanticDiagnostic;
 use crate::front_end::semantic_analysis::constraints::{Constraint, Provenance};
 use crate::front_end::semantic_analysis::hir::{
-    BindingId, BindingKind, DefinitionId, DefinitionKind, ExpressionId, ExpressionKind,
-    ExpressionIdSpan, Hir, LocalBindingId, StatementId, StatementKind,
+    BindingId, BindingKind, DefinitionId, DefinitionKind, ExpressionId, ExpressionIdSpan,
+    ExpressionKind, Hir, LocalBindingId, StatementId, StatementKind,
 };
 use crate::front_end::semantic_analysis::symbol_table::{
     DefineError, LookupError, ScopeKind, SymbolTable,
@@ -43,10 +43,7 @@ pub(crate) struct SemanticAnalyzer<'ast> {
 /// The failure case of [`SemanticAnalyzer::unify`]: the two [`TypeId`]s
 /// can't be unified because they resolve to incompatible concrete [`Ty`]s.
 enum UnificationError {
-    TypeMismatch {
-        expected: TypeId,
-        actual: TypeId,
-    },
+    TypeMismatch { expected: TypeId, actual: TypeId },
 }
 
 impl<'ast> SemanticAnalyzer<'ast> {
@@ -284,8 +281,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
                     .map(|param_id| {
                         let ast_annotation_id =
                             self.ast.valid_parameters[param_id.index().into()].annotation_id;
-                        let ast_identifier_id =
-                            &self.ast.named_type_annotations[ast_annotation_id.index().into()].name_id;
+                        let ast_identifier_id = &self.ast.named_type_annotations
+                            [ast_annotation_id.index().into()]
+                        .name_id;
                         self.resolve_type_annotation(
                             &self.ast.valid_identifiers[ast_identifier_id.index().into()],
                         )
@@ -333,15 +331,15 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 let node = &self.ast.constant_definitions[ast_definition_id.index().into()];
 
                 // resolve the type annotation to a TypeId
-                let annotation = &self.ast.named_type_annotations[node.annotation_id.index().into()];
+                let annotation =
+                    &self.ast.named_type_annotations[node.annotation_id.index().into()];
                 let ty = self.resolve_type_annotation(
                     &self.ast.valid_identifiers[annotation.name_id.index().into()],
                 );
 
                 // creates a binding, and report an error if the name is already defined
                 let name = self.ast.valid_identifiers[node.name_id.index().into()].symbol;
-                let definition_binding_id =
-                    self.hir.add_definition_binding(name, ty, node.span);
+                let definition_binding_id = self.hir.add_definition_binding(name, ty, node.span);
                 if let Err(DefineError::AlreadyDefined { previous_binding }) = self
                     .symbol_table
                     .add_binding(name, definition_binding_id.into())
@@ -415,9 +413,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 parameter_tys[i],
                 parameter.span,
             );
-            if let Err(DefineError::AlreadyDefined { previous_binding }) = self
-                .symbol_table
-                .add_binding(name, local_binding_id.into())
+            if let Err(DefineError::AlreadyDefined { previous_binding }) =
+                self.symbol_table.add_binding(name, local_binding_id.into())
             {
                 self.ctx
                     .diagnostics
@@ -473,7 +470,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         // type-check and lower the value
         self.symbol_table.enter_scope(ScopeKind::ConstantBoundary);
-        let value_id = self.check(
+        let initializer_id = self.check(
             node.value_id,
             self.hir
                 .get_definition_binding(binding_id.as_definition().unwrap())
@@ -485,7 +482,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         self.hir.add_definition(
             DefinitionKind::Constant {
                 definition_binding_id: binding_id.as_definition().unwrap(),
-                value_id,
+                initializer_id,
             },
             node.span,
         )
@@ -565,7 +562,10 @@ impl<'ast> SemanticAnalyzer<'ast> {
             // tail present, no expected type: infer from tail
             (Some(ast_expression_id), None) => {
                 let expression_id = self.infer(ast_expression_id);
-                (Some(expression_id), self.hir.get_expression(expression_id).ty())
+                (
+                    Some(expression_id),
+                    self.hir.get_expression(expression_id).ty(),
+                )
             }
             // no tail, expected type known: constrain expected to unit
             (None, Some(expected)) => {
@@ -645,7 +645,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
                 // resolve the type annotation (if present) to a TypeId
                 let annotated_ty = node.annotation_id.map(|ast_annotation_id| {
-                    let annotation = &self.ast.named_type_annotations[ast_annotation_id.index().into()];
+                    let annotation =
+                        &self.ast.named_type_annotations[ast_annotation_id.index().into()];
                     self.resolve_type_annotation(
                         &self.ast.valid_identifiers[annotation.name_id.index().into()],
                     )
@@ -664,9 +665,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 let local_binding_id =
                     self.hir
                         .add_local_binding(name, node.mutable, annotated_ty, ty, node.span);
-                if let Err(DefineError::AlreadyDefined { previous_binding }) = self
-                    .symbol_table
-                    .add_binding(name, local_binding_id.into())
+                if let Err(DefineError::AlreadyDefined { previous_binding }) =
+                    self.symbol_table.add_binding(name, local_binding_id.into())
                 {
                     self.ctx
                         .diagnostics
@@ -1023,7 +1023,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 self.hir.get_expression(lhs_id).ty() // arbitrary since by the time constraint solving happens, lhs and rhs will be the same type
             }
             // comparison: both sides must be the same integer type, result type is `Bool`
-            BinOp::Lt | BinOp::Gt => {
+            BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
                 // constraint for the lhs and the rhs to be the same type
                 self.constrain(Constraint::Equality {
                     expected: self.hir.get_expression(lhs_id).ty(),
@@ -1134,9 +1134,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         };
 
         // check value against target type if valid, otherwise infer to surface errors
-        let value_id = if target_is_error
-            || target_view.ty() == self.ctx.type_interner.error_id
-        {
+        let value_id = if target_is_error || target_view.ty() == self.ctx.type_interner.error_id {
             self.infer(node.value_id)
         } else {
             self.check(node.value_id, target_view.ty())
@@ -1276,7 +1274,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
     /// known, the return type is constrained to [`Ty::Unit`] via
     /// [`Provenance::ReturnMissingValue`], since `return;` only type-checks
     /// in a function returning `()`. A `return` expression itself has type
-    /// [`TypeInterner::never_id`], since control never proceeds past it.
+    /// [`TypeInterner::bottom_id`], since control never proceeds past it.
     fn typecheck_return(&mut self, return_id: ast::handles::ReturnId) -> ExpressionId {
         let node = &self.ast.returns[return_id];
 
@@ -1314,7 +1312,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
         // create HIR node
         self.hir.add_expression(
             ExpressionKind::Return { value_id },
-            self.ctx.type_interner.never_id,
+            self.ctx.type_interner.bottom_id,
             node.span,
         )
     }

@@ -4,9 +4,9 @@ use std::str;
 use crate::common::context::CompilerContext;
 use crate::front_end::syntactic_analysis::ast::Ast;
 use crate::front_end::syntactic_analysis::ast::handles::{
-    DefinitionId, DefinitionKind, ExpressionId, ExpressionKind, IdentifierId,
-    IdentifierKind, ParameterId, ParameterKind, PatternId, PatternKind, StatementId,
-    StatementKind, TypeAnnotationId, TypeAnnotationKind,
+    DefinitionId, DefinitionKind, ExpressionId, ExpressionKind, IdentifierId, IdentifierKind,
+    ParameterId, ParameterKind, PatternId, PatternKind, StatementId, StatementKind,
+    TypeAnnotationId, TypeAnnotationKind,
 };
 use crate::front_end::syntactic_analysis::ast::nodes::{
     AssignNode, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode,
@@ -754,7 +754,12 @@ impl<'a> AstDumper<'a> {
         self.close_node(s, add_comma)
     }
 
-    fn dump_pattern(&mut self, s: &mut String, pattern_id: PatternId, add_comma: bool) -> fmt::Result {
+    fn dump_pattern(
+        &mut self,
+        s: &mut String,
+        pattern_id: PatternId,
+        add_comma: bool,
+    ) -> fmt::Result {
         match pattern_id.kind() {
             PatternKind::Identifier => {
                 let node = &self.ast.identifier_patterns[pattern_id.index().into()];
