@@ -12,7 +12,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install stable Rust toolchain
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -54,7 +54,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install stable Rust toolchain
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo
@@ -83,3 +83,24 @@ jobs:
 
       - name: Run snapshot tests
         run: cargo test
+    
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: build
+        run: cargo build --release
+
+      - name: Archive pre-built binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: crawfish
+          path: target/release/crawfish
+
+
