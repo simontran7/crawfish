@@ -1,5 +1,5 @@
-use crawfish::arg_parser;
-use crawfish::driver;
+use crawfish::cli::arg_parser;
+use crawfish::cli::driver;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
