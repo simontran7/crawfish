@@ -1,0 +1,207 @@
+---
+source: src/middle_end/lowerer.rs
+expression: output
+input_file: src/middle_end/inputs/loops.crw
+---
+function sum_while(I32) -> I32 {
+Block0(v0: I32):
+    v4 -> v0
+    v1 = IntegerLiteral 0
+    v2 = IntegerLiteral 0
+    Jump Block1(v1, v2)
+
+Block1(v3: I32, v7: I32):
+    v5 = Binary Lt v3, v0
+    v6 = Unary Not v5
+    ConditionalBranch v6, Block3, Block4
+
+Block3:
+    Jump Block2
+
+Block4:
+    v8 = Binary Add v7, v3
+    v9 = IntegerLiteral 1
+    v10 = Binary Add v3, v9
+    Jump Block1(v10, v8)
+
+Block2:
+    Return v7
+}
+
+function sum_loop(I32) -> I32 {
+Block0(v0: I32):
+    v4 -> v0
+    v1 = IntegerLiteral 0
+    v2 = IntegerLiteral 0
+    Jump Block1(v1, v2)
+
+Block1(v3: I32, v6: I32):
+    v5 = Binary Ge v3, v0
+    ConditionalBranch v5, Block3, Block4
+
+Block3:
+    Jump Block2
+
+Block4:
+    v7 = Binary Add v6, v3
+    v8 = IntegerLiteral 1
+    v9 = Binary Add v3, v8
+    Jump Block1(v9, v7)
+
+Block2:
+    Return v6
+}
+
+function skip_two(I32) -> I32 {
+Block0(v0: I32):
+    v4 -> v0
+    v1 = IntegerLiteral 0
+    v2 = IntegerLiteral 0
+    Jump Block1(v1, v2)
+
+Block1(v3: I32, v11: I32):
+    v5 = Binary Lt v3, v0
+    v6 = Unary Not v5
+    ConditionalBranch v6, Block3, Block4
+
+Block3:
+    Jump Block2
+
+Block4:
+    v7 = IntegerLiteral 1
+    v8 = Binary Add v3, v7
+    v9 = IntegerLiteral 2
+    v10 = Binary Eq v8, v9
+    ConditionalBranch v10, Block5, Block6
+
+Block5:
+    Jump Block1(v8, v11)
+
+Block6:
+    v12 = Binary Add v11, v8
+    Jump Block1(v8, v12)
+
+Block2:
+    Return v11
+}
+
+function nested(I32) -> I32 {
+Block0(v0: I32):
+    v4 -> v0
+    v9 -> v0
+    v23 -> v0
+    v1 = IntegerLiteral 0
+    v2 = IntegerLiteral 0
+    Jump Block1(v1, v2)
+
+Block1(v3: I32, v19: I32):
+    v12 -> v3
+    v20 -> v3
+    v5 = Binary Lt v3, v0
+    v6 = Unary Not v5
+    ConditionalBranch v6, Block3, Block4
+
+Block3:
+    Jump Block2
+
+Block4:
+    v7 = IntegerLiteral 0
+    Jump Block5(v7, v19)
+
+Block5(v8: I32, v14: I32):
+    v24 -> v14
+    v10 = Binary Lt v8, v0
+    v11 = Unary Not v10
+    ConditionalBranch v11, Block7, Block8
+
+Block7:
+    Jump Block6
+
+Block8:
+    v13 = Binary Eq v8, v3
+    ConditionalBranch v13, Block9, Block10
+
+Block9:
+    Jump Block6
+
+Block10:
+    v15 = IntegerLiteral 1
+    v16 = Binary Add v14, v15
+    v17 = IntegerLiteral 1
+    v18 = Binary Add v8, v17
+    Jump Block5(v18, v16)
+
+Block6:
+    v21 = IntegerLiteral 1
+    v22 = Binary Add v3, v21
+    Jump Block1(v22, v14)
+
+Block2:
+    Return v19
+}
+
+function drop_after_break(I32) -> I32 {
+Block0(v0: I32):
+    v1 -> v0
+    Jump Block1
+
+Block1:
+    v2 = IntegerLiteral 0
+    v3 = Binary Gt v0, v2
+    ConditionalBranch v3, Block3, Block4
+
+Block3:
+    Jump Block2
+
+Block4:
+    Jump Block1
+
+Block2:
+    Return v0
+}
+
+function first_above(I32) -> I32 {
+Block0(v0: I32):
+    v5 -> v0
+    v1 = IntegerLiteral 0
+    Jump Block1(v1)
+
+Block1(v2: I32):
+    v3 = IntegerLiteral 1
+    v4 = Binary Add v2, v3
+    v6 = Binary Gt v4, v0
+    ConditionalBranch v6, Block3, Block4
+
+Block3:
+    Jump Block2
+
+Block4:
+    Jump Block1(v4)
+
+Block2:
+    Return v4
+}
+
+function first_above_doubled(I32) -> I32 {
+Block0(v0: I32):
+    v6 -> v0
+    v1 = IntegerLiteral 0
+    Jump Block1(v1)
+
+Block1(v3: I32):
+    v4 = IntegerLiteral 1
+    v5 = Binary Add v3, v4
+    v7 = Binary Gt v5, v0
+    ConditionalBranch v7, Block3, Block4
+
+Block3:
+    v8 = IntegerLiteral 2
+    v9 = Binary Mul v5, v8
+    Jump Block2(v9)
+
+Block4:
+    Jump Block1(v5)
+
+Block2(v2: I32):
+    Return v2
+}

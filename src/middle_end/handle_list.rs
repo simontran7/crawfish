@@ -5,7 +5,7 @@ use soup::handle_map::Handle;
 
 /// A 4-byte handle to a growable, mutable list of `H`s living in a [`HandleListSubAllocator`].
 /// Used wherever MIR needs a variable-length run of handles of the same type (e.g., block
-/// parameters, call/branch arguments, and instruction results for `SsaValueId`; predecessor
+/// parameters, call/branch arguments, and instruction results for `ValueId`; predecessor
 /// instructions or deferred variables for other handle types).
 ///
 /// `start` is the index in the allocator's backing storage `HandleListSubAllocator::data` where
@@ -28,14 +28,11 @@ use soup::handle_map::Handle;
 /// # Examples
 ///
 /// ```rust,ignore
-/// let mut allocator = HandleListSubAllocator::<SsaValueId>::new();
-/// let mut list = HandleList::<SsaValueId>::from(&mut allocator, &[SsaValueId::new(1), SsaValueId::new(2)]);
-/// list.add_last(&mut allocator, SsaValueId::new(3));
-/// assert_eq!(list.to_slice(&allocator), &[SsaValueId::new(1), SsaValueId::new(2), SsaValueId::new(3)]);
+/// let mut allocator = HandleListSubAllocator::<ValueId>::new();
+/// let mut list = HandleList::<ValueId>::from(&mut allocator, &[ValueId::new(1), ValueId::new(2)]);
+/// list.add_last(&mut allocator, ValueId::new(3));
+/// assert_eq!(list.to_slice(&allocator), &[ValueId::new(1), ValueId::new(2), ValueId::new(3)]);
 /// ```
-///
-/// (`SsaValueId` above is just an example instantiation — it's defined in [`crate::middle_end::mir`],
-/// not here. This module only owns the generic list machinery.)
 #[derive(Clone, Copy)]
 pub(crate) struct HandleList<H> {
     pub(super) start: u32,
@@ -84,10 +81,6 @@ impl<H> Default for HandleList<H> {
 /// Every free block's header is `H::new(0)`, and the free list's node's next pointer is also
 /// embedded in `data` as an `H`.
 /// The tail node of a free list's next pointer is `0`.
-///
-/// NOTE: No coalescing is needed because freed blocks are reused within their size
-/// class as-is. Additionally, no pointer patching is needed on realloc because [`HandleList`]
-/// handles are movable indices, not raw pointers.
 pub(crate) struct HandleListSubAllocator<H> {
     pub(super) data: Vec<H>,
     free: Vec<usize>,
@@ -300,7 +293,7 @@ impl<H: Handle> HandleListSubAllocator<H> {
 }
 
 impl SizeClass {
-    /// Determines the smallest size class that can fit the desired `count` of handles (excluding the header slot).
+    /// Constructs the smallest size class that can fit the desired `count` of handles (excluding the header slot).
     fn new(count: usize) -> Self {
         assert!(count > 0);
         Self(((count | 3).ilog2() - 1) as u8)

@@ -7,7 +7,7 @@ function abs(I32) -> I32 {
 Block0(v0: I32):
     v1 = IntegerLiteral 0
     v2 = Binary Lt v0, v1
-    BranchIf v2, Block1, Block2
+    ConditionalBranch v2, Block1, Block2
 
 Block1:
     v3 = Unary Neg v0
@@ -20,14 +20,14 @@ Block2:
 function clamp(I32, I32, I32) -> I32 {
 Block0(v0: I32, v1: I32, v2: I32):
     v3 = Binary Lt v0, v1
-    BranchIf v3, Block1, Block2
+    ConditionalBranch v3, Block1, Block2
 
 Block1:
     Jump Block3(v1)
 
 Block2:
     v4 = Binary Gt v0, v2
-    BranchIf v4, Block4, Block5(v0)
+    ConditionalBranch v4, Block4, Block5(v0)
 
 Block4:
     Jump Block5(v2)
@@ -43,7 +43,7 @@ function fib(I32) -> I32 {
 Block0(v0: I32):
     v1 = IntegerLiteral 2
     v2 = Binary Lt v0, v1
-    BranchIf v2, Block1, Block2
+    ConditionalBranch v2, Block1, Block2
 
 Block1:
     Return v0
@@ -66,19 +66,19 @@ Block0(v0: I32, v1: I32, v2: I32):
     v22 -> v0
     v23 -> v0
     v11 -> v1
-    v13 -> v2
+    v14 -> v2
     v3 = IntegerLiteral 0
     v7 -> v3
     v16 -> v3
     v4 = Binary Lt v0, v1
-    BranchIf v4, Block1, Block2(v4)
+    ConditionalBranch v4, Block1, Block2(v4)
 
 Block1:
-    v5 = Binary Lt v1, v2
-    Jump Block2(v5)
+    v6 = Binary Lt v1, v2
+    Jump Block2(v6)
 
-Block2(v6: Bool):
-    BranchIf v6, Block3, Block4
+Block2(v5: Bool):
+    ConditionalBranch v5, Block3, Block4
 
 Block3:
     v8 = IntegerLiteral 3
@@ -87,14 +87,14 @@ Block3:
 
 Block4:
     v12 = Binary Eq v0, v1
-    BranchIf v12, Block7(v12), Block6
+    ConditionalBranch v12, Block7(v12), Block6
 
 Block6:
-    v14 = Binary Eq v1, v2
-    Jump Block7(v14)
+    v15 = Binary Eq v1, v2
+    Jump Block7(v15)
 
-Block7(v15: Bool):
-    BranchIf v15, Block8, Block9
+Block7(v13: Bool):
+    ConditionalBranch v13, Block8, Block9
 
 Block8:
     v17 = IntegerLiteral 1
@@ -113,32 +113,32 @@ Block5(v32: I32):
     v31 -> v32
     v24 = IntegerLiteral 10
     v25 = Binary Gt v0, v24
-    BranchIf v25, Block11, Block12
+    ConditionalBranch v25, Block11, Block12
 
 Block11:
-    v26 = Call abs(v0)
-    Jump Block13(v26)
+    v27 = Call abs(v0)
+    Jump Block13(v27)
 
 Block12:
-    v27 = IntegerLiteral 0
-    v28 = IntegerLiteral 10
-    v29 = Call clamp(v0, v27, v28)
-    Jump Block13(v29)
+    v28 = IntegerLiteral 0
+    v29 = IntegerLiteral 10
+    v30 = Call clamp(v0, v28, v29)
+    Jump Block13(v30)
 
-Block13(v30: I32):
-    v34 = Binary Add v32, v30
+Block13(v26: I32):
+    v34 = Binary Add v32, v26
     v40 -> v34
     v35 = BooleanLiteral true
-    BranchIf v35, Block14, Block15(v35)
+    ConditionalBranch v35, Block14, Block15(v35)
 
 Block14:
-    v36 = IntegerLiteral 0
-    v37 = Binary Lt v34, v36
-    v38 = Unary Not v37
-    Jump Block15(v38)
+    v37 = IntegerLiteral 0
+    v38 = Binary Lt v34, v37
+    v39 = Unary Not v38
+    Jump Block15(v39)
 
-Block15(v39: Bool):
-    BranchIf v39, Block16, Block17(v34)
+Block15(v36: Bool):
+    ConditionalBranch v36, Block16, Block17(v34)
 
 Block16:
     v41 = IntegerLiteral 2
@@ -148,7 +148,7 @@ Block16:
 Block17(v43: I32):
     v44 = IntegerLiteral 0
     v45 = Binary Lt v43, v44
-    BranchIf v45, Block18, Block19
+    ConditionalBranch v45, Block18, Block19
 
 Block18:
     v46 = IntegerLiteral 0
@@ -162,7 +162,7 @@ function deep(I32) -> I32 {
 Block0(v0: I32):
     v1 = IntegerLiteral 1
     v2 = Binary Lt v0, v1
-    BranchIf v2, Block1, Block2
+    ConditionalBranch v2, Block1, Block2
 
 Block1:
     v3 = IntegerLiteral 1
@@ -171,7 +171,7 @@ Block1:
 Block2:
     v4 = IntegerLiteral 2
     v5 = Binary Lt v0, v4
-    BranchIf v5, Block4, Block5
+    ConditionalBranch v5, Block4, Block5
 
 Block4:
     v6 = IntegerLiteral 2
@@ -180,7 +180,7 @@ Block4:
 Block5:
     v7 = IntegerLiteral 3
     v8 = Binary Lt v0, v7
-    BranchIf v8, Block7, Block8
+    ConditionalBranch v8, Block7, Block8
 
 Block7:
     v9 = IntegerLiteral 3
@@ -189,7 +189,7 @@ Block7:
 Block8:
     v10 = IntegerLiteral 4
     v11 = Binary Lt v0, v10
-    BranchIf v11, Block10, Block11
+    ConditionalBranch v11, Block10, Block11
 
 Block10:
     v12 = IntegerLiteral 4
@@ -218,22 +218,22 @@ Block3(v15: I32):
     v27 -> v14
     v19 = IntegerLiteral 0
     v20 = Binary Gt v15, v19
-    BranchIf v20, Block13, Block14(v20)
+    ConditionalBranch v20, Block13, Block14(v20)
 
 Block13:
-    v21 = IntegerLiteral 10
-    v22 = Binary Lt v15, v21
-    BranchIf v22, Block16(v22), Block15
+    v22 = IntegerLiteral 10
+    v23 = Binary Lt v15, v22
+    ConditionalBranch v23, Block16(v23), Block15
 
 Block15:
-    v23 = BooleanLiteral true
-    Jump Block16(v23)
+    v25 = BooleanLiteral true
+    Jump Block16(v25)
 
 Block16(v24: Bool):
     Jump Block14(v24)
 
-Block14(v25: Bool):
-    BranchIf v25, Block17, Block18(v14)
+Block14(v21: Bool):
+    ConditionalBranch v21, Block17, Block18(v14)
 
 Block17:
     v30 = Call abs(v15)
@@ -241,7 +241,7 @@ Block17:
     v32 = IntegerLiteral 10
     v33 = Binary Eq v15, v32
     v34 = Unary Not v33
-    BranchIf v34, Block19, Block20(v31)
+    ConditionalBranch v34, Block19, Block20(v31)
 
 Block19:
     v35 = IntegerLiteral 1

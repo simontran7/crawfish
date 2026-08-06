@@ -1,8 +1,8 @@
 use ariadne::{Color, Label, Report, ReportKind, Source};
 
 use crate::common::span::Span;
+use crate::front_end::semantic_analysis::hir::LoopSource;
 
-/// A type or name-resolution error raised during semantic analysis.
 #[derive(Debug, Clone)]
 pub(crate) enum SemanticDiagnostic {
     TypeMismatch {
@@ -86,10 +86,23 @@ pub(crate) enum SemanticDiagnostic {
     CaptureInFunction {
         span: Span,
     },
+    LoopBodyNotUnit {
+        source: LoopSource,
+        found: String,
+        body_span: Span,
+    },
+    BreakOutsideLoop {
+        span: Span,
+    },
+    ContinueOutsideLoop {
+        span: Span,
+    },
+    BreakWithValueFromWhile {
+        span: Span,
+    },
 }
 
 impl SemanticDiagnostic {
-    /// Renders this diagnostic to stderr, pointing at the offending span(s) in `source`.
     pub(crate) fn render(&self, filename: &str, source: &str) {
         let report = match self {
             Self::TypeMismatch {
@@ -359,6 +372,47 @@ impl SemanticDiagnostic {
                     .with_label(
                         Label::new((filename, span.into()))
                             .with_message("not accessible inside nested function")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+            }
+            Self::LoopBodyNotUnit {
+                source,
+                found,
+                body_span,
+            } => Report::build(ReportKind::Error, filename, body_span.start() as usize)
+                .with_code("E0220")
+                .with_message(format!(
+                    "{} body must evaluate to `()`",
+                    source.diagnostic_name()
+                ))
+                .with_label(
+                    Label::new((filename, body_span.into()))
+                        .with_message(format!("found type `{}`, expected `()`", found))
+                        .with_color(Color::Red),
+                )
+                .finish(),
+            Self::BreakOutsideLoop { span } => {
+                Report::build(ReportKind::Error, filename, span.start() as usize)
+                    .with_code("E0221")
+                    .with_message("`break` outside of a loop")
+                    .with_label(Label::new((filename, span.into())).with_color(Color::Red))
+                    .finish()
+            }
+            Self::ContinueOutsideLoop { span } => {
+                Report::build(ReportKind::Error, filename, span.start() as usize)
+                    .with_code("E0222")
+                    .with_message("`continue` outside of a loop")
+                    .with_label(Label::new((filename, span.into())).with_color(Color::Red))
+                    .finish()
+            }
+            Self::BreakWithValueFromWhile { span } => {
+                Report::build(ReportKind::Error, filename, span.start() as usize)
+                    .with_code("E0223")
+                    .with_message("`break` with value from a `while` loop")
+                    .with_label(
+                        Label::new((filename, span.into()))
+                            .with_message("can only break with a value inside `loop`")
                             .with_color(Color::Red),
                     )
                     .finish()

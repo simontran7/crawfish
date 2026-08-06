@@ -1,29 +1,21 @@
-//! A textual dump of a lowered [`Mir`].
 use std::collections::HashMap;
 use std::fmt::{self, Write};
 
 use soup::handle_map::Handle;
 
 use crate::common::context::CompilerContext;
-use crate::middle_end::mir::{BlockId, Function, InstructionId, InstructionRef, Mir, SsaValueId};
+use crate::middle_end::mir::{BlockId, Function, InstructionId, InstructionRef, Mir, ValueId};
 
-/// Dumps every [`Function`] in a [`Mir`], blank-line separated.
-///
-/// The per-function rendering lives in [`FunctionDumper`], which this creates
-/// one of per function: the writer hooks need a single function's context, and
-/// the verifier drives one function at a time.
 pub(crate) struct MirDumper<'a> {
     mir: &'a Mir,
     ctx: &'a CompilerContext,
 }
 
 impl<'a> MirDumper<'a> {
-    /// Creates and returns an instance of `MirDumper`.
     pub(crate) fn new(mir: &'a Mir, ctx: &'a CompilerContext) -> Self {
         Self { mir, ctx }
     }
 
-    /// Renders every function with the plain writer, blank-line separated.
     pub(crate) fn dump(&self) -> Result<String, fmt::Error> {
         let mut out = String::new();
         for function in self.mir.functions() {
@@ -34,11 +26,6 @@ impl<'a> MirDumper<'a> {
     }
 }
 
-/// Hooks for decorating the dump with extra per-entity output.
-///
-/// The default methods produce the plain dump. The verifier supplies a
-/// second impl that interleaves error annotations into the same layout,
-/// instead of growing a duplicate printer.
 pub(crate) trait FunctionWriter {
     fn write_block_header(
         &mut self,
@@ -61,35 +48,24 @@ pub(crate) trait FunctionWriter {
     }
 }
 
-/// The no-decoration writer producing the plain dump.
 pub(crate) struct PlainWriter;
 
 impl FunctionWriter for PlainWriter {}
 
-/// Dumps a [`Function`] in the format of [`Cfg`]'s doc comment:
-/// a `function name(params) -> ret { … }` spec line wrapping
-/// `Block0(v0: i32):` headers, indented instructions, alias lines
-/// (`v5 -> v3`) under each defining site, and blank lines between blocks.
-///
-/// [`Cfg`]: crate::middle_end::mir::Cfg
 pub(crate) struct FunctionDumper<'a> {
     function: &'a Function,
     ctx: &'a CompilerContext,
 }
 
 impl<'a> FunctionDumper<'a> {
-    /// Creates and returns an instance of `FunctionDumper`.
     pub(crate) fn new(function: &'a Function, ctx: &'a CompilerContext) -> Self {
         Self { function, ctx }
     }
 
-    /// Renders the function with the plain writer.
     pub(crate) fn dump(&self) -> Result<String, fmt::Error> {
         self.dump_with(&mut PlainWriter)
     }
 
-    /// Renders the function, routing every block header and instruction
-    /// through `writer` so impls can interleave their own annotations.
     pub(crate) fn dump_with<FW: FunctionWriter>(
         &self,
         writer: &mut FW,
@@ -99,9 +75,6 @@ impl<'a> FunctionDumper<'a> {
         Ok(out)
     }
 
-    /// Renders `name(param_ty, param_ty) -> return_ty`, shared by the plain
-    /// dump's spec line and [`crate::middle_end::dot_dumper::DotDumper`]'s
-    /// cluster labels, so both stay in sync with the signature's rendering.
     pub(crate) fn signature_line(&self) -> String {
         let name = self
             .ctx
@@ -140,7 +113,7 @@ impl<'a> FunctionDumper<'a> {
         // Iterate the layout, not the dfg — block order is the layout's
         // business.
         let mut first = true;
-        for block in self.function.body.blocks() {
+        for block in self.function.body.block_ids() {
             if !first {
                 writeln!(out)?;
             }
@@ -158,7 +131,7 @@ impl<'a> FunctionDumper<'a> {
                 "",
                 indent.saturating_sub(4)
             )?;
-            let mut targets: Vec<SsaValueId> = aliases.keys().copied().collect();
+            let mut targets: Vec<ValueId> = aliases.keys().copied().collect();
             targets.sort_by_key(|value| value.index());
             for target in targets {
                 self.write_value_aliases(out, &mut aliases, target, indent)?;
@@ -172,7 +145,7 @@ impl<'a> FunctionDumper<'a> {
         &self,
         writer: &mut FW,
         out: &mut String,
-        aliases: &mut HashMap<SsaValueId, Vec<SsaValueId>>,
+        aliases: &mut HashMap<ValueId, Vec<ValueId>>,
         block: BlockId,
         indent: usize,
     ) -> fmt::Result {
@@ -191,7 +164,6 @@ impl<'a> FunctionDumper<'a> {
         Ok(())
     }
 
-    /// Writes `BlockN(v0: i32, v1: i32):`, outdented 4 from `indent`.
     pub(crate) fn block_header(
         &self,
         out: &mut String,
@@ -219,7 +191,6 @@ impl<'a> FunctionDumper<'a> {
         writeln!(out, ":")
     }
 
-    /// Writes one instruction line, indented under its block.
     pub(crate) fn instruction(
         &self,
         out: &mut String,
@@ -235,18 +206,24 @@ impl<'a> FunctionDumper<'a> {
             write!(out, "{} = ", join_values(results))?;
         }
 
-        match view.as_ref() {
-            InstructionRef::Binary { operator, operands } => {
+        match view.as_instruction_ref() {
+            InstructionRef::Binary {
+                operator,
+                operand_ids,
+            } => {
                 write!(
                     out,
                     "Binary {:?} v{}, v{}",
                     operator,
-                    operands[0].index(),
-                    operands[1].index()
+                    operand_ids[0].index(),
+                    operand_ids[1].index()
                 )?;
             }
-            InstructionRef::Unary { operator, operand } => {
-                write!(out, "Unary {:?} v{}", operator, operand.index())?;
+            InstructionRef::Unary {
+                operator,
+                operand_id,
+            } => {
+                write!(out, "Unary {:?} v{}", operator, operand_id.index())?;
             }
             InstructionRef::IntegerLiteral { value } => {
                 write!(out, "IntegerLiteral {value}")?;
@@ -254,35 +231,41 @@ impl<'a> FunctionDumper<'a> {
             InstructionRef::BooleanLiteral { value } => {
                 write!(out, "BooleanLiteral {value}")?;
             }
-            InstructionRef::Call { callee, args } => {
+            InstructionRef::Call {
+                callee_id,
+                argument_ids,
+            } => {
                 let name = self
                     .ctx
                     .string_interner
-                    .resolve(self.function.body.get_function_reference(callee).name)
+                    .resolve(self.function.body.get_function_reference(callee_id).name)
                     .unwrap();
-                write!(out, "Call {name}({})", join_values(args))?;
+                write!(out, "Call {name}({})", join_values(argument_ids))?;
             }
-            InstructionRef::Jump { destination, args } => {
-                write!(out, "Jump ")?;
-                self.block_call(out, destination, args)?;
-            }
-            InstructionRef::BranchIf {
-                operand,
-                then_destination,
-                then_args,
-                else_destination,
-                else_args,
+            InstructionRef::Jump {
+                destination_id,
+                block_argument_ids,
             } => {
-                write!(out, "BranchIf v{}, ", operand.index())?;
-                self.block_call(out, then_destination, then_args)?;
-                write!(out, ", ")?;
-                self.block_call(out, else_destination, else_args)?;
+                write!(out, "Jump ")?;
+                self.block_call(out, destination_id, block_argument_ids)?;
             }
-            InstructionRef::Return { args } => {
-                if args.is_empty() {
+            InstructionRef::ConditionalBranch {
+                operand_id,
+                true_block_id,
+                true_block_argument_ids,
+                false_block_id,
+                false_block_argument_ids,
+            } => {
+                write!(out, "ConditionalBranch v{}, ", operand_id.index())?;
+                self.block_call(out, true_block_id, true_block_argument_ids)?;
+                write!(out, ", ")?;
+                self.block_call(out, false_block_id, false_block_argument_ids)?;
+            }
+            InstructionRef::Return { output_ids } => {
+                if output_ids.is_empty() {
                     write!(out, "Return")?;
                 } else {
-                    write!(out, "Return {}", join_values(args))?;
+                    write!(out, "Return {}", join_values(output_ids))?;
                 }
             }
             InstructionRef::Unreachable => write!(out, "Unreachable")?,
@@ -290,8 +273,7 @@ impl<'a> FunctionDumper<'a> {
         writeln!(out)
     }
 
-    /// Writes `BlockN` or `BlockN(v1, v2)`.
-    fn block_call(&self, out: &mut String, block: BlockId, args: &[SsaValueId]) -> fmt::Result {
+    fn block_call(&self, out: &mut String, block: BlockId, args: &[ValueId]) -> fmt::Result {
         write!(out, "Block{}", block.index())?;
         if !args.is_empty() {
             write!(out, "({})", join_values(args))?;
@@ -299,12 +281,9 @@ impl<'a> FunctionDumper<'a> {
         Ok(())
     }
 
-    /// Builds the reverse alias map: immediate target → every value aliased
-    /// directly to it.
-    /// // source: cranelift write.rs `alias_map`
-    fn alias_map(&self) -> HashMap<SsaValueId, Vec<SsaValueId>> {
-        let mut map: HashMap<SsaValueId, Vec<SsaValueId>> = HashMap::new();
-        for value in self.function.body.values() {
+    fn alias_map(&self) -> HashMap<ValueId, Vec<ValueId>> {
+        let mut map: HashMap<ValueId, Vec<ValueId>> = HashMap::new();
+        for value in self.function.body.ssa_ids() {
             if let Some(target) = self.function.body.get_value(value).alias_target() {
                 map.entry(target).or_default().push(value);
             }
@@ -312,15 +291,11 @@ impl<'a> FunctionDumper<'a> {
         map
     }
 
-    /// Emits `v5 -> v3` lines for every value aliased (transitively, via the
-    /// todo-stack) to `target`, removing them from `aliases` so each is
-    /// printed exactly once, under its target's definition site.
-    /// // source: cranelift write.rs `write_value_aliases`
     fn write_value_aliases(
         &self,
         out: &mut String,
-        aliases: &mut HashMap<SsaValueId, Vec<SsaValueId>>,
-        target: SsaValueId,
+        aliases: &mut HashMap<ValueId, Vec<ValueId>>,
+        target: ValueId,
         indent: usize,
     ) -> fmt::Result {
         let mut todo_stack = vec![target];
@@ -343,7 +318,7 @@ impl<'a> FunctionDumper<'a> {
     }
 }
 
-fn join_values(values: &[SsaValueId]) -> String {
+fn join_values(values: &[ValueId]) -> String {
     values
         .iter()
         .map(|value| format!("v{}", value.index()))

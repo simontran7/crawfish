@@ -1,5 +1,3 @@
-//! Turns a finished LLVM [`Module`] into an executable ahead-of-time.
-
 use std::path::Path;
 use std::process::Command;
 
@@ -9,25 +7,15 @@ use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
 
-/// Compiles a finished LLVM module to a native executable: emits an object
-/// file alongside the target, links that into the final binary, then removes
-/// the intermediate object file.
 pub(crate) struct LinkDriver<'a, 'ctx> {
     module: &'a Module<'ctx>,
     executable_path: &'a Path,
 }
 
-/// Turns an object file into an executable. An abstraction point for swapping
-/// the linking mechanism (e.g. `cc` vs. invoking `lld` directly) without
-/// touching [`LinkDriver`].
 trait LinkBackend {
     fn link(&self, object_path: &Path, executable_path: &Path) -> Result<(), String>;
 }
 
-/// Links by invoking the system's C compiler as a linker driver — the same
-/// thing rustc does by default. `cc` already knows how to find the
-/// platform's C runtime startup objects and libc, which a bare `ld`
-/// invocation would leave to the caller.
 struct Cc;
 
 impl<'a, 'ctx> LinkDriver<'a, 'ctx> {
@@ -42,14 +30,11 @@ impl<'a, 'ctx> LinkDriver<'a, 'ctx> {
         let object_path = self.executable_path.with_extension("o");
         write_object_file(self.module, &object_path)?;
         Cc.link(&object_path, self.executable_path)?;
-        // best-effort: a leftover .o doesn't invalidate the executable we just linked
         let _ = std::fs::remove_file(&object_path);
         Ok(())
     }
 }
 
-/// Emits `module` as a native object file at `object_path`, targeting the
-/// host machine.
 fn write_object_file(module: &Module, object_path: &Path) -> Result<(), String> {
     Target::initialize_native(&InitializationConfig::default())
         .map_err(|e| format!("failed to initialize native target: {e}"))?;

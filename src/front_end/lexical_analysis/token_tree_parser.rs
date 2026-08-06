@@ -4,19 +4,15 @@ use crate::diagnostics::delimiter_diagnostics::DelimiterDiagnostic;
 use crate::front_end::lexical_analysis::token::{Token, TokenKind};
 use crate::front_end::lexical_analysis::token_tree::TokenTree;
 
-/// Builds token trees from a list of tokens.
 pub(crate) struct TokenTreeParser<'a> {
-    /// Iterator over the tokens to be processed.
     cursor: std::iter::Peekable<std::vec::IntoIter<Token>>,
     // Current token being processed.
     current: Token,
-    /// Stack of open delimiters.
     open_delimiters: Vec<Token>,
     ctx: &'a CompilerContext,
 }
 
 impl<'a> TokenTreeParser<'a> {
-    /// Creates and returns an instance of `TokenTreeParser`.
     pub(crate) fn new(tokens: Vec<Token>, ctx: &'a CompilerContext) -> Self {
         let mut it = tokens.into_iter().peekable();
 
@@ -30,35 +26,17 @@ impl<'a> TokenTreeParser<'a> {
         }
     }
 
-    /// Parses the tokens into token trees.
-    ///
-    /// The trees are always returned, even when diagnostics were emitted: an
-    /// unclosed delimiter is treated as closing at end of input, so the result
-    /// is still shaped well enough to hand to the parser. Callers check
-    /// [`CompilerContext::diagnostics`] to decide whether to proceed.
     pub(crate) fn parse(mut self) -> Vec<TokenTree> {
         self.parse_rec(false)
     }
 
-    /// Recursively turns tokens into token trees.
-    ///
-    /// `is_delimited` is `true` when called from [`Self::construct_subtree`]
-    /// to parse the contents of an open delimiter, and `false` for the
-    /// top-level token stream. In both cases the returned `Vec` ends with a
-    /// [`TokenKind::Eod`] (or [`TokenKind::Eof`] at the top level) sentinel
-    /// token, so the parser can always peek one token past the real content
-    /// without a separate "did we run out of tokens" check.
-    ///
-    /// A close delimiter found while `is_delimited` is `false` (i.e. one
-    /// with no matching open) is reported as [`DelimiterDiagnostic::Unexpected`]
-    /// and skipped, rather than ending the token tree list early.
     fn parse_rec(&mut self, is_delimited: bool) -> Vec<TokenTree> {
         let mut token_trees = Vec::new();
 
         loop {
-            if self.current.kind().is_open_delim() {
+            if self.current.kind().is_open_delimeter() {
                 token_trees.push(self.construct_subtree());
-            } else if self.current.kind().is_close_delim() {
+            } else if self.current.kind().is_close_delimeter() {
                 if is_delimited {
                     let eod = Token::new(TokenKind::Eod, None, self.current.span());
                     token_trees.push(TokenTree::Token(eod));
@@ -86,12 +64,6 @@ impl<'a> TokenTreeParser<'a> {
         }
     }
 
-    /// Constructs a delimited subtree, starting at an open delimiter.
-    ///
-    /// After parsing the contents, the token following them is either the
-    /// matching close delimiter (the success case), some other close
-    /// delimiter (handled by [`Self::handle_mismatched_delimiter`]), or
-    /// [`TokenKind::Eof`] (handled by [`Self::handle_unclosed_delimiter`]).
     fn construct_subtree(&mut self) -> TokenTree {
         let open = self.advance();
         let expected_close = open.kind().matching_close().unwrap();
@@ -99,7 +71,7 @@ impl<'a> TokenTreeParser<'a> {
 
         let inner = self.parse_rec(true);
 
-        if self.current.kind().is_close_delim() {
+        if self.current.kind().is_close_delimeter() {
             if self.current.kind() == expected_close {
                 self.open_delimiters.pop();
                 let close = self.advance();
@@ -117,17 +89,6 @@ impl<'a> TokenTreeParser<'a> {
         }
     }
 
-    /// Handles a close delimiter that doesn't match the innermost open
-    /// delimiter, and constructs the corresponding token tree.
-    ///
-    /// Disambiguates two cases by checking whether `found_close` matches any
-    /// *other* still-open delimiter on [`Self::open_delimiters`]:
-    /// - If it does, e.g. `(...[...)`, the `(` is treated as unclosed: it is
-    ///   reported as [`DelimiterDiagnostic::Unclosed`] and the `)` is left
-    ///   for an enclosing call to consume as its own close delimiter.
-    /// - If it doesn't, e.g. `(...]`, the `]` is treated as a typo for the
-    ///   expected `)`: reported as [`DelimiterDiagnostic::Mismatched`] and
-    ///   consumed as this subtree's close delimiter.
     fn handle_mismatched_delimiter(
         &mut self,
         open: Token,
@@ -173,7 +134,6 @@ impl<'a> TokenTreeParser<'a> {
         }
     }
 
-    /// Handles the end-of-file scenario within a delimited context.
     fn handle_unclosed_delimiter(
         &mut self,
         open_token: Token,
@@ -195,7 +155,6 @@ impl<'a> TokenTreeParser<'a> {
         }
     }
 
-    /// Advances to the next token and returns the current one.
     fn advance(&mut self) -> Token {
         let next = self.cursor.next().unwrap();
         std::mem::replace(&mut self.current, next)
@@ -216,7 +175,7 @@ mod tests {
 
             let mut ctx = CompilerContext::new();
 
-            let tokens = Tokenizer::new(&source, &mut ctx).tokenize();
+            let tokens = Tokenizer::new(&source, &mut ctx).collect::<Vec<_>>();
 
             let trees = TokenTreeParser::new(tokens, &ctx).parse();
             if ctx.diagnostics.is_empty() {

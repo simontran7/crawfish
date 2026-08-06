@@ -3,8 +3,6 @@ use std::fmt;
 use crate::common::span::Span;
 use crate::common::string_interner::Symbol;
 
-/// A single lexed token: its [`TokenKind`], an optional interned [`Symbol`]
-/// (for identifiers and literals), and the [`Span`] it was lexed from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Token {
     kind: TokenKind,
@@ -12,103 +10,63 @@ pub(crate) struct Token {
     span: Span,
 }
 
-/// The kind of a token produced by lexing. Keywords are recognized during
-/// lexing itself (see [`TokenKind::classify`]), so there is no
-/// separate `Identifier`-vs-keyword distinction left for the parser to make.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenKind {
     // IDENTIFIERS AND LITERALS
     Identifier,
-    /// Literal
-    Literal {
-        kind: LitKind,
-    },
+    Literal { kind: LiteralKind },
 
     // OPERATORS
-    /// `=`
     Equal,
-    /// `+`
     Plus,
-    /// `-`
     Minus,
-    /// `*`
     Star,
-    /// `/`
     Slash,
-    /// `<`
     LessThan,
-    /// `>`
     GreaterThan,
-    /// `<=`
     LessEqual,
-    /// `>=`
     GreaterEqual,
-    /// `==`
     EqualEqual,
-    /// `!=`
     NotEqual,
 
     // PUNCTUATION DELIMITERS
-    /// `,`
     Comma,
-    /// `:`
     Colon,
-    /// `;`
     Semicolon,
-    /// `(`
     OpenParen,
-    /// `)`
     CloseParen,
-    /// `{`
     OpenBrace,
-    /// `}`
     CloseBrace,
-    /// `[`
     OpenBracket,
-    /// `]`
     CloseBracket,
-    /// `->`
     ThinArrow,
 
     // RESERVE WORDS
-    ///`and`
     LogicalAnd,
-    /// `or`
     LogicalOr,
-    /// `not`
     LogicalNot,
-    /// `let`
     Let,
-    /// `func`
     Func,
-    /// `if`
     If,
-    /// `else`
     Else,
-    /// `return`
     Return,
-    /// `true`
     True,
-    /// `false`
     False,
-    /// `mut`
     Mut,
-    /// `const`
     Const,
+    While,
+    Loop,
+    Break,
+    Continue,
 
     // SPECIAL TOKENS
-    /// End of file
     Eof,
-    /// End of delimited token tree
     Eod,
-    /// Unrecognized token
     Error,
 }
 
-/// The kind of a [`TokenKind::Literal`]. `true`/`false` are not represented
-/// here: they are lexed directly as [`TokenKind::True`]/[`TokenKind::False`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LitKind {
+pub(crate) enum LiteralKind {
     Char,
     Integer,
     Float,
@@ -116,10 +74,6 @@ pub(crate) enum LitKind {
 }
 
 impl Token {
-    /// Creates and returns an instance of `Token`. `symbol` should be
-    /// `Some` only for [`TokenKind::Identifier`] and
-    /// [`TokenKind::Literal`], whose text is needed after lexing (e.g. to
-    /// classify keywords or parse a literal's value).
     pub(crate) const fn new(kind: TokenKind, symbol: Option<Symbol>, span: Span) -> Self {
         Self { kind, symbol, span }
     }
@@ -128,7 +82,6 @@ impl Token {
         self.kind
     }
 
-    /// The interned text of this token, if any. See [`Token::new`].
     pub(crate) const fn symbol(&self) -> Option<Symbol> {
         self.symbol
     }
@@ -139,21 +92,17 @@ impl Token {
 }
 
 impl TokenKind {
-    /// Whether this token opens a delimited group: `(`, `{`, or `[`.
-    pub(crate) const fn is_open_delim(&self) -> bool {
+    pub(crate) const fn is_open_delimeter(&self) -> bool {
         matches!(self, Self::OpenParen | Self::OpenBrace | Self::OpenBracket)
     }
 
-    /// Whether this token closes a delimited group: `)`, `}`, or `]`.
-    pub(crate) const fn is_close_delim(&self) -> bool {
+    pub(crate) const fn is_close_delimeter(&self) -> bool {
         matches!(
             self,
             Self::CloseParen | Self::CloseBrace | Self::CloseBracket
         )
     }
 
-    /// The closing delimiter that matches this opening delimiter, e.g.
-    /// `(` -> `)`. `None` if this is not an opening delimiter.
     pub(crate) const fn matching_close(&self) -> Option<Self> {
         match self {
             Self::OpenParen => Some(Self::CloseParen),
@@ -163,8 +112,6 @@ impl TokenKind {
         }
     }
 
-    /// The opening delimiter that matches this closing delimiter, e.g.
-    /// `)` -> `(`. `None` if this is not a closing delimiter.
     pub(crate) const fn matching_open(&self) -> Option<Self> {
         match self {
             Self::CloseParen => Some(Self::OpenParen),
@@ -174,12 +121,6 @@ impl TokenKind {
         }
     }
 
-    /// Classifies a lexed identifier-shaped lexeme as a keyword [`TokenKind`]
-    /// if it matches one, or [`TokenKind::Identifier`] otherwise. This is
-    /// where keyword recognition happens: there is no later pass that
-    /// reclassifies identifiers as keywords.
-    ///
-    /// NOTE: match is faster than a hash map (source: <https://www.reddit.com/r/rust/comments/1q1kbje/comment/nx9m6gj/>)
     pub(crate) fn classify(lexeme: &str) -> Self {
         match lexeme {
             "let" => Self::Let,
@@ -194,14 +135,14 @@ impl TokenKind {
             "false" => Self::False,
             "mut" => Self::Mut,
             "const" => Self::Const,
+            "while" => Self::While,
+            "loop" => Self::Loop,
+            "break" => Self::Break,
+            "continue" => Self::Continue,
             _ => Self::Identifier,
         }
     }
 
-    /// The binding power of this token as a postfix operator, for Pratt
-    /// parsing. `(15, ())` for `(` and `[`, since calls and indexing bind
-    /// tighter than every infix and prefix operator. `None` if this token
-    /// cannot start a postfix operator.
     pub(crate) const fn postfix_binding_power(&self) -> Option<(u8, ())> {
         match self {
             Self::OpenParen | Self::OpenBracket => Some((15, ())),
@@ -209,14 +150,6 @@ impl TokenKind {
         }
     }
 
-    /// The (left, right) binding power of this token as an infix operator,
-    /// for Pratt parsing. Higher binds tighter, so `*`/`/` (13, 14) bind
-    /// tighter than `+`/`-` (11, 12), which bind tighter than comparisons
-    /// (9, 10), which bind tighter than `==`/`!=` (7, 8), which bind tighter
-    /// than `and` (5, 6), which binds tighter than `or` (3, 4), which binds
-    /// tighter than `=` (1, 1). `=` is right-associative (left == right);
-    /// every other operator is left-associative (left < right). `None` if
-    /// this token is not an infix operator.
     pub(crate) const fn infix_binding_power(&self) -> Option<(u8, u8)> {
         match self {
             Self::Equal => Some((1, 1)),
@@ -232,10 +165,6 @@ impl TokenKind {
         }
     }
 
-    /// The binding power of this token as a prefix operator, for Pratt
-    /// parsing. `((), 15)` for `not` and `-`, since unary operators bind
-    /// tighter than every infix operator. `None` if this token cannot start
-    /// a prefix operator (crawfish has no unary `+`; see [`Parser::nud`]).
     pub(crate) const fn prefix_binding_power(&self) -> Option<((), u8)> {
         match self {
             Self::LogicalNot | Self::Minus => Some(((), 15)),
@@ -249,10 +178,10 @@ impl fmt::Display for TokenKind {
         let output_str = match self {
             Self::Identifier => "identifier",
             Self::Literal { kind } => match kind {
-                LitKind::Char => "character literal",
-                LitKind::Integer => "integer literal",
-                LitKind::Float => "float literal",
-                LitKind::String => "string literal",
+                LiteralKind::Char => "character literal",
+                LiteralKind::Integer => "integer literal",
+                LiteralKind::Float => "float literal",
+                LiteralKind::String => "string literal",
             },
 
             Self::Equal => "=",
@@ -290,6 +219,10 @@ impl fmt::Display for TokenKind {
             Self::Return => "return",
             Self::Mut => "mut",
             Self::Const => "const",
+            Self::While => "while",
+            Self::Loop => "loop",
+            Self::Break => "break",
+            Self::Continue => "continue",
 
             Self::Eof => "end of file",
             Self::Eod => "end of delimited token tree",

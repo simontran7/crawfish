@@ -2,42 +2,33 @@ use soup::handle_map::Handle;
 use std::marker::PhantomData;
 
 use super::nodes::{
-    AssignNode, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode,
-    ConstantDefinitionNode, DefinitionStatementNode, ErrorDefinitionNode, ErrorExpressionNode,
-    ErrorIdentifierNode, ErrorParameterNode, ErrorPatternNode, ErrorStatementNode,
-    ErrorTypeAnnotationNode, ExpressionStatementNode, FunctionCallNode, FunctionDefinitionNode,
-    IdentifierPatternNode, IfExpressionNode, IntegerLiteralNode, LetStatementNode,
-    NamedTypeAnnotationNode, ReturnNode, UnaryOperationNode, UnitLiteralNode, ValidIdentifierNode,
-    ValidParameterNode, VariableNode,
+    AssignNode, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode, BreakNode,
+    ConstantDefinitionNode, ContinueNode, DefinitionStatementNode, ErrorDefinitionNode,
+    ErrorExpressionNode, ErrorIdentifierNode, ErrorParameterNode, ErrorPatternNode,
+    ErrorStatementNode, ErrorTypeAnnotationNode, ExpressionStatementNode, FunctionCallNode,
+    FunctionDefinitionNode, IdentifierPatternNode, IfExpressionNode, IntegerLiteralNode,
+    LetStatementNode, LoopExpressionNode, NamedTypeAnnotationNode, ReturnNode, UnaryOperationNode,
+    UnitLiteralNode, ValidIdentifierNode, ValidParameterNode, VariableNode, WhileExpressionNode,
 };
 
-/// A 4-byte handle to a definition node, distinguished by `KIND` so that, e.g.,
-/// `FunctionDefinitionId` and `ConstantDefinitionId` cannot be confused even
-/// though both are backed by a `u32`. Converts to [`DefinitionId`].
 #[derive(Debug)]
 pub(crate) struct TypedDefinitionId<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to a statement node. Converts to [`StatementId`].
 #[derive(Debug)]
 pub(crate) struct TypedStatementId<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to an expression node. Converts to [`ExpressionId`].
 #[derive(Debug)]
 pub(crate) struct TypedExpressionId<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to a function parameter node. Converts to [`ParameterId`].
 #[derive(Debug)]
 pub(crate) struct TypedParameterId<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to an identifier node. Converts to [`IdentifierId`].
 #[derive(Debug)]
 pub(crate) struct TypedIdentifierId<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to a type annotation node. Converts to [`TypeAnnotationId`].
 #[derive(Debug)]
 pub(crate) struct TypedTypeAnnotationId<T, const KIND: u8>(u32, PhantomData<T>);
 
-/// A 4-byte handle to a `let` pattern node. Converts to [`PatternId`].
 #[derive(Debug)]
 pub(crate) struct TypedPatternId<T, const KIND: u8>(u32, PhantomData<T>);
 
@@ -53,13 +44,9 @@ pub(crate) struct TypedPatternId<T, const KIND: u8>(u32, PhantomData<T>);
 // statements) store one handle per element instead of an enum plus index.
 // ----------------------------------
 
-/// An opaque, tagged handle to one of the `*DefinitionNode` types: dispatch on
-/// [`DefinitionId::kind`] to recover the concrete node type and its
-/// `TypedDefinitionId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DefinitionId(u32);
 
-/// Which `*DefinitionNode` type a [`DefinitionId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum DefinitionKind {
@@ -68,13 +55,9 @@ pub(crate) enum DefinitionKind {
     Error,
 }
 
-/// An opaque, tagged handle to one of the `*StatementNode` types: dispatch
-/// on [`StatementId::kind`] to recover the concrete node type and its
-/// `TypedStatementId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StatementId(u32);
 
-/// Which `*StatementNode` type a [`StatementId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum StatementKind {
@@ -84,13 +67,9 @@ pub(crate) enum StatementKind {
     Error,
 }
 
-/// An opaque, tagged handle to one of the `*ExpressionNode` types: dispatch
-/// on [`ExpressionId::kind`] to recover the concrete node type and its
-/// `TypedExpressionId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExpressionId(u32);
 
-/// Which `*ExpressionNode` type an [`ExpressionId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum ExpressionKind {
@@ -105,16 +84,16 @@ pub(crate) enum ExpressionKind {
     FunctionCall,
     Assign,
     Return,
+    While,
+    Loop,
+    Break,
+    Continue,
     Error,
 }
 
-/// An opaque, tagged handle to a `ValidParameterNode` or
-/// `ErrorParameterNode`: dispatch on [`ParameterId::kind`] to recover the
-/// concrete node type and its `TypedParameterId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ParameterId(u32);
 
-/// Which parameter node type a [`ParameterId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum ParameterKind {
@@ -122,13 +101,9 @@ pub(crate) enum ParameterKind {
     Error,
 }
 
-/// An opaque, tagged handle to a `ValidIdentifierNode` or
-/// `ErrorIdentifierNode`: dispatch on [`IdentifierId::kind`] to recover the
-/// concrete node type and its `TypedIdentifierId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IdentifierId(u32);
 
-/// Which identifier node type an [`IdentifierId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum IdentifierKind {
@@ -136,13 +111,9 @@ pub(crate) enum IdentifierKind {
     Error,
 }
 
-/// An opaque, tagged handle to a `NamedTypeAnnotationNode` or
-/// `ErrorTypeAnnotationNode`: dispatch on [`TypeAnnotationId::kind`] to
-/// recover the concrete node type and its `TypedTypeAnnotationId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TypeAnnotationId(u32);
 
-/// Which type annotation node type a [`TypeAnnotationId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum TypeAnnotationKind {
@@ -150,13 +121,9 @@ pub(crate) enum TypeAnnotationKind {
     Error,
 }
 
-/// An opaque, tagged handle to an `IdentifierPatternNode` or
-/// `ErrorPatternNode`: dispatch on [`PatternId::kind`] to recover the
-/// concrete node type and its `TypedPatternId<NodeType, KIND>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PatternId(u32);
 
-/// Which pattern node type a [`PatternId`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum PatternKind {
@@ -164,28 +131,24 @@ pub(crate) enum PatternKind {
     Error,
 }
 
-/// A run of [`DefinitionId`]s, used by `SourceFileNode::definitions`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct DefinitionIdSpan {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`StatementId`]s, used by `BlockExpressionNode::statements`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct StatementIdSpan {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`ExpressionId`]s, used by `FunctionCallNode::arguments`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ExpressionIdSpan {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
 
-/// A run of [`ParameterId`]s, used by `FunctionDefinitionNode::parameters`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ParameterIdSpan {
     pub(crate) start: u32,
@@ -425,7 +388,6 @@ impl DefinitionId {
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
 
-    /// Returns which concrete node type this handle refers to.
     pub(crate) fn kind(self) -> DefinitionKind {
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => DefinitionKind::FunctionDefinition,
@@ -435,17 +397,14 @@ impl DefinitionId {
         }
     }
 
-    /// Returns the index of the referenced node within its type's table.
     pub(crate) const fn index(self) -> usize {
         (self.0 & Self::INDEX_MASK) as usize
     }
 
-    /// Returns whether this handle refers to an error node.
     pub(crate) fn is_error(self) -> bool {
         self.kind() == DefinitionKind::Error
     }
 
-    /// Packs `kind` and `index` into a single tagged handle.
     pub(super) fn new(kind: u8, index: usize) -> Self {
         assert!(
             index <= Self::INDEX_MASK as usize,
@@ -475,7 +434,6 @@ impl StatementId {
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
 
-    /// Returns which concrete node type this handle refers to.
     pub(crate) fn kind(self) -> StatementKind {
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => StatementKind::ExpressionStatement,
@@ -486,17 +444,14 @@ impl StatementId {
         }
     }
 
-    /// Returns the index of the referenced node within its type's table.
     pub(crate) const fn index(self) -> usize {
         (self.0 & Self::INDEX_MASK) as usize
     }
 
-    /// Returns whether this handle refers to an error node.
     pub(crate) fn is_error(self) -> bool {
         self.kind() == StatementKind::Error
     }
 
-    /// Packs `kind` and `index` into a single tagged handle.
     pub(super) fn new(kind: u8, index: usize) -> Self {
         assert!(
             index <= Self::INDEX_MASK as usize,
@@ -526,7 +481,6 @@ impl ExpressionId {
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
 
-    /// Returns which concrete node type this handle refers to.
     pub(crate) fn kind(self) -> ExpressionKind {
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => ExpressionKind::UnitLiteral,
@@ -540,22 +494,23 @@ impl ExpressionId {
             8 => ExpressionKind::FunctionCall,
             9 => ExpressionKind::Assign,
             10 => ExpressionKind::Return,
-            11 => ExpressionKind::Error,
+            11 => ExpressionKind::While,
+            12 => ExpressionKind::Loop,
+            13 => ExpressionKind::Break,
+            14 => ExpressionKind::Continue,
+            15 => ExpressionKind::Error,
             _ => unreachable!(),
         }
     }
 
-    /// Returns the index of the referenced node within its type's table.
     pub(crate) const fn index(self) -> usize {
         (self.0 & Self::INDEX_MASK) as usize
     }
 
-    /// Returns whether this handle refers to an error node.
     pub(crate) fn is_error(self) -> bool {
         self.kind() == ExpressionKind::Error
     }
 
-    /// Packs `kind` and `index` into a single tagged handle.
     pub(super) fn new(kind: u8, index: usize) -> Self {
         assert!(
             index <= Self::INDEX_MASK as usize,
@@ -585,7 +540,6 @@ impl ParameterId {
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
 
-    /// Returns which concrete node type this handle refers to.
     pub(crate) fn kind(self) -> ParameterKind {
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => ParameterKind::Valid,
@@ -594,17 +548,14 @@ impl ParameterId {
         }
     }
 
-    /// Returns the index of the referenced node within its type's table.
     pub(crate) const fn index(self) -> usize {
         (self.0 & Self::INDEX_MASK) as usize
     }
 
-    /// Returns whether this handle refers to an error node.
     pub(crate) fn is_error(self) -> bool {
         self.kind() == ParameterKind::Error
     }
 
-    /// Packs `kind` and `index` into a single tagged handle.
     pub(super) fn new(kind: u8, index: usize) -> Self {
         assert!(
             index <= Self::INDEX_MASK as usize,
@@ -634,7 +585,6 @@ impl IdentifierId {
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
 
-    /// Returns which concrete node type this handle refers to.
     pub(crate) fn kind(self) -> IdentifierKind {
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => IdentifierKind::Valid,
@@ -643,17 +593,14 @@ impl IdentifierId {
         }
     }
 
-    /// Returns the index of the referenced node within its type's table.
     pub(crate) const fn index(self) -> usize {
         (self.0 & Self::INDEX_MASK) as usize
     }
 
-    /// Returns whether this handle refers to an error node.
     pub(crate) fn is_error(self) -> bool {
         self.kind() == IdentifierKind::Error
     }
 
-    /// Packs `kind` and `index` into a single tagged handle.
     pub(super) fn new(kind: u8, index: usize) -> Self {
         assert!(
             index <= Self::INDEX_MASK as usize,
@@ -683,7 +630,6 @@ impl TypeAnnotationId {
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
 
-    /// Returns which concrete node type this handle refers to.
     pub(crate) fn kind(self) -> TypeAnnotationKind {
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => TypeAnnotationKind::Named,
@@ -692,17 +638,14 @@ impl TypeAnnotationId {
         }
     }
 
-    /// Returns the index of the referenced node within its type's table.
     pub(crate) const fn index(self) -> usize {
         (self.0 & Self::INDEX_MASK) as usize
     }
 
-    /// Returns whether this handle refers to an error node.
     pub(crate) fn is_error(self) -> bool {
         self.kind() == TypeAnnotationKind::Error
     }
 
-    /// Packs `kind` and `index` into a single tagged handle.
     pub(super) fn new(kind: u8, index: usize) -> Self {
         assert!(
             index <= Self::INDEX_MASK as usize,
@@ -732,7 +675,6 @@ impl PatternId {
     const KIND_MASK: u32 = 0b11111 << Self::INDEX_BITS;
     const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
 
-    /// Returns which concrete node type this handle refers to.
     pub(crate) fn kind(self) -> PatternKind {
         match (self.0 & Self::KIND_MASK) >> Self::INDEX_BITS {
             0 => PatternKind::Identifier,
@@ -741,17 +683,14 @@ impl PatternId {
         }
     }
 
-    /// Returns the index of the referenced node within its type's table.
     pub(crate) const fn index(self) -> usize {
         (self.0 & Self::INDEX_MASK) as usize
     }
 
-    /// Returns whether this handle refers to an error node.
     pub(crate) fn is_error(self) -> bool {
         self.kind() == PatternKind::Error
     }
 
-    /// Packs `kind` and `index` into a single tagged handle.
     pub(super) fn new(kind: u8, index: usize) -> Self {
         assert!(
             index <= Self::INDEX_MASK as usize,
@@ -811,6 +750,12 @@ pub(crate) type FunctionCallId =
     TypedExpressionId<FunctionCallNode, { ExpressionKind::FunctionCall as u8 }>;
 pub(crate) type AssignId = TypedExpressionId<AssignNode, { ExpressionKind::Assign as u8 }>;
 pub(crate) type ReturnId = TypedExpressionId<ReturnNode, { ExpressionKind::Return as u8 }>;
+pub(crate) type WhileExpressionId =
+    TypedExpressionId<WhileExpressionNode, { ExpressionKind::While as u8 }>;
+pub(crate) type LoopExpressionId =
+    TypedExpressionId<LoopExpressionNode, { ExpressionKind::Loop as u8 }>;
+pub(crate) type BreakId = TypedExpressionId<BreakNode, { ExpressionKind::Break as u8 }>;
+pub(crate) type ContinueId = TypedExpressionId<ContinueNode, { ExpressionKind::Continue as u8 }>;
 pub(crate) type ErrorExpressionId =
     TypedExpressionId<ErrorExpressionNode, { ExpressionKind::Error as u8 }>;
 

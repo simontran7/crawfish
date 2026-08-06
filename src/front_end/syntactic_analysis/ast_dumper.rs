@@ -9,27 +9,15 @@ use crate::front_end::syntactic_analysis::ast::handles::{
     TypeAnnotationId, TypeAnnotationKind,
 };
 use crate::front_end::syntactic_analysis::ast::nodes::{
-    AssignNode, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode,
-    ConstantDefinitionNode, DefinitionStatementNode, ErrorDefinitionNode, ErrorExpressionNode,
-    ErrorIdentifierNode, ErrorParameterNode, ErrorPatternNode, ErrorStatementNode,
-    ErrorTypeAnnotationNode, ExpressionStatementNode, FunctionCallNode, FunctionDefinitionNode,
-    IdentifierPatternNode, IfExpressionNode, IntegerLiteralNode, LetStatementNode,
-    NamedTypeAnnotationNode, ReturnNode, UnaryOperationNode, UnitLiteralNode, ValidIdentifierNode,
-    ValidParameterNode, VariableNode,
+    AssignNode, BinaryOperationNode, BlockExpressionNode, BooleanLiteralNode, BreakNode,
+    ConstantDefinitionNode, ContinueNode, DefinitionStatementNode, ErrorDefinitionNode,
+    ErrorExpressionNode, ErrorIdentifierNode, ErrorParameterNode, ErrorPatternNode,
+    ErrorStatementNode, ErrorTypeAnnotationNode, ExpressionStatementNode, FunctionCallNode,
+    FunctionDefinitionNode, IdentifierPatternNode, IfExpressionNode, IntegerLiteralNode,
+    LetStatementNode, LoopExpressionNode, NamedTypeAnnotationNode, ReturnNode, UnaryOperationNode,
+    UnitLiteralNode, ValidIdentifierNode, ValidParameterNode, VariableNode, WhileExpressionNode,
 };
 
-/// Pretty-prints an [`Ast`] as nested `NodeName(field=value, ...)`
-/// expressions, one node type per `dump_*` method below mirroring the
-/// `*Node` structs in
-/// [`crate::front_end::syntactic_analysis::ast`]. Used by the
-/// `insta` snapshot tests in `parser.rs` to assert the parser's output.
-///
-/// Each `dump_*` method takes an `add_comma` flag controlling whether a
-/// trailing `,` is written after the node, since the same node may appear
-/// either as the last element of a list (no comma) or followed by more
-/// siblings (comma). [`AstDumper::open_node`]/[`AstDumper::close_node`]
-/// handle the surrounding `Kind(`/`)` and indentation; child nodes recurse
-/// through the same `dump_*` methods at `depth + 1`.
 pub(crate) struct AstDumper<'a> {
     ast: &'a Ast,
     ctx: &'a CompilerContext,
@@ -39,13 +27,10 @@ pub(crate) struct AstDumper<'a> {
 impl<'a> AstDumper<'a> {
     const INDENT: &'static str = "    ";
 
-    /// Creates and returns an instance of `AstDumper`, at depth `0`.
     pub(crate) const fn new(ast: &'a Ast, ctx: &'a CompilerContext) -> Self {
         AstDumper { ast, ctx, depth: 0 }
     }
 
-    /// Dumps [`Ast::source_file`] and its entire tree, returning the
-    /// formatted output as a `String`.
     pub(crate) fn dump(&mut self) -> Result<String, fmt::Error> {
         let mut s = String::new();
         let node = &self.ast.source_file;
@@ -74,9 +59,6 @@ impl<'a> AstDumper<'a> {
         Ok(s)
     }
 
-    /// Dispatches on [`DefinitionId::kind`] to the matching `dump_*` method. Every
-    /// `dump_*(&mut self, s: &mut String, id: ..., add_comma: bool)` method
-    /// for a tagged handle type follows this same dispatch pattern.
     fn dump_definition(
         &mut self,
         s: &mut String,
@@ -290,6 +272,73 @@ impl<'a> AstDumper<'a> {
         self.close_node(s, add_comma)
     }
 
+    fn dump_while_expression(
+        &mut self,
+        s: &mut String,
+        node: &WhileExpressionNode,
+        add_comma: bool,
+    ) -> fmt::Result {
+        self.open_node(s, "WhileExpressionNode")?;
+
+        self.write_field_label(s, "condition")?;
+        self.dump_expression(s, node.condition_id, true)?;
+
+        self.write_field_label(s, "body")?;
+        self.dump_block_expression(s, &self.ast.block_expressions[node.body_id], true)?;
+
+        self.write_field_label(s, "span")?;
+        writeln!(s, "{}", node.span)?;
+
+        self.close_node(s, add_comma)
+    }
+
+    fn dump_loop_expression(
+        &mut self,
+        s: &mut String,
+        node: &LoopExpressionNode,
+        add_comma: bool,
+    ) -> fmt::Result {
+        self.open_node(s, "LoopExpressionNode")?;
+
+        self.write_field_label(s, "body")?;
+        self.dump_block_expression(s, &self.ast.block_expressions[node.body_id], true)?;
+
+        self.write_field_label(s, "span")?;
+        writeln!(s, "{}", node.span)?;
+
+        self.close_node(s, add_comma)
+    }
+
+    fn dump_break(&mut self, s: &mut String, node: &BreakNode, add_comma: bool) -> fmt::Result {
+        self.open_node(s, "BreakNode")?;
+
+        self.write_field_label(s, "value")?;
+        if let Some(value_id) = node.value_id {
+            self.dump_expression(s, value_id, true)?;
+        } else {
+            writeln!(s, "None,")?;
+        }
+
+        self.write_field_label(s, "span")?;
+        writeln!(s, "{}", node.span)?;
+
+        self.close_node(s, add_comma)
+    }
+
+    fn dump_continue(
+        &mut self,
+        s: &mut String,
+        node: &ContinueNode,
+        add_comma: bool,
+    ) -> fmt::Result {
+        self.open_node(s, "ContinueNode")?;
+
+        self.write_field_label(s, "span")?;
+        writeln!(s, "{}", node.span)?;
+
+        self.close_node(s, add_comma)
+    }
+
     fn dump_erroneous_statement(
         &mut self,
         s: &mut String,
@@ -354,6 +403,22 @@ impl<'a> AstDumper<'a> {
             ExpressionKind::Return => {
                 let node = &self.ast.returns[expression_id.index().into()];
                 self.dump_return(s, node, add_comma)
+            }
+            ExpressionKind::While => {
+                let node = &self.ast.while_expressions[expression_id.index().into()];
+                self.dump_while_expression(s, node, add_comma)
+            }
+            ExpressionKind::Loop => {
+                let node = &self.ast.loop_expressions[expression_id.index().into()];
+                self.dump_loop_expression(s, node, add_comma)
+            }
+            ExpressionKind::Break => {
+                let node = &self.ast.breaks[expression_id.index().into()];
+                self.dump_break(s, node, add_comma)
+            }
+            ExpressionKind::Continue => {
+                let node = &self.ast.continues[expression_id.index().into()];
+                self.dump_continue(s, node, add_comma)
             }
             ExpressionKind::Error => {
                 let node = &self.ast.erroneous_expressions[expression_id.index().into()];
@@ -803,17 +868,12 @@ impl<'a> AstDumper<'a> {
         self.close_node(s, add_comma)
     }
 
-    /// Writes `Kind(\n` and increases `depth` by one for the node's fields.
-    /// Paired with [`AstDumper::close_node`].
     fn open_node(&mut self, s: &mut String, kind: &str) -> fmt::Result {
         writeln!(s, "{kind}(")?;
         self.depth += 1;
         Ok(())
     }
 
-    /// Decreases `depth` back to the node's own level, then writes the
-    /// closing `)`, with a trailing `,` if `add_comma`. Paired with
-    /// [`AstDumper::open_node`].
     fn close_node(&mut self, s: &mut String, add_comma: bool) -> fmt::Result {
         self.depth -= 1;
         self.write_indent(s)?;
@@ -824,15 +884,11 @@ impl<'a> AstDumper<'a> {
         }
     }
 
-    /// Writes the current indentation followed by `label=`, ready for the
-    /// field's value to be written immediately after (by a `dump_*` call or
-    /// a `writeln!` of a leaf value).
     fn write_field_label(&self, s: &mut String, label: &str) -> fmt::Result {
         self.write_indent(s)?;
         write!(s, "{label}=")
     }
 
-    /// Writes [`AstDumper::INDENT`] `depth` times.
     fn write_indent(&self, s: &mut String) -> fmt::Result {
         for _ in 0..self.depth {
             write!(s, "{}", Self::INDENT)?;

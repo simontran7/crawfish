@@ -2,14 +2,16 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 
 use crate::{common::span::Span, front_end::lexical_analysis::token::TokenKind};
 
-/// Delimiter issues encountered during token tree parsing.
 #[derive(Debug, Clone)]
 pub(crate) enum DelimiterDiagnostic {
-    /// An opening delimiter was not closed.
-    Unclosed { span: Span, expected: TokenKind },
-    /// A closing delimiter was found without a matching opening delimiter.
-    Unexpected { span: Span, found: TokenKind },
-    /// A closing delimiter did not match the expected opener.
+    Unclosed {
+        span: Span,
+        expected: TokenKind,
+    },
+    Unexpected {
+        span: Span,
+        found: TokenKind,
+    },
     Mismatched {
         expected: TokenKind,
         found: TokenKind,
@@ -19,7 +21,6 @@ pub(crate) enum DelimiterDiagnostic {
 }
 
 impl DelimiterDiagnostic {
-    /// Renders this diagnostic to stderr, pointing at the offending span(s) in `source`.
     pub(crate) fn render(&self, filename: &str, source: &str) {
         let report = match self {
             Self::Unclosed { span, expected } => {

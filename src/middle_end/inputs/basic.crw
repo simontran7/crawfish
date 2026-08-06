@@ -9,3 +9,13 @@ func max(a: I32, b: I32) -> I32 {
     }
     result
 }
+
+// Regression case: `return x;` is a statement (semicolon, not a tail), so
+// this block has no syntactic tail at all — it used to incorrectly fail
+// with "block is missing a tail expression of type I32", since `typecheck_block`
+// only ever looked at whether a tail was *written*, not at whether the last
+// statement diverges (`return`'s type is `Bottom`, which `unify` treats as
+// compatible with anything, same as Rust's `!`).
+func early_return(x: I32) -> I32 {
+    return x;
+}

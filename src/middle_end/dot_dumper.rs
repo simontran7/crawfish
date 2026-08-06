@@ -1,8 +1,3 @@
-//! A Graphviz DOT rendering of a lowered [`Mir`]'s control-flow graph, for
-//! `--emit=dot`. Reuses [`FunctionDumper`]'s block-header/instruction text
-//! so a block's node label matches the plain MIR dump exactly; edges are
-//! read off each block's terminator (`Jump`/`BranchIf`).
-
 use std::fmt::{self, Write};
 
 use soup::handle_map::Handle;
@@ -17,13 +12,10 @@ pub(crate) struct DotDumper<'a> {
 }
 
 impl<'a> DotDumper<'a> {
-    /// Creates and returns an instance of `DotDumper`.
     pub(crate) fn new(mir: &'a Mir, ctx: &'a CompilerContext) -> Self {
         Self { mir, ctx }
     }
 
-    /// Renders every function as a `subgraph` in one `digraph`, viewable
-    /// with e.g. `dot -Tpng`.
     pub(crate) fn dump(&self) -> Result<String, fmt::Error> {
         let mut out = String::new();
         writeln!(out, "digraph mir {{")?;
@@ -69,7 +61,7 @@ impl<'a> DotDumper<'a> {
         )?;
         let first_block = function
             .body
-            .blocks()
+            .block_ids()
             .next()
             .expect("function has no blocks");
         writeln!(
@@ -78,7 +70,7 @@ impl<'a> DotDumper<'a> {
             first_block.index()
         )?;
 
-        for block in function.body.blocks() {
+        for block in function.body.block_ids() {
             let node_id = format!("{name}_Block{}", block.index());
 
             let mut label = String::new();
@@ -106,28 +98,32 @@ impl<'a> DotDumper<'a> {
                 .get_block(block)
                 .last_instruction()
                 .expect("block has no terminator");
-            match function.body.get_instruction(terminator).as_ref() {
-                InstructionRef::Jump { destination, .. } => {
+            match function
+                .body
+                .get_instruction(terminator)
+                .as_instruction_ref()
+            {
+                InstructionRef::Jump { destination_id, .. } => {
                     writeln!(
                         out,
                         "        \"{node_id}\" -> \"{name}_Block{}\";",
-                        destination.index()
+                        destination_id.index()
                     )?;
                 }
-                InstructionRef::BranchIf {
-                    then_destination,
-                    else_destination,
+                InstructionRef::ConditionalBranch {
+                    true_block_id,
+                    false_block_id,
                     ..
                 } => {
                     writeln!(
                         out,
                         "        \"{node_id}\" -> \"{name}_Block{}\" [label=\"true\"];",
-                        then_destination.index()
+                        true_block_id.index()
                     )?;
                     writeln!(
                         out,
                         "        \"{node_id}\" -> \"{name}_Block{}\" [label=\"false\"];",
-                        else_destination.index()
+                        false_block_id.index()
                     )?;
                 }
                 InstructionRef::Return { .. } => {
@@ -141,8 +137,6 @@ impl<'a> DotDumper<'a> {
     }
 }
 
-/// Escapes `label` for a DOT quoted string: backslashes and quotes, and
-/// newlines to `\l` (left-justified line breaks, DOT's label convention).
 fn escape(label: &str) -> String {
     label
         .replace('\\', "\\\\")

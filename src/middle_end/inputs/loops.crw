@@ -1,0 +1,90 @@
+func sum_while(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    let mut total: I32 = 0;
+    while i < n {
+        total = total + i;
+        i = i + 1;
+    }
+    total
+}
+
+func sum_loop(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    let mut total: I32 = 0;
+    loop {
+        if i >= n {
+            break;
+        }
+        total = total + i;
+        i = i + 1;
+    }
+    total
+}
+
+func skip_two(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    let mut total: I32 = 0;
+    while i < n {
+        i = i + 1;
+        if i == 2 {
+            continue;
+        }
+        total = total + i;
+    }
+    total
+}
+
+func nested(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    let mut total: I32 = 0;
+    while i < n {
+        let mut j: I32 = 0;
+        while j < n {
+            if j == i {
+                break;
+            }
+            total = total + 1;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    total
+}
+
+func drop_after_break(n: I32) -> I32 {
+    loop {
+        if n > 0 {
+            break;
+        }
+    }
+    n
+}
+
+// Regression case: `i` is read (as the RHS of `i = i + 1`) and then
+// reassigned within the same loop body block before that block is sealed —
+// this used to panic in `SsaConstructor::seal_block` (the placeholder read
+// via `current_defs` had already been clobbered by the reassignment).
+func first_above(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    loop {
+        i = i + 1;
+        if i > n {
+            break;
+        }
+    }
+    i
+}
+
+// `break value`: only `loop` can produce a value this way, since it's the
+// only loop guaranteed to exit solely through `break` (a `while` can always
+// also exit normally with nothing to give). The loop's own type comes from
+// unifying every `break value` site, same as `if`/`else` branches.
+func first_above_doubled(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    loop {
+        i = i + 1;
+        if i > n {
+            break i * 2;
+        }
+    }
+}
