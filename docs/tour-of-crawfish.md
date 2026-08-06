@@ -92,6 +92,60 @@ if a < b and b < c {
 let d: I32 = if a > THRESHOLD { abs(a) } else { clamp(a, 0, THRESHOLD) };
 ```
 
+## Loops
+
+There are two loops: while loops, and infinite loops. 
+
+Additionally, there are two loop keywords: the `continue` keyword to skip the rest of the body and re-check the loop's condition, and the `break` keyword to exit the loop completely.
+
+While loops are in the form of `while <condition> { <body> }`. They run `<body>` for as long as `<condition>` holds, or optionally, with the use of `break`. 
+
+Infinite loops are in the form of `loop { <body> }`, where they running forever until a `break` is introduced (pretty much mandatory for it to be any useful). 
+
+`while` loops always evaluates to `()`: it can always also exit normally (the condition going false), so there's nothing to guarantee a value. 
+
+infinite `loop`s are different, as a `break` is its only way out, it can produce a value via `break value;`, and its type is whatever every `break <value>` inside it agrees on.
+
+```
+func sum_below(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    let mut total: I32 = 0;
+    while i < n {
+        i = i + 1;
+        if i == 5 {
+            continue;
+        }
+        total = total + i;
+    }
+    total
+}
+```
+
+```
+func first_above(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    loop {
+        i = i + 1;
+        if i > n {
+            break;
+        }
+    }
+    i
+}
+```
+
+```
+func first_above_doubled(n: I32) -> I32 {
+    let mut i: I32 = 0;
+    loop {
+        i = i + 1;
+        if i > n {
+            break i * 2;
+        }
+    }
+}
+```
+
 ## Modules
 
 > [!CAUTION]

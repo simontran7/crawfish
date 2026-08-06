@@ -54,4 +54,3 @@ export PATH=$PATH:<path to the crawfish compiler executable>
 ```
 crawfish compile <file.crw 
 ```
-

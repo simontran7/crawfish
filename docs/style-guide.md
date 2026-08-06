@@ -14,10 +14,10 @@ More importantly, failing loudly in release builds is better than failing silent
 - the handle: `<type>Id`
 - the view: `<type>View`
 - the handle pointing to a slice of handles: `<type>IdSpan`
-- a variable, parameter, or struct field that's a handle: `<type>_id`
-- a variable, parameter, or struct field whose type is a handle pointing to a slice of handles: `<type>_id_span`
-- a variable, parameter, or struct field whose type is an *actual* slice of handles or a vector of handles: `<type>_ids`
-- a variable, parameter, or struct field whose type is a view: `<type>_view`
+- a variable, parameter, or struct field that's a handle: `<description>_id`
+- a variable, parameter, or struct field whose type is a handle pointing to a slice of handles: `<description>_id_span`
+- a variable, parameter, or struct field whose type is an *actual* slice of handles or a vector of handles: `<description>_ids`
+- a variable, parameter, or struct field whose type is a view: `<description>_view`
 
 ## Layout
 
@@ -90,7 +90,19 @@ https://scopedcommits.com/
 
 ## Doc Comments
 
-https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html#documenting-components
+```rust
+/// <verbs>s ...
+/// 
+/// # Examples
+/// ```rust
+/// ```
+```
 
-
-
+- Common verbs:
+    - **Query/access:** Returns, Gets, Contains, Indexes, Finds
+    - **Insertion:** Adds, Appends, Inserts, Puts, Pushes
+    - **Deletion:** Removes, Clears, Deletes, Trims, Drops
+    - **Modification:** Replaces, Sets, Sorts, Reverses, Updates
+    - **Construction:** Constructs, Creates
+    - **Iteration/traversal:** Performs, Iterates, Traverses
+    - **Copy/transform:** Copies, Converts, Wraps

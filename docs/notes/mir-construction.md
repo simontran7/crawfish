@@ -150,9 +150,62 @@ This is where [Braun et al.'s algorithm](https://link.springer.com/chapter/10.10
 
 ## Lowerer
 
-The Lowerer is responsible for walking the HIR, taking every HIR function, and producing an MIR function. While lowering the HIR function to a CFG, it calls the  `SsaConstructor` to enforce the SSA form. Once an HIR function is fully lowered, the Lowerer calls `flush_aliases()` on the finished `Cfg` to resolve anything `SsaConstructor` deferred during trivial block-parameter elimination.
+The **lowerer** is responsible for walking the HIR, taking every HIR function, and producing an MIR function. While lowering the HIR function to a CFG, it calls the  `SsaConstructor` to enforce the SSA form. Once an HIR function is fully lowered, the Lowerer calls `flush_aliases()` on the finished `Cfg` to resolve anything `SsaConstructor` deferred during trivial block-parameter elimination.
 
-### Example
+### Control Flow
+
+#### If expressions
+
+**If with else:**
+
+```text
+                [condition block]
+       cond. branch /        \
+                   /          \
+          [then block]   [else block]
+               \               /
+           jump \             / jump
+                [merge block]
+```
+
+**If without else:**
+
+```text
+                [condition block]
+       cond. branch /        \
+                   /          \
+          [then block]        /  cond. branch
+               \             /
+           jump \           /
+                [merge block]
+```
+
+**Short-circuiting expressions**
+
+```text
+             [lhs block]
+cond. branch /        \
+            /          \
+     [rhs block]       /  cond. branch
+          \           /
+      jump \         /
+          [merge block]
+```
+
+#### Loops
+
+```text
+[pre-loop block]
+               |
+             jump
+               v
+        [body block] <---------+
+          |          \         |
+     (break; N times)  \    back-edge
+          |              \     |
+          v                +---+
+     [exit block]
+```
 
 Consider the following crawfish program, which reads `x` in the loop condition itself so the walkthrough actually exercises the unsealed/deferred case, not just the sealed one:
 
@@ -211,7 +264,5 @@ This lowers to seven blocks: $A$ (before the loop), $B$ (the while header, evalu
 
 11. In $G$, `println(x)` reads `x`. $G$ is sealed with exactly one predecessor ($B$), so we recurse into $B$ without creating a phi node, finding the now-resolved $v2$ directly: `println(v2)`.
 
-> [!NOTE]
-> `step-1-state.png`, `step-4-state.png`, and `step-5-state.png` from the previous revision of this example no longer apply here — they showed `v2`/`v3` being filled in one operand at a time, matching the classical paper's incremental resolution, not our actual `collect_block_arguments`-then-`finalize_block_parameter` atomic resolution. New diagrams for steps 1–2 (just `v0` and `v2`'s empty placeholder) and step 6–7 (just `v3`'s empty placeholder) would need to be drawn to fully illustrate this version.
 
 

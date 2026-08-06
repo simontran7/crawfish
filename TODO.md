@@ -1,14 +1,18 @@
 # TODO
 
+### Now
+
+- [ ] switch lossless syntax trees (https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html) and benchmark the AST (https://jhwlr.io/super-flat-ast/)
+- [ ] switch away from explicit binding powers (https://www.scattered-thoughts.net/writing/better-operator-precedence/)
+- [ ] speed up with SIMD (https://bluuewhale.github.io/posts/simd-json/, https://validark.dev/posts/deus-lex-machina/)
+- [ ] Every diagnostic the compiler raises today is an error. Once a stage gains a lint, `.severity()` should delegate to the inner type, so the warning variants live next to the diagnostics they describe.
+
 ### Lexical Analysis
 
-- [ ] speed up with SIMD (https://bluuewhale.github.io/posts/simd-json/, https://validark.dev/posts/deus-lex-machina/)
 - [ ] add error recovery for unbalanced delimiters
 
 ### Syntactic Analysis
 
-- [ ] switch away from explicit binding powers (https://www.scattered-thoughts.net/writing/better-operator-precedence/)
-- [ ] switch lossless syntax trees (https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html) and benchmark the AST (https://jhwlr.io/super-flat-ast/)
 - [ ] improve dumper's algorithm (https://giacomocavalieri.me/writing/gleam-rust-arenas#what-s-the-problem)
 
 ### Semantic Analysis
@@ -65,7 +69,7 @@ Add fixed-point iteration and `pending_id` only when the first feature that requ
 
 The current `unify` function handles only flat cases: two unknown variables
 (merge), one unknown variable (pin to concrete), or two concrete scalars
-(fail/succeed). This is correct today because `Ty::Func` is never constructed
+(fail/succeed). This is correct today because `Ty::Function` is never constructed
 with inference variables inside it — function types are always fully concrete
 by the time `unify` sees them.
 
@@ -73,7 +77,7 @@ by the time `unify` sees them.
 
 ### 1. Structural recursion
 
-When a `Ty` variant carries `TypeId` fields (e.g. `Ty::Func(arg: TypeId,
+When a `Ty` variant carries `TypeId` fields (e.g. `Ty::Function(arg: TypeId,
 ret: TypeId)` with generic parameters), `unify` must recurse into the
 subterms:
 
@@ -109,7 +113,7 @@ When the first `Ty` variant is defined with a `TypeId` field — most likely whe
 
 - [ ] Visitor/Fold trait split for MIR passes: separate read-only traversal (Visitor) from transforming traversal (Fold), each with default no-op/identity methods per instruction kind. Factor out once verification, const evaluation, and codegen all walk the CFG the same way. Reference: rustc's [MIR visitors](https://github.com/rust-lang/rust/blob/master/compiler/rustc_middle/src/mir/visit.rs).
 
-- [ ] `AssignToImmutable` is currently detected during lowering but when `let x;` lands, detection should move into a definite-initialization MIR pass.
+- [ ] Mutability checking (`AssignToImmutable`, cannot assign to a non-`mut` binding) was removed rather than kept as a lowering-time stopgap; reintroduce it as part of the definite-initialization MIR pass once `let x;` lands, following Rust's model of routing both checks through one dataflow analysis over the CFG rather than a separate static check.
 
 - [ ] MIR verification ([verifier/mod.rs](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/verifier/mod.rs))
   - [ ] `CfgIndex`: predecessor/successor index over `Cfg`, computed on demand (mirrors Cranelift's [`ControlFlowGraph`](https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/flowgraph.rs)). Not needed by `CfgBuilder` — it tracks its own predecessors transiently during construction, before the CFG is complete. Used two ways here: (1) as input to the `DominatorTree` below, and (2) on its own, rebuilt from scratch and diffed against whatever predecessor/successor data a pass is carrying, to catch it having gone stale — mirrors the verifier's `cfg_integrity` check.
@@ -157,10 +161,3 @@ When the first `Ty` variant is defined with a `TypeId` field — most likely whe
 
 crawfish has no I/O yet (not even `println`), so today's `tests/end_to_end.rs` uses `main -> I32`'s return value as its *only* way to observe a computed result — every value-checking test asserts on the process's exit code. Landing this means rewriting the whole suite (and every `.crw` fixture using `main -> I32`) to `func main() { ...; exit(computed_value); }` instead. Do this in the same change, not after — the suite has no other oracle until real I/O exists.
 ```
-
-### Miscellaneous
-
-- [ ] Every diagnostic the compiler raises today is an error. Once a stage gains a lint, `.severity()` should delegate to the inner type, so the warning variants live next to the diagnostics they describe.
-- [ ] user website
-- [ ] web playground
-- [ ] Add release binaries (https://github.com/andrewrk/poop/blob/main/.github/workflows/ci.yml)
